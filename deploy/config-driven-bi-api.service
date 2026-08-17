@@ -1,0 +1,16 @@
+[Unit]
+Description=Config Driven BI API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/config-driven-bi-demo
+EnvironmentFile=/opt/config-driven-bi-demo/.env.local
+ExecStart=/root/.bun/bin/bun server/index.ts
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

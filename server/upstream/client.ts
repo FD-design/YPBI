@@ -1,0 +1,164 @@
+import type { AppEnv } from "../config/env";
+import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+
+export type CredentialSite = "primary" | "secondary";
+interface PersistedCredentials { primary?: { token: string; updatedAt: string }; secondary?: { token: string; updatedAt: string } }
+
+export class UpstreamError extends Error {
+  constructor(public readonly code: string, message: string, public readonly statusCode = 502) {
+    super(message);
+  }
+}
+
+export class UpstreamClient {
+  private static readonly MAX_CACHE_ENTRIES = 500;
+  private readonly responseCache = new Map<string, { expiresAt: number; value: unknown }>();
+  private readonly inFlight = new Map<string, Promise<unknown>>();
+  private credentials: PersistedCredentials = {};
+
+  constructor(
+    private readonly env: AppEnv,
+    private readonly fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch
+  ) {
+    try {
+      if (existsSync(env.UPSTREAM_CREDENTIALS_FILE)) this.credentials = JSON.parse(readFileSync(env.UPSTREAM_CREDENTIALS_FILE, "utf8")) as PersistedCredentials;
+    } catch {
+      this.credentials = {};
+    }
+  }
+
+  credentialStatus() {
+    const status = (site: CredentialSite, fallback?: string, userName?: string) => {
+      const stored = this.credentials[site];
+      const token = stored?.token ?? fallback ?? "";
+      return { site, configured: Boolean(token), tokenHint: token ? `••••${token.slice(-4)}` : "未配置", updatedAt: stored?.updatedAt ?? null, userName: userName ?? "" };
+    };
+    return [status("primary", this.env.UPSTREAM_X_TOKEN, this.env.UPSTREAM_USER_NAME), status("secondary", this.env.UPSTREAM_SECONDARY_X_TOKEN, this.env.UPSTREAM_SECONDARY_USER_NAME)];
+  }
+
+  async verifyCredential(site: CredentialSite, token?: string) {
+    const profile = this.profileForSite(site);
+    const testToken = token ?? profile.token;
+    if (!testToken) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
+    const end = new Date();
+    const start = new Date(end); start.setDate(end.getDate() - 1);
+    const url = new URL("/api/admin/statistics/pDaySum", profile.baseUrl);
+    const params = { page: "1", count: "1", pid: site === "primary" ? "PH" : "FBI", sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`, sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59` };
+    Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+    await this.fetchJson(url, testToken, profile.userName);
+    return { site, valid: true, checkedAt: new Date().toISOString() };
+  }
+
+  async updateCredential(site: CredentialSite, token: string) {
+    await this.verifyCredential(site, token);
+    const next: PersistedCredentials = { ...this.credentials, [site]: { token, updatedAt: new Date().toISOString() } };
+    const file = this.env.UPSTREAM_CREDENTIALS_FILE;
+    await mkdir(dirname(file), { recursive: true });
+    const temporary = `${file}.tmp`;
+    await writeFile(temporary, JSON.stringify(next), { encoding: "utf8", mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, file);
+    this.credentials = next;
+    this.responseCache.clear();
+    this.inFlight.clear();
+    return this.credentialStatus().find((item) => item.site === site)!;
+  }
+
+  async get(path: string, params: Record<string, string>, inboundToken?: string): Promise<unknown> {
+    if (!this.env.UPSTREAM_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "尚未配置真实后台 API 地址", 503);
+    const profile = this.selectProfile(params.pid);
+    const url = new URL(path, profile.baseUrl);
+    Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+    const token = inboundToken || profile.token;
+    const cacheKey = `${token ?? "anonymous"}\u0000${url.toString()}`;
+    const cached = this.responseCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    if (cached) this.responseCache.delete(cacheKey);
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) return pending;
+
+    const request = this.fetchJson(url, token, profile.userName).then((value) => {
+      this.pruneResponseCache();
+      this.responseCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
+      return value;
+    }).finally(() => this.inFlight.delete(cacheKey));
+    this.inFlight.set(cacheKey, request);
+    return request;
+  }
+
+  private pruneResponseCache(now = Date.now()) {
+    for (const [key, entry] of this.responseCache) {
+      if (entry.expiresAt <= now) this.responseCache.delete(key);
+    }
+    while (this.responseCache.size >= UpstreamClient.MAX_CACHE_ENTRIES) {
+      const oldestKey = this.responseCache.keys().next().value;
+      if (typeof oldestKey !== "string") break;
+      this.responseCache.delete(oldestKey);
+    }
+  }
+
+  private selectProfile(pid?: string) {
+    const secondaryPids = new Set(this.env.UPSTREAM_SECONDARY_PIDS.split(",").map((value) => value.trim()).filter(Boolean));
+    if (pid && secondaryPids.has(pid) && this.env.UPSTREAM_SECONDARY_API_BASE_URL) {
+      return {
+        baseUrl: this.env.UPSTREAM_SECONDARY_API_BASE_URL,
+        token: this.credentials.secondary?.token ?? this.env.UPSTREAM_SECONDARY_X_TOKEN,
+        userName: this.env.UPSTREAM_SECONDARY_USER_NAME
+      };
+    }
+    return {
+      baseUrl: this.env.UPSTREAM_API_BASE_URL!,
+      token: this.credentials.primary?.token ?? this.env.UPSTREAM_X_TOKEN,
+      userName: this.env.UPSTREAM_USER_NAME
+    };
+  }
+
+  private profileForSite(site: CredentialSite) {
+    if (site === "secondary") {
+      if (!this.env.UPSTREAM_SECONDARY_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "站2尚未配置后台地址", 503);
+      return { baseUrl: this.env.UPSTREAM_SECONDARY_API_BASE_URL, token: this.credentials.secondary?.token ?? this.env.UPSTREAM_SECONDARY_X_TOKEN, userName: this.env.UPSTREAM_SECONDARY_USER_NAME };
+    }
+    if (!this.env.UPSTREAM_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "站1尚未配置后台地址", 503);
+    return { baseUrl: this.env.UPSTREAM_API_BASE_URL, token: this.credentials.primary?.token ?? this.env.UPSTREAM_X_TOKEN, userName: this.env.UPSTREAM_USER_NAME };
+  }
+
+  private async fetchJson(url: URL, token?: string, userName?: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.env.REQUEST_TIMEOUT_MS);
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers["x-token"] = token;
+      if (userName) headers.name = userName;
+      const response = await this.fetcher(url, {
+        headers,
+        signal: controller.signal
+      });
+      if (response.status === 401 || response.status === 403) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
+      if (response.status === 429) throw new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429);
+      if (!response.ok) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+      const payload = await response.json();
+      if (payload && typeof payload === "object") {
+        const businessCode = String(Reflect.get(payload, "code") ?? "200");
+        const rawMessage = Reflect.get(payload, "err");
+        const message = Array.isArray(rawMessage) ? rawMessage.map(String).join("；") : String(rawMessage ?? "后台请求失败");
+        if (businessCode === "2002") {
+          if (/ip\s*限制|IP\s*限制/i.test(message)) throw new UpstreamError("UPSTREAM_IP_RESTRICTED", "服务器出口 IP 未加入后台白名单", 403);
+          throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效，请更新 Token", 401);
+        }
+        if (businessCode !== "200" && /reletionsStat(?:Plus)?\/getDays/.test(url.pathname) && /没有该平台当日数据/.test(message)) {
+          return { code: 200, data: [] };
+        }
+        if (businessCode !== "200") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", message, 422);
+      }
+      return payload;
+    } catch (error) {
+      if (error instanceof UpstreamError) throw error;
+      if (error instanceof Error && error.name === "AbortError") throw new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504);
+      throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "无法连接后台接口");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}

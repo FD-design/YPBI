@@ -1,0 +1,26 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.server.stdout.log
+.server.stderr.log
+.web.stdout.log
+.web.stderr.log
+*.log
+*.tsbuildinfo
+
+# Runtime state and credentials. Keep src/data/ tracked.
+/data/
+
+# Local deployment packages and browser QA output.
+/.deploy-*.tar.gz
+/qa-*.png
+/qa/**/*.png
+/test-results/
+/playwright-report/
+
+# OS/editor metadata.
+.DS_Store
+Thumbs.db
