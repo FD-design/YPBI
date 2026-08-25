@@ -65,8 +65,8 @@ describe("NewAV 旧 BI 兼容映射", () => {
       modelId: "business_overview", analysisType: "trend", metricIds: ["visitRegisterRate", "playRate"], dimensionIds: ["date"], eventIds: [],
       platformMode: "single", platformIds: ["newav"], dateRange: ["2026-08-01", "2026-08-02"], filters: {}, limit: 50
     });
-    expect(response.data.summary.visitRegisterRate).toBeCloseTo(10 / 100);
-    expect(response.data.summary.playRate).toBeCloseTo(91 / 110);
+    expect(response.data.summary!.visitRegisterRate).toBeCloseTo(10 / 100);
+    expect(response.data.summary!.playRate).toBeCloseTo(91 / 110);
   });
 
   test("累计充值总额取日期最大的周期末快照", async () => {
@@ -81,10 +81,10 @@ describe("NewAV 旧 BI 兼容映射", () => {
       })
     } as unknown as NewavAdapter;
     const response = await new NewavBiAdapter(adapter).query({
-      modelId: "business_overview", analysisType: "kpi", metricIds: ["revenue"], dimensionIds: ["date"], eventIds: [],
+      modelId: "business_overview", analysisType: "metric", metricIds: ["revenue"], dimensionIds: ["date"], eventIds: [],
       platformMode: "single", platformIds: ["newav"], dateRange: ["2026-08-01", "2026-08-03"], filters: {}, limit: 50
     });
-    expect(response.data.summary.revenue).toBe(300);
+    expect(response.data.summary!.revenue).toBe(300);
   });
 
   test("缺失字段保持空值且周期数据不伪造新增购买率", async () => {

@@ -38,7 +38,7 @@ import {
   type DateRange,
   type PlatformMode
 } from "./analytics/mockEngine";
-import { buildDrillInsights, useRealCardQuery } from "./analytics/realEngine";
+import { buildAnalyticsRequest, buildDrillInsights, useRealCardQuery } from "./analytics/realEngine";
 import "./styles.css";
 
 const color = ["#2563eb", "#16a34a", "#f59e0b", "#7c3aed", "#ef4444", "#0891b2"];
@@ -114,8 +114,8 @@ const metricName: Record<MetricId, string> = {
   searchCount: "搜索次数",
   revenue: "收入",
   viewRate: "观影率",
-  payRate: "付费率",
-  payerCount: "日均付费人数",
+  payRate: "渠道新增购卡率",
+  payerCount: "购卡单数",
   payerUserDays: "累计付费人天",
   visits: "访问",
   downloads: "下载",
@@ -132,9 +132,9 @@ const metricName: Record<MetricId, string> = {
   searchNoResultRate: "搜索无结果率",
   arppu: "ARPPU",
   arpu: "ARPU",
-  androidDau: "Android日均活跃",
+  androidDau: "Android日均访问UV",
   androidDauUserDays: "Android累计活跃人天",
-  iosDau: "IOS日均活跃",
+  iosDau: "iOS日均访问UV",
   iosDauUserDays: "IOS累计活跃人天",
   androidNewUsers: "Android新增",
   iosNewUsers: "IOS新增",
@@ -599,47 +599,47 @@ function ComparisonBadge({ change, positive, comparison }: { change: number; pos
 }
 
 const fieldExplanations: Record<string, string> = {
-  平台: "数据所属业务平台；全部平台模式会分别查询并聚合所选平台。", 日期: "按北京时间自然日统计。", 注册日期: "用户首次注册所属的北京时间自然日。", DAU: "当日去重活跃用户数。", 新增用户: "统计周期内新注册用户数。", 搜索次数: "用户提交搜索行为的累计次数，不代表去重人数。", 观影率: "观影人数 ÷ DAU，区间使用汇总分子除以汇总分母。", 人均观影时长: "总观影时长 ÷ 观影人数。", 付费率: "付费人数 ÷ DAU。", 收入: "统计周期内支付成功金额汇总。", 事件量: "接口返回的独立事件汇总次数，不保证来自同一批用户。", 总转化率: "当前步骤事件量 ÷ 首步骤事件量；步骤倒挂时不计算。", 步骤转化率: "当前步骤事件量 ÷ 上一步事件量；步骤倒挂时不计算。", D1留存: "注册 cohort 在第 1 日回登人数 ÷ 注册人数。", D3留存: "注册 cohort 在第 3 日回登人数 ÷ 注册人数。", D7留存: "注册 cohort 在第 7 日回登人数 ÷ 注册人数。", D30留存: "注册 cohort 在第 30 日回登人数 ÷ 注册人数；未到观察期显示为空。"
+  平台: "当前独立产品空间为 NewAV。", 日期: "接口返回的自然日。", 注册日期: "留存比例所属统计日；接口未提供 cohort 人数。", DAU: "activeNew + activeOld；多天展示日均值。", 新增用户: "统计周期内新增注册数。", 付费率: "仅渠道日数据使用 vipBuyers ÷ newUsers；全站周期不计算。", 收入: "rechargeTotal 为累计充值快照，周期汇总取结束日；rechargeNew 才按天累加。", 事件量: "接口返回的独立汇总次数，不保证来自同一批用户。", 总转化率: "当前阶段汇总量 ÷ 首阶段汇总量；不是用户级有序漏斗。", 步骤转化率: "当前阶段汇总量 ÷ 上一阶段汇总量；不是用户级有序漏斗。", D1留存: "接口直接返回 D1 比例；跨日平均非空值。", D3留存: "接口直接返回 D3 比例；未成熟日期为空。", D7留存: "接口直接返回 D7 比例；未成熟日期为空。", D30留存: "当前接口未返回 D30，显示为空。"
 };
 
 interface MetricFieldHelp { definition: string; formula: string; algorithm: string; apis: string[]; limitation?: string }
 const metricFieldHelp: Record<MetricId, MetricFieldHelp> = {
-  dau: { definition: "所选周期内每日活跃用户数的日均值。", formula: "Σ 每日 loginUserCount ÷ 有数据自然日数。", algorithm: "先汇总同一天所选平台，再对各自然日取平均；趋势图仍展示每天的 DAU。", apis: ["/api/admin/statistics/pDaySum", "/api/admin/home/pRealDayLine"], limitation: "不是周期去重活跃用户数；跨平台也未做账号级去重。" },
+  dau: { definition: "所选周期内每日活跃新用户与活跃老用户之和的日均值。", formula: "Σ(activeNew + activeOld) ÷ 有数据自然日数。", algorithm: "趋势按日展示；指标卡跨天取日均。", apis: ["/api/v1/admin/analytics/period"], limitation: "不是周期去重活跃用户数。" },
   dauUserDays: { definition: "所选周期内每日活跃用户数的累计人天。", formula: "Σ 每日 loginUserCount。", algorithm: "同一用户活跃多天会重复计数，适合衡量整体活跃规模，不代表周期 UV。", apis: ["/api/admin/statistics/pDaySum"] },
-  newUsers: { definition: "统计周期内首次完成注册的新用户数。", formula: "汇总 registerUserCount；字段为空时兼容 newUserCount。", algorithm: "按日期和平台求和。", apis: ["/api/admin/statistics/pDaySum"] },
-  viewerCount: { definition: "所选周期内每日观影用户数的日均值。", formula: "Σ 每日 watchUserCount ÷ 有数据自然日数。", algorithm: "日汇总场景先按日汇总平台再取平均；24小时曲线按五分钟时点展示。", apis: ["/api/admin/statistics/pDaySum", "/api/admin/home/pRealDayLine"], limitation: "不是周期去重观影用户数。" },
-  viewerUserDays: { definition: "所选周期内每日观影人数累计形成的观影人天。", formula: "Σ 每日 watchUserCount。", algorithm: "同一用户多日观影会重复计数。", apis: ["/api/admin/statistics/pDaySum"] },
+  newUsers: { definition: "统计周期内新增注册数。", formula: "Σ registNew。", algorithm: "按自然日求和。", apis: ["/api/v1/admin/analytics/period"] },
+  viewerCount: { definition: "所选周期内每日观影人数的日均值。", formula: "Σ viewers ÷ 有数据自然日数。", algorithm: "趋势按日展示；指标卡跨天取日均。", apis: ["/api/v1/admin/analytics/period"], limitation: "不是周期去重观影人数。" },
+  viewerUserDays: { definition: "所选周期每日观影人数累计形成的人天。", formula: "Σ viewers。", algorithm: "同一用户多日观影会重复计数。", apis: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/channels-daily"] },
   searchCount: { definition: "用户提交搜索词的累计次数，同一用户多次搜索会重复计数。", formula: "按搜索词汇总 searchCnt。", algorithm: "次数求和；不是去重搜索人数。", apis: ["/api/admin/statistics/hotSearchWords/getMany"], limitation: "该接口当前不支持日期筛选，也不提供无结果和结果点击数据。" },
-  revenue: { definition: "统计周期内后台确认的充值金额合计。", formula: "汇总 diamondChargeAmt。", algorithm: "金额按平台和日期求和。", apis: ["/api/admin/statistics/pDaySum"] },
+  revenue: { definition: "截至所选周期结束日的累计充值总额。", formula: "max(date) 对应的 rechargeTotal。", algorithm: "先按日期排序，取结束日累计快照；不能跨天求和。", apis: ["/api/v1/admin/analytics/period"] },
   viewRate: { definition: "统计周期内观影用户人天占活跃用户人天的比例。", formula: "累计观影人天 ÷ 累计活跃人天 × 100%。", algorithm: "先汇总每日分子和分母再相除，不简单平均每日观影率。", apis: ["/api/admin/statistics/pDaySum", "/api/admin/home/pRealDayLine"], limitation: "现有接口无法计算周期去重观影用户 ÷ 周期去重活跃用户。" },
-  payRate: { definition: "统计周期内付费用户人天占活跃用户人天的比例。", formula: "累计付费人天 ÷ 累计活跃人天 × 100%。", algorithm: "先汇总每日分子和分母再相除，不简单平均每日付费率。", apis: ["/api/admin/statistics/pDaySum"], limitation: "不是周期去重付费率；当前接口也不能继续拆分支付通道、会员档位和失败原因。" },
-  payerCount: { definition: "所选周期内每日充值人数的日均值。", formula: "Σ 每日 totalChargeUserCount ÷ 有数据自然日数。", algorithm: "先汇总同一天所选平台，再对各自然日取平均。", apis: ["/api/admin/statistics/pDaySum"], limitation: "不是周期去重付费用户数。" },
+  payRate: { definition: "渠道新增用户中的购卡比例。", formula: "Σ vipBuyers ÷ Σ newUsers × 100%。", algorithm: "仅渠道日数据按分子分母加权；全站 period 的 cardBuy 是单数而非人数，因此不计算。", apis: ["/api/v1/admin/analytics/channels-daily"], limitation: "不能解释为全站去重付费率。" },
+  payerCount: { definition: "所选周期内购卡成功单数。", formula: "Σ cardBuy；渠道表使用 Σ vipBuyers。", algorithm: "按日期或渠道求和。", apis: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/channels-daily"], limitation: "接口没有确认去重买家人数，不能称为付费人数。" },
   payerUserDays: { definition: "所选周期内每日充值人数的累计付费人天。", formula: "Σ 每日 totalChargeUserCount。", algorithm: "同一用户多日充值会重复计数。", apis: ["/api/admin/statistics/pDaySum"] },
   visits: { definition: "统计周期内落地访问累计次数。", formula: "汇总 totalVistCount。", algorithm: "先按平台、日期聚合各渠道访问，再跨日期求和。", apis: ["/api/admin/statistics/cpGuardStat/cnzzstatQuery"] },
   downloads: { definition: "统计周期内后台记录的累计下载次数。", formula: "汇总 totalDownCount。", algorithm: "先按平台、日期聚合各渠道下载，再跨日期求和。", apis: ["/api/admin/statistics/cpGuardStat/cnzzstatQuery"] },
   visitDownloadRate: { definition: "访问后产生下载的整体转化比例。", formula: "下载次数合计 ÷ 访问次数合计 × 100%。", algorithm: "使用区间合计分子除以区间合计分母，不平均每日转化率。", apis: ["/api/admin/statistics/cpGuardStat/cnzzstatQuery"] },
   downloadRegisterRate: { definition: "新增注册人数相对下载次数的比例。", formula: "新增用户合计 ÷ 下载次数合计 × 100%。", algorithm: "CNZZ 下载与 pDaySum 新增按平台和日期关联后加权计算。", apis: ["/api/admin/statistics/cpGuardStat/cnzzstatQuery", "/api/admin/statistics/pDaySum"], limitation: "下载与注册统计对象不同，结果可能超过100%；此时保留原值并标记口径不可比，不能视为严格同用户漏斗。" },
-  visitRegisterRate: { definition: "新增注册人数相对访问次数的比例。", formula: "新增用户合计 ÷ 访问次数合计 × 100%。", algorithm: "CNZZ 访问与 pDaySum 新增按平台和日期关联后加权计算。", apis: ["/api/admin/statistics/cpGuardStat/cnzzstatQuery", "/api/admin/statistics/pDaySum"] },
-  retentionD1: { definition: "某注册日新增用户在注册后第 1 天再次登录的比例。", formula: "D1 回登人数 ÷ 该注册日新增人数 × 100%。", algorithm: "按注册 cohort 计算；多 cohort 使用回登人数合计 ÷ 新增人数合计。", apis: ["/api/admin/statistics/reletionsStatPlus/getDays"] },
-  retentionD3: { definition: "某注册日新增用户在注册后第 3 天再次登录的比例。", formula: "D3 回登人数 ÷ 该注册日新增人数 × 100%。", algorithm: "按注册 cohort 加权；未到第 3 天的 cohort 不参与。", apis: ["/api/admin/statistics/reletionsStatPlus/getDays"] },
-  retentionD7: { definition: "某注册日新增用户在注册后第 7 天再次登录的比例。", formula: "D7 回登人数 ÷ 该注册日新增人数 × 100%。", algorithm: "按注册 cohort 加权；未到第 7 天的 cohort 不参与。", apis: ["/api/admin/statistics/reletionsStatPlus/getDays"] },
-  retentionD30: { definition: "某注册日新增用户在注册后第 30 天再次登录的比例。", formula: "D30 回登人数 ÷ 该注册日新增人数 × 100%。", algorithm: "按注册 cohort 加权；未到第 30 天显示为空，不按 0 处理。", apis: ["/api/admin/statistics/reletionsStatPlus/getDays"] },
+  visitRegisterRate: { definition: "新增注册数相对访问 UV 的比例。", formula: "Σ registNew ÷ Σ ipUniq × 100%；渠道表为 Σ newUsers ÷ Σ visitors。", algorithm: "先汇总分子分母再相除，不平均每日百分比。", apis: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/channels-daily"] },
+  retentionD1: { definition: "接口返回的次日留存比例。", formula: "AVG(非空 retentionD1)。", algorithm: "未返回 cohort 新增人数，跨日只能平均非空比例，不能加权。", apis: ["/api/v1/admin/analytics/period"], limitation: "需补充分母后才能计算严格区间加权留存。" },
+  retentionD3: { definition: "接口返回的 3 日留存比例。", formula: "AVG(非空 retentionD3)。", algorithm: "未成熟日期为空且不按 0 参与。", apis: ["/api/v1/admin/analytics/period"] },
+  retentionD7: { definition: "接口返回的 7 日留存比例。", formula: "AVG(非空 retentionD7)。", algorithm: "未成熟日期为空且不按 0 参与。", apis: ["/api/v1/admin/analytics/period"] },
+  retentionD30: { definition: "30 日留存。", formula: "当前接口未返回。", algorithm: "始终显示为空，不使用 0 或 Mock 补齐。", apis: ["暂无已确认接口"], limitation: "需要上游新增 D30 字段及 cohort 分母。" },
   videoCtr: { definition: "视频曝光用户中点击视频的用户占比。", formula: "视频点击去重人数 ÷ 视频曝光去重人数 × 100%。", algorithm: "需要同一位置口径的曝光和点击分子分母。", apis: ["暂无已确认接口"], limitation: "现有接口缺少视频曝光及页面/坑位字段，当前正式看板不开放该指标。" },
-  playRate: { definition: "点击视频后实际开始播放的用户占比。", formula: "播放开始事件量 ÷ 视频点击事件量 × 100%。", algorithm: "当前仅能基于独立事件汇总量近似计算，不能证明用户级顺序。", apis: ["/api/admin/statistics/trackEventsReport/getEventStats"] },
+  playRate: { definition: "播放请求中的成功次数占比。", formula: "Σ playOk ÷ Σ(playOk + playErr) × 100%。", algorithm: "跨日先汇总成功与失败次数再计算。", apis: ["/api/v1/admin/analytics/period"], limitation: "是请求成功率，不是观看用户转化率。" },
   completeRate: { definition: "开始播放后到达播放结束事件的比例。", formula: "播放结束事件量 ÷ 播放开始事件量 × 100%。", algorithm: "基于事件汇总量；步骤倒挂时不计算转化率。", apis: ["/api/admin/statistics/trackEventsReport/getEventStats"] },
   searchNoResultRate: { definition: "提交搜索后没有返回结果的搜索次数占全部搜索次数的比例。", formula: "无结果搜索次数 ÷ 搜索提交次数 × 100%。", algorithm: "需要同周期的无结果次数和搜索次数。", apis: ["暂无已确认接口"], limitation: "热搜词接口未返回结果状态，当前正式看板不开放。" },
   arppu: { definition: "统计周期内每个付费用户人天平均贡献的收入。", formula: "充值金额合计 ÷ 累计付费人天。", algorithm: "按每日付费人数加权；不是基于周期去重付费用户的 ARPPU。", apis: ["/api/admin/statistics/pDaySum"] },
   arpu: { definition: "统计周期内每个活跃用户人天平均贡献的充值收入。", formula: "充值金额合计 ÷ 累计活跃人天。", algorithm: "按每日 DAU 加权；不是基于周期去重活跃用户的 ARPU。", apis: ["/api/admin/statistics/pDaySum"] },
-  androidDau: { definition: "所选周期内 Android 每日活跃用户的日均值。", formula: "Σ 每日 androidLoginUserCount ÷ 有数据自然日数。", algorithm: "同日平台汇总后按自然日平均。", apis: ["/api/admin/statistics/pDaySum"] },
+  androidDau: { definition: "所选周期内 Android 每日访问 UV 的日均值。", formula: "Σ androidUv ÷ 有数据自然日数。", algorithm: "跨天取日均，不能称为 Android DAU。", apis: ["/api/v1/admin/analytics/period"] },
   androidDauUserDays: { definition: "Android 每日活跃用户的累计人天。", formula: "Σ 每日 androidLoginUserCount。", algorithm: "跨天可累加，同一用户多日活跃重复计数。", apis: ["/api/admin/statistics/pDaySum"] },
-  iosDau: { definition: "所选周期内 IOS 每日活跃用户的日均值。", formula: "Σ 每日 iosLoginUserCount ÷ 有数据自然日数。", algorithm: "同日平台汇总后按自然日平均。", apis: ["/api/admin/statistics/pDaySum"] },
+  iosDau: { definition: "所选周期内 iOS 每日访问 UV 的日均值。", formula: "Σ iosUv ÷ 有数据自然日数。", algorithm: "跨天取日均，不能称为 iOS DAU。", apis: ["/api/v1/admin/analytics/period"] },
   iosDauUserDays: { definition: "IOS 每日活跃用户的累计人天。", formula: "Σ 每日 iosLoginUserCount。", algorithm: "跨天可累加，同一用户多日活跃重复计数。", apis: ["/api/admin/statistics/pDaySum"] },
   androidNewUsers: { definition: "统计周期内通过 Android 端完成注册的新用户数。", formula: "汇总 androidNewUserCount。", algorithm: "按平台和日期求和。", apis: ["/api/admin/statistics/pDaySum"] },
   iosNewUsers: { definition: "统计周期内通过 IOS 端完成注册的新用户数。", formula: "汇总 iosNewUserCount。", algorithm: "按平台和日期求和。", apis: ["/api/admin/statistics/pDaySum"] },
   organicNewUsers: { definition: "未归入渠道新增的注册用户数。", formula: "registerUserCount - channelRegisterCount。", algorithm: "逐平台、逐日相减后再汇总；结果不小于 0。", apis: ["/api/admin/statistics/pDaySum"] },
   internalNewUsers: { definition: "后台归入内部导量渠道的新增注册用户数。", formula: "汇总 channelInternalRegisterCount。", algorithm: "按后台来源口径求和。", apis: ["/api/admin/statistics/pDaySum"] },
-  adClickCount: { definition: "广告相关入口产生的累计点击人次，同一用户重复点击会重复计数。", formula: "汇总 totalClickedCount。", algorithm: "次数按平台和日期求和。", apis: ["/api/admin/statistics/pDaySum"], limitation: "沿用运营日报总点击口径，包含后台归入该汇总字段的点击。" },
-  adClickUsers: { definition: "所选周期内每日广告点击人数的日均值。", formula: "Σ 每日 totalClickedPerson ÷ 有数据自然日数。", algorithm: "后台仅提供日 UV，因此跨天默认显示日均。", apis: ["/api/admin/statistics/pDaySum"], limitation: "不是周期去重广告点击人数。" },
+  adClickCount: { definition: "广告累计点击次数。", formula: "Σ adClicks；素材分析使用 Σ clicks。", algorithm: "次数按自然日、广告位或素材求和。", apis: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/ad-stats"] },
+  adClickUsers: { definition: "广告点击人数日汇总值的跨日累计。", formula: "Σ adClickUsers。", algorithm: "当前按人天求和。", apis: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/ad-stats"], limitation: "不是周期去重广告点击人数。" },
   adClickUserDays: { definition: "每日广告点击人数累计形成的人天。", formula: "Σ 每日 totalClickedPerson。", algorithm: "同一用户多日点击会重复计数。", apis: ["/api/admin/statistics/pDaySum"] },
   adClickRate: { definition: "广告点击人次相对同期活跃人数的比例。", formula: "totalClickedCount ÷ loginUserCount。", algorithm: "先汇总分子分母再相除。", apis: ["/api/admin/statistics/pDaySum"] },
   adClickUserRate: { definition: "广告点击人数相对同期活跃人数的比例。", formula: "totalClickedPerson ÷ loginUserCount。", algorithm: "先汇总分子分母再相除。", apis: ["/api/admin/statistics/pDaySum"] },
@@ -652,7 +652,7 @@ const metricFieldHelp: Record<MetricId, MetricFieldHelp> = {
   oldAdClickUserDays: { definition: "每日老用户广告点击人数累计形成的人天。", formula: "Σ 每日老用户广告点击人数。", algorithm: "跨天求和，同一用户多日点击重复计数。", apis: ["/api/admin/statistics/pDaySum"] },
   oldAdClickRate: { definition: "老用户广告点击人次相对老用户数的比例。", formula: "老用户广告点击人次 ÷ (DAU - 新增用户)。", algorithm: "先汇总派生分子和分母再相除。", apis: ["/api/admin/statistics/pDaySum"] },
   oldAdClickUserRate: { definition: "发生广告点击的老用户占同期老用户的比例。", formula: "老用户广告点击人数 ÷ (DAU - 新增用户)。", algorithm: "先汇总派生分子和分母再相除。", apis: ["/api/admin/statistics/pDaySum"] },
-  newRevenue: { definition: "统计周期内新增用户贡献的充值金额。", formula: "汇总 newUserDiamondChargeAmt。", algorithm: "金额按平台和日期求和。", apis: ["/api/admin/statistics/pDaySum"] },
+  newRevenue: { definition: "统计周期内每日新增充值金额合计。", formula: "Σ rechargeNew；渠道表使用 Σ newRevenue。", algorithm: "流量字段按日期或渠道求和。", apis: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/channels-daily"] },
   newPayerCount: { definition: "统计周期内完成充值的新增用户数。", formula: "汇总 newUserChargeUserCount。", algorithm: "使用后台日汇总去重口径。", apis: ["/api/admin/statistics/pDaySum"] },
   newPayRate: { definition: "完成充值的新增用户占同期新增用户的比例。", formula: "newUserChargeUserCount ÷ registerUserCount。", algorithm: "先汇总分子分母再相除。", apis: ["/api/admin/statistics/pDaySum"] },
   newArpu: { definition: "每位新增用户平均贡献的充值收入。", formula: "newUserDiamondChargeAmt ÷ registerUserCount。", algorithm: "先汇总金额和新增人数再相除。", apis: ["/api/admin/statistics/pDaySum"] },
@@ -684,20 +684,17 @@ function getFieldExplanation(label: string, metric?: MetricId) {
 
 const CardFieldContext = React.createContext<DashboardCardConfig | null>(null);
 const fieldApiSources: Record<string, string[]> = {
-  DAU: ["/api/admin/home/pRealDayLine", "/api/admin/home/getAllByRole"],
-  新增用户: ["/api/admin/statistics/pDaySum", "/api/admin/home/getAllByRole"],
-  观影率: ["/api/admin/home/pRealDayLine"],
-  人均观影时长: ["/api/admin/statistics/todayUsers/getMany"],
-  搜索次数: ["/api/admin/statistics/hotSearchWords/getMany"],
-  收入: ["/api/admin/statistics/pDaySum"],
-  付费率: ["/api/admin/statistics/pDaySum"],
-  观看次数: ["/api/admin/statistics/todayVideos/getVideoStatsByCategories"],
-  观看人数: ["/api/admin/statistics/todayVideos/getVideoStatsByCategories"],
-  点击次数: ["/api/admin/statistics/trackEventsReport/getEventStats"],
-  D1留存: ["/api/admin/statistics/reletionsStatPlus/getDays"],
-  D3留存: ["/api/admin/statistics/reletionsStatPlus/getDays"],
-  D7留存: ["/api/admin/statistics/reletionsStatPlus/getDays"],
-  D30留存: ["/api/admin/statistics/reletionsStatPlus/getDays"]
+  DAU: ["/api/v1/admin/analytics/period"],
+  新增用户: ["/api/v1/admin/analytics/period"],
+  收入: ["/api/v1/admin/analytics/period"],
+  付费率: ["/api/v1/admin/analytics/channels-daily"],
+  观看次数: ["/api/v1/admin/analytics/period"],
+  观看人数: ["/api/v1/admin/analytics/period"],
+  点击次数: ["/api/v1/admin/analytics/ad-stats"],
+  D1留存: ["/api/v1/admin/analytics/period"],
+  D3留存: ["/api/v1/admin/analytics/period"],
+  D7留存: ["/api/v1/admin/analytics/period"],
+  D30留存: ["暂无已确认接口"]
 };
 
 function FieldExplanationDialog({ label, metric, card, onClose }: { label: string; metric?: MetricId; card: DashboardCardConfig | null; onClose: () => void }) {
@@ -793,7 +790,7 @@ function hasChartData(card: DashboardCardConfig, result: CardQueryResult) {
   if (card.type === "cohort") return Boolean(result.cohort?.length);
   if (card.type === "waterfall") return Boolean(result.waterfall?.length);
   if (card.type === "sankey") return Boolean(result.sankey?.nodes.length && result.sankey.links.length);
-  return result.categories.length > 0 && result.series.some((series) => series.data.length > 0);
+  return result.categories.length > 0 && result.series.some((series) => series.data.some((value) => Number.isFinite(value)));
 }
 
 const resizeSizes: DashboardCardConfig["size"][] = ["md", "lg", "full"];
@@ -950,11 +947,11 @@ function CardAssetPreview({ card }: { card: DashboardCardConfig }) {
   const result = useMemo(() => executeCardQuery(card, DEFAULT_FILTERS), [card]);
   const option = useMemo(() => makeQueryOption(card, result), [card, result]);
 
-  if (card.type === "kpi") return <KpiCard result={result} />;
-  if (card.type === "table") return <div className="mini-table"><DataTable rows={result.table} compact /></div>;
-  if (card.type === "diagnosis") return <DiagnosisCard insights={result.insights} />;
+  if (card.type === "kpi") return <><small className="asset-preview-note">结构预览，非实时数值</small><KpiCard result={result} /></>;
+  if (card.type === "table") return <><small className="asset-preview-note">结构预览，非实时数值</small><div className="mini-table"><DataTable rows={result.table} compact /></div></>;
+  if (card.type === "diagnosis") return <><small className="asset-preview-note">结构预览，非实时结论</small><DiagnosisCard insights={result.insights} /></>;
   if (["line", "bar", "heatmap", "funnel", "treemap", "scatter", "cohort", "waterfall", "sankey"].includes(card.type)) {
-    return <div className="asset-chart"><Chart option={option} /></div>;
+    return <><small className="asset-preview-note">结构预览，非实时数值</small><div className="asset-chart"><Chart option={option} /></div></>;
   }
   return <div className="empty-preview">暂无预览</div>;
 }
@@ -963,6 +960,7 @@ function DashboardRenderer({ template, filters, onDrill, onSaveLayout }: { templ
   const model = analysisModels.find((item) => item.id === template.model);
   const [layoutCards, setLayoutCards] = useState(template.cards);
   const [layoutDirty, setLayoutDirty] = useState(false);
+  const [exporting, setExporting] = useState(false);
   useEffect(() => {
     setLayoutCards(template.cards);
     setLayoutDirty(false);
@@ -975,14 +973,27 @@ function DashboardRenderer({ template, filters, onDrill, onSaveLayout }: { templ
     setLayoutCards((cards) => cards.map((card) => card.id === cardId ? { ...card, ...patch } : card));
     setLayoutDirty(true);
   };
-  const exportRows = () => {
-    const rows = template.cards.flatMap((card) => executeCardQuery(card, cardScopedFilters(card, filters)).table.map((row) => ({ 卡片: card.title, ...row })));
-    downloadCsv(`${template.name}-${filters.dateRange}.csv`, rows);
+  const exportRows = async () => {
+    setExporting(true);
+    try {
+      const groups = await Promise.all(template.cards.map(async (card) => {
+        const response = await fetch("/api/bi/analytics/query", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(buildAnalyticsRequest(card, cardScopedFilters(card, filters))) });
+        const payload = await response.json() as { success: boolean; data?: { data: { rows: Record<string, string | number | null>[] } }; error?: { message?: string } };
+        if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? `${card.title}导出失败`);
+        return payload.data.data.rows.map((row) => ({ 卡片: card.title, ...row }));
+      }));
+      downloadCsv(`${template.name}-${filters.dateRange}.csv`, groups.flat());
+      notify("真实查询结果已导出");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "真实数据导出失败");
+    } finally {
+      setExporting(false);
+    }
   };
   return <div>
     <div className="dashboard-head">
       <div><h1>{template.name}</h1><p>{template.scenario}</p></div>
-      <div className="dashboard-actions"><div className="model-pill">{model?.name}</div><button className={layoutDirty ? "blue-action" : ""} disabled={!layoutDirty} onClick={() => { onSaveLayout(layoutCards); setLayoutDirty(false); notify("看板布局已保存"); }}>保存布局</button><button onClick={exportRows}>导出</button></div>
+      <div className="dashboard-actions"><div className="model-pill">{model?.name}</div><button className={layoutDirty ? "blue-action" : ""} disabled={!layoutDirty} onClick={() => { onSaveLayout(layoutCards); setLayoutDirty(false); notify("看板布局已保存"); }}>保存布局</button><button disabled={exporting} onClick={exportRows}>{exporting ? "正在查询..." : "导出"}</button></div>
     </div>
     <div className="decision-strip">{(dashboardFocus[template.id] ?? []).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div>
     <div className="cards-grid resizable-grid">{layoutCards.map((card) => <CardRenderer key={card.id} card={card} filters={filters} onDrill={onDrill} resizable onResize={(size) => resizeCard(card.id, size)} onPlatformScopeChange={(patch) => updateCardPlatformScope(card.id, patch)} />)}</div>
@@ -1146,9 +1157,9 @@ function GlobalFilterBar({ filters, onChange }: { filters: DashboardFilters; onC
       <section className={`filter-popover ${openPanel}`} role="dialog" aria-modal="true" aria-label={openPanel === "platform" ? "选择平台范围" : "选择时间范围"} onMouseDown={(event) => event.stopPropagation()}>
         <div className="filter-popover-head"><div><b>{openPanel === "platform" ? "选择平台范围" : "选择时间范围"}</b><span>{openPanel === "platform" ? "选择后统一应用，避免重复加载" : "设置当前周期和对比周期，两段时间分别查询"}</span></div><button aria-label="关闭" onClick={() => setOpenPanel(null)}>×</button></div>
         {openPanel === "platform" && <>
-          <div className="platform-mode-tabs"><button className={modeDraft === "all" ? "on" : ""} onClick={() => changeModeDraft("all")}><b>全部平台</b><span>汇总 20 个平台</span></button><button className={modeDraft === "single" ? "on" : ""} onClick={() => changeModeDraft("single")}><b>单个平台</b><span>查看一个平台</span></button><button className={modeDraft === "compare" ? "on" : ""} onClick={() => changeModeDraft("compare")}><b>平台对比</b><span>同时选择 2-8 个</span></button></div>
+          <div className="platform-mode-tabs"><button className={modeDraft === "all" ? "on" : ""} onClick={() => changeModeDraft("all")}><b>全部产品</b><span>当前仅 NewAV</span></button><button className={modeDraft === "single" ? "on" : ""} onClick={() => changeModeDraft("single")}><b>单个产品</b><span>查看一个产品</span></button><button className={modeDraft === "compare" ? "on" : ""} onClick={() => changeModeDraft("compare")}><b>产品对比</b><span>新增产品后可用</span></button></div>
           {modeDraft !== "all" && <><div className="platform-picker-toolbar"><input value={platformSearch} onChange={(event) => setPlatformSearch(event.target.value)} placeholder="搜索平台名称或 PID" /><span>已选 {platformDraft.length}{modeDraft === "compare" ? "/8" : ""}</span></div><div className="platform-option-grid">{visiblePlatforms.map((item) => <button aria-pressed={platformDraft.includes(item.platform)} className={platformDraft.includes(item.platform) ? "on" : ""} key={item.platform} onClick={() => togglePlatformDraft(item.platform)}><i style={{ background: PLATFORM_COLORS[item.platform] }} /><span><b>{item.platform}</b><small>{platformPid[item.platform]}</small></span><em>{platformDraft.includes(item.platform) ? "已选" : ""}</em></button>)}</div></>}
-          {modeDraft === "all" && <div className="all-platform-summary"><b>全部 20 个平台</b><span>数据按平台汇总，图表仍可查看平台排行和差异。</span></div>}
+          {modeDraft === "all" && <div className="all-platform-summary"><b>当前全部产品：NewAV</b><span>后续新增产品会在此独立空间统一选择。</span></div>}
           <div className="filter-popover-actions"><button onClick={() => setOpenPanel(null)}>取消</button><button className="primary-btn" disabled={!platformSelectionValid} onClick={applyPlatformSelection}>应用范围</button></div>
         </>}
         {openPanel === "date" && <>
@@ -1873,13 +1884,6 @@ function AnalysisCreator({ modelId, draft, onDraftChange, onUndo, canUndo, onSav
 
 function Drawer({ payload, onClose }: { payload: DrilldownPayload | null; onClose: () => void }) {
   const ref = useRef<HTMLElement | null>(null);
-  const [detailKind, setDetailKind] = useState<"users" | "circles">("users");
-  const [detailPlatform, setDetailPlatform] = useState("");
-  const [detailPage, setDetailPage] = useState(1);
-  const [detailRows, setDetailRows] = useState<Record<string, string | number>[]>([]);
-  const [detailWarnings, setDetailWarnings] = useState<string[]>([]);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
   useEffect(() => {
     if (!payload) return undefined;
     ref.current?.focus();
@@ -1887,42 +1891,6 @@ function Drawer({ payload, onClose }: { payload: DrilldownPayload | null; onClos
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [payload, onClose]);
-  useEffect(() => {
-    if (!payload) return;
-    setDetailKind(payload.detailKind);
-    setDetailPlatform(payload.platformIds[0] ?? "");
-    setDetailPage(1);
-  }, [payload]);
-  useEffect(() => {
-    if (!payload || !detailPlatform) return;
-    const controller = new AbortController();
-    setDetailLoading(true);
-    setDetailError(null);
-    fetch(`/api/bi/drilldown/${detailKind}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({ platformId: detailPlatform, dateRange: payload.dateRange, page: detailPage, pageSize: 20 })
-    }).then(async (response) => {
-      const body = await response.json() as { success: boolean; data?: { rows: Record<string, string | number>[]; warnings?: string[] }; error?: { message?: string } };
-      if (!response.ok || !body.success || !body.data) throw new Error(body.error?.message ?? "真实明细查询失败");
-      setDetailRows(body.data.rows);
-      setDetailWarnings(body.data.warnings ?? []);
-    }).catch((error) => {
-      if (controller.signal.aborted) return;
-      setDetailRows([]);
-      setDetailWarnings([]);
-      setDetailError(error instanceof Error ? error.message : "真实明细查询失败");
-    }).finally(() => { if (!controller.signal.aborted) setDetailLoading(false); });
-    return () => controller.abort();
-  }, [payload, detailKind, detailPlatform, detailPage]);
-  const trendOption = useMemo<EChartsOption>(() => ({
-    tooltip: { trigger: "axis" },
-    grid: { left: 34, right: 14, top: 16, bottom: 24 },
-    xAxis: { type: "category", data: dates.slice(-6), boundaryGap: false },
-    yAxis: { type: "value", splitLine: { lineStyle: { color: "#eef2f6" } } },
-    series: [{ type: "line", smooth: true, data: [82, 86, 79, 92, 88, 103], areaStyle: { opacity: .14 }, color: "#2563eb" }]
-  }), []);
   return <>
     <div className={payload ? "mask show" : "mask"} onClick={onClose} />
     <aside ref={ref} role="dialog" aria-modal="true" aria-label="下钻分析" tabIndex={-1} className={payload ? "drawer show" : "drawer"}>
@@ -1933,50 +1901,33 @@ function Drawer({ payload, onClose }: { payload: DrilldownPayload | null; onClos
         <div className="insight-panel">
           <b>自动分析结论</b>
           <p>{payload.diagnosis[0]}</p>
-          <div className="drawer-mini-chart"><Chart option={trendOption} /></div>
         </div>
-        <div className="detail-section-head"><div><h3>真实业务明细</h3><span>来自后台明细接口，不使用演示数据</span></div><div className="detail-controls"><select value={detailPlatform} onChange={(event) => { setDetailPlatform(event.target.value); setDetailPage(1); }}>{payload.platformIds.map((pid) => <option key={pid} value={pid}>{pid}</option>)}</select><div className="segmented-control"><button className={detailKind === "users" ? "on" : ""} onClick={() => { setDetailKind("users"); setDetailPage(1); }}>用户</button><button className={detailKind === "circles" ? "on" : ""} onClick={() => { setDetailKind("circles"); setDetailPage(1); }}>圈子</button></div></div></div>
-        {detailLoading && <div className="detail-state">正在加载真实明细...</div>}
-        {detailError && <div className="card-data-warning">{detailError}</div>}
-        {!detailLoading && !detailError && <DataTable rows={detailRows} />}
-        {detailWarnings.length > 0 && <div className="detail-warnings">{detailWarnings.join("；")}</div>}
-        <div className="detail-pager"><button disabled={detailPage === 1 || detailLoading} onClick={() => setDetailPage((page) => Math.max(1, page - 1))}>上一页</button><b>第 {detailPage} 页</b><button disabled={detailRows.length < 20 || detailLoading} onClick={() => setDetailPage((page) => page + 1)}>下一页</button></div>
-        <h3>图表聚合数据</h3>
+        <div className="detail-section-head"><div><h3>真实聚合明细</h3><span>与当前卡片使用同一次 API 查询，不使用演示数据</span></div></div>
         <DataTable rows={payload.rows} />
         <h3>系统诊断</h3>
         <DiagnosisCard insights={payload.diagnosis} />
         <h3>下一步</h3>
-        <div className="drawer-actions"><button onClick={() => notify("已带入当前平台、时间和节点条件")}>{payload.actions[0]}</button><button onClick={() => downloadCsv(`${payload.title}.csv`, detailRows.length ? detailRows : payload.rows)}>{payload.actions[1]}</button><button onClick={() => notify("已保存为该卡片的默认下钻路径")}>{payload.actions[2]}</button></div>
+        <div className="drawer-actions"><button onClick={() => notify("已带入当前平台、时间和节点条件")}>{payload.actions[0]}</button><button onClick={() => downloadCsv(`${payload.title}.csv`, payload.rows)}>{payload.actions[1]}</button><button onClick={() => notify("已保存为该卡片的默认下钻路径")}>{payload.actions[2]}</button></div>
       </div>}
     </aside>
   </>;
 }
 
 function Dictionaries({ onUseModel }: { onUseModel: (modelId: AnalysisModelId) => void }) {
-  const [tab, setTab] = useState<"events" | "metrics" | "dimensions" | "taxonomy">("events");
+  const [tab, setTab] = useState<"events" | "metrics" | "dimensions">("events");
   const [search, setSearch] = useState("");
-  const [taxonomyPlatform, setTaxonomyPlatform] = useState("PH");
-  const [categoryRoots, setCategoryRoots] = useState<Array<{ platformCode: string; platformName: string; groups: Array<{ id: string; name: string; type: string; childCount: number }> }>>([]);
-  const [realTags, setRealTags] = useState<Array<{ id: string; name: string; type: string; group: string }>>([]);
-  useEffect(() => {
-    if (tab !== "taxonomy") return;
-    const controller = new AbortController();
-    Promise.all([fetch("/api/bi/metadata/categories", { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ platformId: taxonomyPlatform }) }).then((response) => response.json()), fetch("/api/bi/metadata/tags", { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ platformId: taxonomyPlatform }) }).then((response) => response.json())]).then(([categories, tags]) => { if (categories.success) setCategoryRoots(categories.data); if (tags.success) setRealTags(tags.data.rows ?? []); }).catch(() => { if (!controller.signal.aborted) notify("真实分类和标签读取失败"); });
-    return () => controller.abort();
-  }, [tab, taxonomyPlatform]);
   const normalized = search.trim().toLowerCase();
   const modelForEvent = (eventId: string) => analysisModels.find((model) => model.eventChain.includes(eventId))?.id ?? null;
   const modelForMetric = (metricId: MetricId) => analysisModels.find((model) => model.allowedMetrics.includes(metricId))?.id ?? null;
   return <section className="dictionary-workspace">
     <div className="dashboard-head"><div><h1>数据字典</h1><p>统一查看已有 API 返回字段、可计算指标和受支持维度，并可直接带入分析工作台。</p></div><div className="dashboard-actions"><div className="model-pill">{eventDictionary.length} 埋点汇总字段 · {metricDictionary.length} 指标 · {Object.keys(dimensionName).length} 维度</div></div></div>
-    <div className="dictionary-toolbar"><div className="dictionary-tabs"><button className={tab === "events" ? "on" : ""} onClick={() => setTab("events")}>API 字段</button><button className={tab === "metrics" ? "on" : ""} onClick={() => setTab("metrics")}>指标</button><button className={tab === "dimensions" ? "on" : ""} onClick={() => setTab("dimensions")}>维度</button><button className={tab === "taxonomy" ? "on" : ""} onClick={() => setTab("taxonomy")}>分类与标签</button></div><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、字段、接口域或口径" /></div>
+    <div className="dictionary-toolbar"><div className="dictionary-tabs"><button className={tab === "events" ? "on" : ""} onClick={() => setTab("events")}>API 字段</button><button className={tab === "metrics" ? "on" : ""} onClick={() => setTab("metrics")}>指标</button><button className={tab === "dimensions" ? "on" : ""} onClick={() => setTab("dimensions")}>维度</button></div><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、字段、接口域或口径" /></div>
     {tab === "events" && <div className="dictionary-grid">{eventDictionary.filter((event) => !normalized || `${event.name} ${event.id} ${event.domain} ${event.description}`.toLowerCase().includes(normalized)).map((event) => { const targetModel = modelForEvent(event.id); return <article className="dictionary-item" key={event.id}><div className="dictionary-item-head"><div><b>{event.name}</b><code>{event.id}</code></div><span className={`data-status ${event.status ?? "ready"}`}>{event.status === "partial" ? "部分可用" : event.status === "missing" ? "待建设" : "接口可用"}</span></div><p>{event.description}</p><div className="dictionary-meta"><span>{event.domain}</span><span>{event.trigger ?? "接口聚合返回"}</span></div><div className="chips">{event.requiredProperties.map((dimension) => <span key={dimension}>{dimensionName[dimension]}</span>)}</div><button disabled={!targetModel} onClick={() => targetModel && onUseModel(targetModel)}>{targetModel ? "用于新建分析" : "仅供查看"}</button></article>;})}</div>}
     {tab === "metrics" && <div className="dictionary-grid">{metricDictionary.filter((metric) => !normalized || `${metric.name} ${metric.id} ${metric.formula} ${metric.source}`.toLowerCase().includes(normalized)).map((metric) => { const targetModel = modelForMetric(metric.id); return <article className="dictionary-item" key={metric.id}><div className="dictionary-item-head"><div><b>{metric.name}</b><code>{metric.id}</code></div><span className={`data-status ${metric.status}`}>{metric.status === "partial" ? "部分可用" : metric.status === "missing" ? "待建设" : "可用"}</span></div><p>{metric.description ?? metric.formula}</p><pre>{metric.formula}</pre><div className="dictionary-meta"><span>{metric.source}</span><span>负责人：{metric.owner}</span></div><button disabled={!targetModel} onClick={() => targetModel && onUseModel(targetModel)}>{targetModel ? "用于新建分析" : "当前不可配置"}</button></article>;})}</div>}
     {tab === "dimensions" && <div className="dictionary-grid">{Object.entries(dimensionName).filter(([id, name]) => !normalized || `${id} ${name}`.toLowerCase().includes(normalized)).map(([id, name]) => {
       const supportedModels = analysisModels.filter((model) => model.allowedDimensions.includes(id as DimensionId));
       return <article className="dictionary-item dimension-item" key={id}><div className="dictionary-item-head"><div><b>{name}</b><code>{id}</code></div><span className={`data-status ${supportedModels.length ? "ready" : "missing"}`}>{supportedModels.length ? `${supportedModels.length} 个模型可用` : "当前 API 不支持"}</span></div><p>{supportedModels.length ? `可用于：${supportedModels.map((model) => model.name).join("、")}` : "字段已保留在规划字典中，现阶段不能用于生成真实分析卡片。"}</p><div className="dictionary-meta"><span>API 能力约束</span><span>{supportedModels.length ? "支持筛选或分组" : "等待接口补充"}</span></div><button disabled={!supportedModels.length} onClick={() => supportedModels.length && onUseModel(supportedModels[0].id)}>{supportedModels.length ? "用于新建分析" : "暂不可用"}</button></article>;
     })}</div>}
-    {tab === "taxonomy" && <><div className="taxonomy-toolbar"><label>标签平台<select value={taxonomyPlatform} onChange={(event) => setTaxonomyPlatform(event.target.value)}>{Object.entries(platformPid).map(([name, pid]) => <option key={pid} value={pid}>{name}</option>)}</select></label><span>真实分类树 {categoryRoots.length} 个根节点 · 标签 {realTags.length} 个</span></div><div className="dictionary-grid">{categoryRoots.flatMap((root) => root.groups.map((group) => ({ ...group, platformName: root.platformName }))).filter((item) => !normalized || `${item.name} ${item.type} ${item.platformName}`.toLowerCase().includes(normalized)).slice(0, 60).map((item) => <article className="dictionary-item" key={`${item.platformName}-${item.id}`}><div className="dictionary-item-head"><div><b>{item.name}</b><code>{item.type}</code></div><span className="data-status ready">真实分类</span></div><p>{item.platformName} · 下级分类 {item.childCount} 个</p></article>)}{realTags.filter((item) => !normalized || `${item.name} ${item.type}`.toLowerCase().includes(normalized)).slice(0, 60).map((item) => <article className="dictionary-item" key={item.id}><div className="dictionary-item-head"><div><b>{item.name}</b><code>{item.type}</code></div><span className="data-status ready">真实标签</span></div><p>标签组：{item.group}</p></article>)}</div></>}
   </section>;
 }
 
@@ -2014,7 +1965,7 @@ interface ChannelRow {
 function ChannelDashboard({ filters }: { filters: DashboardFilters }) {
   const platformScope = selectedPlatformScope(filters);
   const platformKey = platformScope.map((item) => item.pid).join(",");
-  const scopeLabel = filters.mode === "all" ? "全部 20 个平台" : platformScope.map((item) => item.name).join("、");
+  const scopeLabel = filters.mode === "all" ? "全部产品（当前 NewAV）" : platformScope.map((item) => item.name).join("、");
   const range = filters.dateRange;
   const [rows, setRows] = useState<ChannelRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -2065,7 +2016,7 @@ interface ContentCategoryRow { category: string; watches: number; viewers: numbe
 function ContentDashboard({ filters }: { filters: DashboardFilters }) {
   const platformScope = selectedPlatformScope(filters);
   const platformKey = platformScope.map((item) => item.pid).join(",");
-  const scopeLabel = filters.mode === "all" ? "全部 20 个平台" : platformScope.map((item) => item.name).join("、");
+  const scopeLabel = filters.mode === "all" ? "全部产品（当前 NewAV）" : platformScope.map((item) => item.name).join("、");
   const range = filters.dateRange;
   const [rows, setRows] = useState<ContentCategoryRow[]>([]);
   const [approximateUv, setApproximateUv] = useState(false);
@@ -2107,7 +2058,7 @@ function SpecialDashboard({ filters }: { filters: DashboardFilters }) {
   const [domain, setDomain] = useState<SpecialDomain>("navigation");
   const platformScope = selectedPlatformScope(filters);
   const platformKey = platformScope.map((item) => item.pid).join(",");
-  const scopeLabel = filters.mode === "all" ? "全部 20 个平台" : platformScope.map((item) => item.name).join("、");
+  const scopeLabel = filters.mode === "all" ? "全部产品（当前 NewAV）" : platformScope.map((item) => item.name).join("、");
   const range = filters.dateRange;
   const [rows, setRows] = useState<Array<Record<string, string | number | boolean>>>([]);
   const [total, setTotal] = useState(0);

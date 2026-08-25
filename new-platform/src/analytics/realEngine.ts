@@ -111,12 +111,14 @@ export function transformRealResult(card: DashboardCardConfig, response: NonNull
     const cohortRows = cohortPlatforms.flatMap((platform) => dates.map((date) => ({ row: rows.find((item) => String(item.platform ?? platform) === platform && String(item.date) === date) ?? { platform, date }, label: `${platform} · ${date}` })));
     const values = cohortRows.flatMap(({ row }, y) => retentionMetrics.flatMap((metric, x) => typeof row[metric] === "number" ? [[x, y, Number((Number(row[metric]) * 100).toFixed(2))] as [number, number, number]] : []));
     const summary = retentionMetrics.map((metric) => {
-      const value = toDisplayValue(metric, response.data.summary?.[metric]);
-      return { metric, value, formatted: formatMetric(metric, value), change: 0, changeLabel: "当前区间" };
+      const rawValue = response.data.summary?.[metric];
+      const available = typeof rawValue === "number";
+      const value = toDisplayValue(metric, rawValue);
+      return { metric, value, formatted: available ? formatMetric(metric, value) : "—", change: 0, changeLabel: available ? "当前区间" : "当前区间无数据", available };
     });
     return {
       scopeLabel, categories: retentionLabels, series: [], cohort: values, cohortX: retentionLabels, cohortY: cohortRows.map((item) => item.label), summary,
-      table: rows.map((row) => ({ 平台: String(row.platform ?? filters.platforms[0] ?? "平台"), 注册日期: String(row.date), 新增用户: Number(row.newUsers ?? 0), D1留存: typeof row.retentionD1 === "number" ? `${(row.retentionD1 * 100).toFixed(2)}%` : "—", D3留存: typeof row.retentionD3 === "number" ? `${(row.retentionD3 * 100).toFixed(2)}%` : "—", D7留存: typeof row.retentionD7 === "number" ? `${(row.retentionD7 * 100).toFixed(2)}%` : "—", D30留存: typeof row.retentionD30 === "number" ? `${(row.retentionD30 * 100).toFixed(2)}%` : "—" })), insights: cohortRows.length ? [`当前展示 ${cohortRows.length} 个注册 cohort。`, `D30 仅统计已达到 30 日观察期的 cohort。`, `区间加权 D7 留存为 ${formatMetric("retentionD7", summary[2].value)}。`] : ["当前范围没有可分析的留存 cohort。"]
+      table: rows.map((row) => ({ 产品: String(row.platform ?? filters.platforms[0] ?? "NewAV"), 统计日期: String(row.date), 新增注册: Number(row.newUsers ?? 0), D1留存: typeof row.retentionD1 === "number" ? `${(row.retentionD1 * 100).toFixed(2)}%` : "—", D3留存: typeof row.retentionD3 === "number" ? `${(row.retentionD3 * 100).toFixed(2)}%` : "—", D7留存: typeof row.retentionD7 === "number" ? `${(row.retentionD7 * 100).toFixed(2)}%` : "—", D30留存: "—" })), insights: cohortRows.length ? [`当前展示 ${cohortRows.length} 个日期留存记录。`, `D3/D7 未成熟日期保持空值，不按 0 参与。`, `区间 D7 为非空日期简单平均 ${formatMetric("retentionD7", summary[2].value)}；接口缺少 cohort 分母，不能计算加权留存。`] : ["当前范围没有可分析的留存记录。"]
     };
   }
   const primaryMetric = card.metrics[0];
@@ -188,7 +190,7 @@ export function transformRealResult(card: DashboardCardConfig, response: NonNull
   const valueFor = (metric: MetricId, category: string, platform?: string) => {
     const matching = rows.filter((row) => categoryOf(row) === category && (!platform || row.platform === platform));
     const values = matching.map((row) => row[metric]).filter((value): value is number => typeof value === "number");
-    if (!values.length) return 0;
+    if (!values.length) return isPlatformAxis ? 0 : Number.NaN;
     const value = METRIC_META[metric].unit === "number" || METRIC_META[metric].unit === "currency"
       ? values.reduce((sum, item) => sum + item, 0)
       : values.reduce((sum, item) => sum + item, 0) / values.length;
@@ -211,8 +213,10 @@ export function transformRealResult(card: DashboardCardConfig, response: NonNull
     series = series.map((item) => ({ ...item, data: order.map((index) => item.data[index]) }));
   }
   const summary = card.metrics.map((metric) => {
-    const value = toDisplayValue(metric, response.data.summary?.[metric]);
-    return { metric, value, formatted: formatMetric(metric, value), change: 0, changeLabel: "当前区间" };
+    const rawValue = response.data.summary?.[metric];
+    const available = typeof rawValue === "number";
+    const value = toDisplayValue(metric, rawValue);
+    return { metric, value, formatted: available ? formatMetric(metric, value) : "—", change: 0, changeLabel: available ? "当前区间" : "当前区间无数据", available };
   });
   const scatter = card.type === "scatter" && card.metrics.length >= 2
     ? categories.map((category, index) => {
@@ -225,24 +229,29 @@ export function transformRealResult(card: DashboardCardConfig, response: NonNull
       };
     })
     : undefined;
-  const platformRows = rows.filter((row) => typeof row.platform === "string");
-  const diagnosis = card.type === "diagnosis" && platformRows.length
+  const datedRows = rows.filter((row) => typeof row.date === "string").sort((left, right) => String(left.date).localeCompare(String(right.date)));
+  const diagnosis = card.type === "diagnosis" && datedRows.length
     ? (() => {
-      const rowsWith = (metric: MetricId) => platformRows.filter((row) => typeof row[metric] === "number");
-      const topActive = rowsWith("dau").sort((left, right) => Number(right.dau) - Number(left.dau))[0];
-      const lowestViewing = rowsWith("viewRate").sort((left, right) => Number(left.viewRate) - Number(right.viewRate))[0];
-      const lowestPayment = rowsWith("payRate").sort((left, right) => Number(left.payRate) - Number(right.payRate))[0];
-      return [
-        topActive && `${String(topActive.platform)} 活跃规模最高，DAU ${formatMetric("dau", Number(topActive.dau))}。`,
-        lowestViewing && `${String(lowestViewing.platform)} 观影率最低，为 ${formatMetric("viewRate", toDisplayValue("viewRate", Number(lowestViewing.viewRate)))}，建议优先检查内容承接。`,
-        lowestPayment && `${String(lowestPayment.platform)} 付费率最低，为 ${formatMetric("payRate", toDisplayValue("payRate", Number(lowestPayment.payRate)))}，建议继续拆解会员入口与支付通道。`
-      ].filter((insight): insight is string => Boolean(insight));
+      return card.metrics.flatMap((metric) => {
+        const available = datedRows.filter((row) => typeof row[metric] === "number");
+        if (!available.length) return [`${METRIC_META[metric].name}在当前周期没有可用值。`];
+        const first = available[0];
+        const latest = available.at(-1) ?? first;
+        const firstValue = Number(first[metric]);
+        const latestValue = Number(latest[metric]);
+        const change = firstValue ? (latestValue - firstValue) / Math.abs(firstValue) * 100 : null;
+        const ranked = [...available].sort((left, right) => Number(right[metric]) - Number(left[metric]));
+        const peak = ranked[0];
+        const completeness = available.length === datedRows.length ? "数据完整" : `仅 ${available.length}/${datedRows.length} 天有值`;
+        return [`${METRIC_META[metric].name}最新值 ${formatMetric(metric, toDisplayValue(metric, latestValue))}，较周期首个可用值${change == null ? "暂不可比" : `${change >= 0 ? "上升" : "下降"} ${Math.abs(change).toFixed(1)}%`}；峰值出现在 ${String(peak.date)}，${completeness}。`];
+      }).slice(0, 4);
     })()
     : undefined;
   const businessInsights = (() => {
     const firstSeries = series[0];
     if (!firstSeries?.data.length) return ["当前范围没有可分析的数据。"];
-    const values = firstSeries.data.map((value, index) => ({ name: categories[index], value }));
+    const values = firstSeries.data.map((value, index) => ({ name: categories[index], value })).filter((item) => Number.isFinite(item.value));
+    if (!values.length) return ["当前范围没有可分析的数据。"];
     const ranked = [...values].sort((left, right) => right.value - left.value);
     const total = values.reduce((sum, item) => sum + item.value, 0);
     const top = ranked[0];
@@ -362,9 +371,11 @@ function withComparison(current: CardQueryResult, previous: CardQueryResult, car
   const previousHasRecords = previous.table.length > 0;
   const summary = current.summary.map((item) => {
     const benchmark = previousByMetric.get(item.metric)?.value;
-    const comparable = currentHasRecords && previousHasRecords && typeof benchmark === "number" && benchmark !== 0;
+    const snapshotOnly = item.metric === "currentPaidMembers" || item.metric === "historicalPaidMembers";
+    const previousMetric = previousByMetric.get(item.metric);
+    const comparable = !snapshotOnly && item.available !== false && previousMetric?.available !== false && currentHasRecords && previousHasRecords && typeof benchmark === "number" && benchmark !== 0;
     const change = comparable ? (item.value - benchmark) / Math.abs(benchmark) * 100 : 0;
-    const changeLabel = !currentHasRecords ? "当前期暂无记录" : !previousHasRecords ? "对比期暂无记录" : typeof benchmark === "number" ? `对比期 ${formatMetric(item.metric, benchmark)}` : "对比期无数据";
+    const changeLabel = snapshotOnly ? "当前快照，不支持历史对比" : item.available === false ? "当前期无数据" : previousMetric?.available === false ? "对比期无数据" : !currentHasRecords ? "当前期暂无记录" : !previousHasRecords ? "对比期暂无记录" : typeof benchmark === "number" ? `对比期 ${formatMetric(item.metric, benchmark)}` : "对比期无数据";
     return { ...item, change: Number(change.toFixed(2)), changeLabel };
   });
   const comparisonSeries = card.type === "line" ? previous.series.map((series) => ({ ...series, name: `对比期·${series.name}` })) : [];

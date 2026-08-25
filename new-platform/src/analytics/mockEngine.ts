@@ -22,6 +22,7 @@ export interface MetricAggregate {
   formatted: string;
   change: number;
   changeLabel: string;
+  available?: boolean;
 }
 
 export interface QuerySeries {
@@ -167,14 +168,14 @@ export const METRIC_META: Record<MetricId, MetricMeta> = {
   revenue: { name: "收入", unit: "currency", aggregation: "sum", positive: true },
   viewRate: { name: "观影率", unit: "percent", aggregation: "weighted", positive: true },
   payRate: { name: "付费率", unit: "percent", aggregation: "weighted", positive: true },
-  payerCount: { name: "日均付费人数", unit: "number", aggregation: "average", positive: true },
+  payerCount: { name: "购卡单数", unit: "number", aggregation: "sum", positive: true },
   payerUserDays: { name: "累计付费人天", unit: "number", aggregation: "sum", positive: true },
   visits: { name: "访问", unit: "number", aggregation: "sum", positive: true },
   downloads: { name: "下载", unit: "number", aggregation: "sum", positive: true },
   visitDownloadRate: { name: "访问→下载转化", unit: "percent", aggregation: "weighted", positive: true },
   downloadRegisterRate: { name: "下载→注册转化", unit: "percent", aggregation: "weighted", positive: true },
   visitRegisterRate: { name: "访问→注册转化", unit: "percent", aggregation: "weighted", positive: true },
-  retentionD1: { name: "次留", unit: "percent", aggregation: "weighted", positive: true },
+  retentionD1: { name: "次留", unit: "percent", aggregation: "average", positive: true },
   retentionD3: { name: "D3留存", unit: "percent", aggregation: "weighted", positive: true },
   retentionD7: { name: "D7留存", unit: "percent", aggregation: "weighted", positive: true },
   retentionD30: { name: "D30留存", unit: "percent", aggregation: "weighted", positive: true },
@@ -184,9 +185,9 @@ export const METRIC_META: Record<MetricId, MetricMeta> = {
   searchNoResultRate: { name: "搜索无结果率", unit: "percent", aggregation: "weighted", positive: false },
   arppu: { name: "ARPPU", unit: "currency", aggregation: "weighted", positive: true },
   arpu: { name: "ARPU", unit: "currency", aggregation: "weighted", positive: true },
-  androidDau: { name: "Android日均活跃", unit: "number", aggregation: "average", positive: true },
+  androidDau: { name: "Android日均访问UV", unit: "number", aggregation: "average", positive: true },
   androidDauUserDays: { name: "Android累计活跃人天", unit: "number", aggregation: "sum", positive: true },
-  iosDau: { name: "IOS日均活跃", unit: "number", aggregation: "average", positive: true },
+  iosDau: { name: "iOS日均访问UV", unit: "number", aggregation: "average", positive: true },
   iosDauUserDays: { name: "IOS累计活跃人天", unit: "number", aggregation: "sum", positive: true },
   androidNewUsers: { name: "Android新增", unit: "number", aggregation: "sum", positive: true },
   iosNewUsers: { name: "IOS新增", unit: "number", aggregation: "sum", positive: true },

@@ -130,10 +130,12 @@ export class NewavBiAdapter {
     if (useOverview) {
       const overview = await this.queryShared("overview", query.dateRange);
       const overviewSummary = overview.summary as Record<string, number | null>;
-      summary.currentPaidMembers = number(overviewSummary.activeVips);
-      summary.historicalPaidMembers = number(overviewSummary.orders);
+      summary.currentPaidMembers = nullableNumber(overviewSummary.activeVips);
+      summary.historicalPaidMembers = nullableNumber(overviewSummary.orders);
+      warnings.push("当前活跃 VIP 与订单总数来自 overview 当前快照，不能用于历史周期涨跌对比。");
     }
     if (query.analysisType === "funnel" && period) rows = funnelRows(query.modelId, period.summary, query.eventIds);
+    if (query.analysisType === "funnel") warnings.push("各阶段来自独立汇总字段，不是同一批用户的有序路径，只能用于规模对照，不能解释为严格漏斗转化。");
 
     const sourceApiIds = useChannels ? ["/api/v1/admin/analytics/channels-daily"] : useAds ? ["/api/v1/admin/analytics/ad-stats"] : ["/api/v1/admin/analytics/period"];
     return {

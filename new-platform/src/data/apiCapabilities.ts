@@ -11,9 +11,8 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   business_overview: {
     modelId: "business_overview",
     apiPaths: [
-      "/api/admin/statistics/pDaySum",
-      "/api/admin/home/pRealDayLine",
-      "/api/admin/home/getAllByRole"
+      "/api/v1/admin/analytics/period",
+      "/api/v1/admin/analytics/overview"
     ],
     dataGrain: "平台 × 日期 / 实时时点",
     status: "ready",
@@ -27,7 +26,7 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   },
   platform_compare: {
     modelId: "platform_compare",
-    apiPaths: ["/api/admin/statistics/pDaySum", "/api/admin/home/getAllByRole"],
+    apiPaths: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/overview"],
     dataGrain: "平台 × 日期",
     status: "ready",
     statusLabel: "接口已验证",
@@ -41,15 +40,12 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   content_position: {
     modelId: "content_position",
     apiPaths: [
-      "/api/admin/statistics/todayVideos/getMany",
-      "/api/admin/statistics/todayVideos/getVideoStatsByCategories",
-      "/api/admin/statistics/videoWatchRanking",
-      "/api/admin/statistics/trackEventsReport/getEventStats"
+      "/api/v1/admin/analytics/period"
     ],
     dataGrain: "视频 / 分类 × 日期；漏斗为平台汇总",
     status: "partial",
     statusLabel: "受限可用",
-    allowedCharts: ["kpi", "bar", "treemap", "waterfall", "table", "funnel", "sankey"],
+    allowedCharts: ["kpi", "line", "bar", "treemap", "waterfall", "table", "funnel", "sankey"],
     allowedDimensions: ["date", "platform", "channel", "category", "content"],
     allowedMetrics: ["viewerCount", "viewerUserDays", "videoWatchCount", "pageClicks", "playRate", "revenue"],
     funnelEvents: ["active_user", "video_click", "video_play", "video_play_end"],
@@ -58,7 +54,7 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   },
   search_demand: {
     modelId: "search_demand",
-    apiPaths: ["/api/admin/statistics/hotSearchWords/getMany"],
+    apiPaths: ["/api/v1/admin/analytics/search-keywords"],
     dataGrain: "平台 × 搜索词",
     status: "limited",
     statusLabel: "仅排行能力",
@@ -72,8 +68,8 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   payment_conversion: {
     modelId: "payment_conversion",
     apiPaths: [
-      "/api/admin/statistics/trackEventsReport/getEventStats",
-      "/api/admin/statistics/pDaySum"
+      "/api/v1/admin/analytics/period",
+      "/api/v1/admin/analytics/overview"
     ],
     dataGrain: "平台 × 日期汇总",
     status: "partial",
@@ -87,7 +83,7 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   },
   member_operation: {
     modelId: "member_operation",
-    apiPaths: ["/api/admin/statistics/pDaySum"],
+    apiPaths: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/overview"],
     dataGrain: "平台 × 日期汇总",
     status: "limited",
     statusLabel: "字段待核对",
@@ -101,26 +97,25 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   retention_quality: {
     modelId: "retention_quality",
     apiPaths: [
-      "/api/admin/statistics/reletionsStatPlus/getDays",
-      "/api/admin/statistics/averageReletionsStat/getAverageReletions"
+      "/api/v1/admin/analytics/period"
     ],
     dataGrain: "平台 × 注册日期 cohort",
     status: "partial",
     statusLabel: "样例待补齐",
-    allowedCharts: ["cohort", "heatmap", "line", "bar", "table", "kpi"],
+    allowedCharts: ["cohort", "heatmap", "line", "bar", "table", "kpi", "diagnosis"],
     allowedDimensions: ["date", "platform"],
     allowedMetrics: ["newUsers", "retentionD1", "retentionD3", "retentionD7", "retentionD30"],
     funnelEvents: [],
     filters: ["注册日期区间", "平台"],
-    limitations: ["未到对应观察日的 cohort 返回空值，不按 0 计算", "留存率按各档回登人数 / 注册人数加权"]
+    limitations: ["未到对应观察日的 cohort 返回空值，不按 0 计算", "接口未返回 cohort 人数，跨日留存仅平均非空比例，不能加权"]
   },
   usage_depth: {
     modelId: "usage_depth",
-    apiPaths: ["/api/admin/home/pRealDayLine", "/api/admin/statistics/todayUsers/getMany"],
+    apiPaths: ["/api/v1/admin/analytics/period"],
     dataGrain: "平台 × 5分钟时点",
     status: "partial",
     statusLabel: "可派生计算",
-    allowedCharts: ["kpi", "line", "bar", "heatmap", "waterfall", "table"],
+    allowedCharts: ["kpi", "line", "bar", "heatmap", "waterfall", "treemap", "table"],
     allowedDimensions: ["date", "platform", "channel"],
     allowedMetrics: ["dau", "dauUserDays", "newUsers", "viewerCount", "viewerUserDays", "viewRate", "videoWatchCount", "pageClicks", "playRate", "androidDau", "iosDau", "pageViews"],
     funnelEvents: [],
@@ -129,7 +124,7 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   },
   acquisition_conversion: {
     modelId: "acquisition_conversion",
-    apiPaths: ["/api/admin/statistics/cpGuardStat/cnzzstatQuery", "/api/admin/statistics/pDaySum"],
+    apiPaths: ["/api/v1/admin/analytics/channels-daily", "/api/v1/admin/analytics/channels-metrics"],
     dataGrain: "平台 × 日期",
     status: "ready",
     statusLabel: "跨接口可计算",
@@ -142,11 +137,11 @@ const capabilities: Record<AnalysisModelId, ApiAnalysisCapability> = {
   },
   custom_table: {
     modelId: "custom_table",
-    apiPaths: ["/api/admin/statistics/pDaySum"],
+    apiPaths: ["/api/v1/admin/analytics/period", "/api/v1/admin/analytics/channels-daily", "/api/v1/admin/analytics/ad-stats"],
     dataGrain: "平台 × 日期",
     status: "ready",
     statusLabel: "同接口组合",
-    allowedCharts: ["table", "bar", "line", "scatter", "heatmap", "waterfall", "treemap"],
+    allowedCharts: ["kpi", "table", "bar", "line", "scatter", "heatmap", "waterfall", "treemap"],
     allowedDimensions: ["date", "platform", "channel", "position", "content"],
     allowedMetrics: ["dau", "dauUserDays", "newUsers", "viewerCount", "viewerUserDays", "visits", "visitRegisterRate", "revenue", "newRevenue", "payerCount", "payRate", "adClickCount", "adClickUsers", "adClickRate", "pageViews", "pageClicks", "videoWatchCount", "playRate", "androidDau", "iosDau", "currentPaidMembers", "historicalPaidMembers"],
     funnelEvents: [],

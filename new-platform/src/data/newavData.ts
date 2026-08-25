@@ -20,8 +20,8 @@ export const metricDictionary: MetricDefinition[] = [
   metric({ id: "visits", name: "访问次数", formula: "sum(ipTotal)", source: "period / channels-metrics", unit: "number", aggregation: "sum" }),
   metric({ id: "visitRegisterRate", name: "访问注册转化", formula: "sum(registNew) / sum(ipUniq)", source: "period / channels-daily", unit: "percent", aggregation: "weighted" }),
   metric({ id: "newRevenue", name: "周期新增充值", formula: "sum(rechargeNew)", source: "period / channels-daily", unit: "currency", aggregation: "sum" }),
-  metric({ id: "payerCount", name: "会员购买", formula: "sum(cardBuy)", source: "period / channels-daily", unit: "number", aggregation: "sum" }),
-  metric({ id: "payRate", name: "新增购买率", formula: "sum(cardBuy) / sum(registNew)", source: "period", unit: "percent", aggregation: "weighted" }),
+  metric({ id: "payerCount", name: "购卡单数", formula: "sum(cardBuy / vipBuyers)", source: "period / channels-daily", unit: "number", aggregation: "sum", description: "接口返回的购买单数，不等于去重付费人数。" }),
+  metric({ id: "payRate", name: "渠道新增购卡率", formula: "sum(vipBuyers) / sum(newUsers)", source: "channels-daily", unit: "percent", aggregation: "weighted", description: "仅渠道日统计可计算；周期接口 cardBuy 不是去重人数，不参与该指标。" }),
   metric({ id: "adClickCount", name: "广告点击次数", formula: "sum(adClicks)", source: "period / ad-stats", unit: "number", aggregation: "sum" }),
   metric({ id: "adClickUsers", name: "广告点击人数", formula: "sum(adClickUsers)", source: "period", unit: "number", aggregation: "sum" }),
   metric({ id: "adClickRate", name: "广告 CTR", formula: "sum(clicks) / sum(shows)", source: "ad-stats", unit: "percent", aggregation: "weighted" }),
@@ -29,24 +29,27 @@ export const metricDictionary: MetricDefinition[] = [
   metric({ id: "pageClicks", name: "播放错误次数", formula: "sum(playErr)", source: "period", unit: "number", aggregation: "sum" }),
   metric({ id: "videoWatchCount", name: "播放成功次数", formula: "sum(playOk)", source: "period", unit: "number", aggregation: "sum" }),
   metric({ id: "playRate", name: "播放成功率", formula: "sum(playOk) / sum(playOk + playErr)", source: "period", unit: "percent", aggregation: "weighted" }),
-  metric({ id: "androidDau", name: "Android 活跃", formula: "sum(androidActive)", source: "period", unit: "number", aggregation: "sum" }),
-  metric({ id: "iosDau", name: "iOS 活跃", formula: "sum(iosActive)", source: "period", unit: "number", aggregation: "sum" }),
-  metric({ id: "retentionD1", name: "次日留存", formula: "D1 retained / cohort users", source: "retention", unit: "percent", aggregation: "weighted" }),
-  metric({ id: "retentionD3", name: "3日留存", formula: "D3 retained / cohort users", source: "retention", unit: "percent", aggregation: "weighted" }),
-  metric({ id: "retentionD7", name: "7日留存", formula: "D7 retained / cohort users", source: "retention", unit: "percent", aggregation: "weighted" }),
+  metric({ id: "androidDau", name: "Android 日均访问 UV", formula: "sum(androidUv) / 有数据自然日", source: "period", unit: "number", aggregation: "average" }),
+  metric({ id: "iosDau", name: "iOS 日均访问 UV", formula: "sum(iosUv) / 有数据自然日", source: "period", unit: "number", aggregation: "average" }),
+  metric({ id: "retentionD1", name: "次日留存", formula: "avg(non-null retentionD1)", source: "period", unit: "percent", aggregation: "average", description: "接口未返回 cohort 分母，跨日只能平均有值留存率，不能加权。" }),
+  metric({ id: "retentionD3", name: "3日留存", formula: "avg(non-null retentionD3)", source: "period", unit: "percent", aggregation: "average", description: "未成熟 cohort 为空，不按 0 参与。" }),
+  metric({ id: "retentionD7", name: "7日留存", formula: "avg(non-null retentionD7)", source: "period", unit: "percent", aggregation: "average", description: "未成熟 cohort 为空，不按 0 参与。" }),
   metric({ id: "currentPaidMembers", name: "当前活跃 VIP", formula: "activeVips", source: "overview", unit: "number", aggregation: "latest" }),
   metric({ id: "historicalPaidMembers", name: "订单总数", formula: "orders", source: "overview", unit: "number", aggregation: "latest" })
 ];
 
 export const eventDictionary: EventDefinition[] = [
-  { id: "active_user", name: "活跃用户", domain: "用户", requiredProperties: ["date"], description: "周期活跃新老用户。", status: "ready", coverage: ["NewAV"] },
+  { id: "active_user", name: "访问 UV", domain: "用户", requiredProperties: ["date"], description: "period.ipUniq 汇总；漏斗中仅作阶段规模对照。", status: "ready", coverage: ["NewAV"] },
   { id: "registry_user", name: "注册用户", domain: "增长", requiredProperties: ["date", "channel"], description: "渠道新增注册用户。", status: "ready", coverage: ["NewAV"] },
-  { id: "video_play", name: "播放成功", domain: "内容", requiredProperties: ["date"], description: "播放成功次数。", status: "ready", coverage: ["NewAV"] },
+  { id: "video_click", name: "观影人数", domain: "内容", requiredProperties: ["date"], description: "period.viewers 汇总；不是视频点击事件。", status: "ready", coverage: ["NewAV"] },
+  { id: "video_play", name: "有效登录", domain: "用户", requiredProperties: ["date"], description: "period.validLogin 汇总；保留兼容 ID。", status: "ready", coverage: ["NewAV"] },
+  { id: "video_play_end", name: "购卡单数", domain: "会员", requiredProperties: ["date"], description: "period.cardBuy 汇总；不是播放结束事件。", status: "ready", coverage: ["NewAV"] },
   { id: "play_error", name: "播放错误", domain: "内容", requiredProperties: ["date"], description: "播放错误次数。", status: "ready", coverage: ["NewAV"] },
   { id: "ad_show", name: "广告展示", domain: "广告", requiredProperties: ["date", "position"], description: "广告素材展示。", status: "ready", coverage: ["NewAV"] },
   { id: "ad_click", name: "广告点击", domain: "广告", requiredProperties: ["date", "position"], description: "广告素材点击。", status: "ready", coverage: ["NewAV"] },
-  { id: "vip_click", name: "会员入口点击", domain: "会员", requiredProperties: ["date"], description: "会员转化起点。", status: "ready", coverage: ["NewAV"] },
-  { id: "success_pay", name: "会员购买", domain: "会员", requiredProperties: ["date"], description: "会员购买成功。", status: "ready", coverage: ["NewAV"] }
+  { id: "vip_click", name: "新增注册", domain: "会员", requiredProperties: ["date"], description: "period.registNew 汇总；保留兼容 ID。", status: "ready", coverage: ["NewAV"] },
+  { id: "pre_pay", name: "有效登录", domain: "会员", requiredProperties: ["date"], description: "period.validLogin 汇总，不代表拉起支付事件。", status: "ready", coverage: ["NewAV"] },
+  { id: "success_pay", name: "购卡单数", domain: "会员", requiredProperties: ["date"], description: "period.cardBuy 汇总。", status: "ready", coverage: ["NewAV"] }
 ];
 
 const model = (id: AnalysisModelId, name: string, metrics: MetricId[], charts: AnalysisModel["recommendedCharts"], dimensions: DimensionId[] = ["date", "channel"]): AnalysisModel => ({
@@ -98,8 +101,8 @@ export const dashboardTemplates: DashboardTemplate[] = [
     id: "newav-content", name: "内容与播放质量", scenario: "观察观看规模、播放稳定性和设备结构，定位内容消费损耗。", model: "content_position", filters: ["date", "channel"], status: "published", updatedAt: "2026-08-25 23:55",
     cards: [
       { id: "content-kpi", title: "内容消费与播放质量", type: "kpi", model: "content_position", metrics: ["viewerUserDays", "videoWatchCount", "pageClicks", "playRate"], dimensions: ["date"], size: "full" },
-      { id: "content-funnel", title: "访问到播放汇总漏斗", type: "funnel", model: "content_position", metrics: ["playRate"], dimensions: ["date"], size: "lg", funnelSteps: ["active_user", "video_click", "video_play", "video_play_end"], conversionWindow: "接口日期范围" },
-      { id: "content-sankey", title: "内容消费阶段汇总流量", type: "sankey", model: "content_position", metrics: ["videoWatchCount"], dimensions: ["date"], size: "md", funnelSteps: ["active_user", "video_click", "video_play", "video_play_end"], conversionWindow: "接口日期范围" },
+      { id: "content-funnel", title: "访问到购卡汇总阶段对照", type: "funnel", model: "content_position", metrics: ["playRate"], dimensions: ["date"], size: "lg", funnelSteps: ["active_user", "video_click", "video_play", "video_play_end"], conversionWindow: "独立汇总字段，非用户级漏斗" },
+      { id: "content-sankey", title: "访问到购卡阶段汇总流量", type: "sankey", model: "content_position", metrics: ["videoWatchCount"], dimensions: ["date"], size: "md", funnelSteps: ["active_user", "video_click", "video_play", "video_play_end"], conversionWindow: "独立汇总字段，非用户级漏斗" },
       { id: "content-trend", title: "观影与播放结果趋势", type: "line", model: "content_position", metrics: ["viewerCount", "videoWatchCount", "pageClicks"], dimensions: ["date"], size: "full", drillPath: ["date"] }
     ]
   },
@@ -113,11 +116,12 @@ export const dashboardTemplates: DashboardTemplate[] = [
     ]
   },
   {
-    id: "newav-retention", name: "留存与会员", scenario: "按注册 Cohort 观察留存，并跟踪会员购买、活跃 VIP 与充值。", model: "retention_quality", filters: ["date"], status: "published", updatedAt: "2026-08-25 23:55",
+    id: "newav-retention", name: "留存与会员", scenario: "按自然日观察接口留存率及成熟度，并跟踪购卡、活跃 VIP 与充值。", model: "retention_quality", filters: ["date"], status: "published", updatedAt: "2026-08-26 18:30",
     cards: [
-      { id: "retention-cohort", title: "新增用户 Cohort 留存", type: "cohort", model: "retention_quality", metrics: ["retentionD1", "retentionD3", "retentionD7"], dimensions: ["date", "platform"], size: "full" },
+      { id: "retention-cohort", title: "每日留存率矩阵", type: "cohort", model: "retention_quality", metrics: ["retentionD1", "retentionD3", "retentionD7"], dimensions: ["date", "platform"], size: "full" },
       { id: "retention-trend", title: "D1 / D3 / D7 留存趋势", type: "line", model: "retention_quality", metrics: ["retentionD1", "retentionD3", "retentionD7"], dimensions: ["date"], size: "lg" },
-      { id: "member-kpi", title: "会员与充值概况", type: "kpi", model: "member_operation", metrics: ["currentPaidMembers", "historicalPaidMembers", "payerCount", "newRevenue", "payRate"], dimensions: ["date"], size: "full" }
+      { id: "retention-diagnosis", title: "留存成熟度与波动诊断", type: "diagnosis", model: "retention_quality", metrics: ["retentionD1", "retentionD3", "retentionD7"], dimensions: ["date"], size: "lg" },
+      { id: "member-kpi", title: "会员与充值概况", type: "kpi", model: "member_operation", metrics: ["currentPaidMembers", "historicalPaidMembers", "payerCount", "newRevenue"], dimensions: ["date"], size: "full" }
     ]
   }
 ];

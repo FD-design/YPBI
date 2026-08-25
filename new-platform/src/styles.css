@@ -924,6 +924,13 @@ button { font: inherit; }
   margin: 10px 0;
   padding: 6px;
 }
+.asset-preview-note {
+  display:block;
+  margin:0 0 6px;
+  color:#64748b;
+  font-size:11px;
+  line-height:1.4;
+}
 .asset-chart .chart {
   height: 176px;
 }
