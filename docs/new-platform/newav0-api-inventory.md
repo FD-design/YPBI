@@ -93,3 +93,5 @@
 - `channels-daily` 已按已确认字段实现自然日/渠道归一化、日均、累计人天及加权注册转化。
 - 其余接口已能调用并保留原始行与汇总结构；待有效 Token 返回真实 JSON 后收紧字段 Schema。
 - 详细结构见 [独立产品 BI 平台架构](./architecture.md)。
+- 2026-08-25 配置测试 Bearer Token 后，12 个接口均已通过本地真实请求；`period`、`pvTrend`、`adStats`、`channelDaily`、`channelQuality` 返回可展示明细，其余接口以汇总对象为主。
+- 当前看板区间 `2026-08-19` 至 `2026-08-25` 已渲染 67 条渠道日明细，未使用 Mock 数据。
