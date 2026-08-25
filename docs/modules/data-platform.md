@@ -1,5 +1,11 @@
 # 数据接口与平台模块
 
+## 独立新平台分支
+
+- `feature/new-platform` 用于 NewAV 后台接入，不修改原 20 平台 PID 注册表和双 Token 路由。
+- 2026-08-25 已确认 12 个统计接口及渠道日报/渠道质量字段，清单见 [NewAV API 接口清单](../new-platform/newav0-api-inventory.md)。
+- 当前只完成接口盘点，尚未把 NewAV 请求接入正式 BI 查询链路。
+
 ## 平台注册表
 
 当前启用 20 个平台，来源为 HX 表和确认后的 PID：
