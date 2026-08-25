@@ -68,3 +68,8 @@
 ## 时间线入口
 
 完整记录见 [CHANGELOG.md](./CHANGELOG.md)。任何后续修改必须追加记录，并同步本索引对应模块的最后修改日期。
+
+## 最新分析产物
+
+- NewAV 七日真实数据报告：`D:\CodexArtifacts\newav-analysis-report\newav-data-analysis-2026-08-19_2026-08-25.html`
+- 报告周期：2026-08-19 至 2026-08-25；包含 12 个接口状态、经营结论、渠道明细、图表和行动建议。
