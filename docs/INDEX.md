@@ -28,7 +28,7 @@
 | BI 后端 API | 查询、校验、就绪探测、下钻、渠道、内容、专项、元数据、工作区存储 | `server/app.ts`、`contracts` | [后端 API](./modules/backend-api.md) | 可用 | 2026-07-22：就绪探测与数据源参数保护 |
 | 上游接口接入 | 30 个后台接口登记、双后台按 PID 路由、Token 安全热更新、Adapter 归一化、超时与错误映射 | `server/upstream` | [数据与平台](./modules/data-platform.md) | 30 个有效参数调用通过 | 2026-07-22：视频表现切换真实排行接口 |
 | 平台注册表 | 20 个 HX 平台与 PID 映射 | `server/platforms/registry.ts` | [数据与平台](./modules/data-platform.md) | 可用 | 2026-07-15：正式平台表确认 |
-| NewAV 新平台接入 | 独立后台统计接口盘点；与原 PID/双 Token 数据源隔离 | 待实现 | [NewAV API 清单](./new-platform/newav0-api-inventory.md) | 接口盘点完成，尚未接入 | 2026-08-25：确认 12 个统计接口 |
+| 独立产品 BI 平台 | 独立产品注册、数据源、卡片库、模板中心和看板；首个产品 NewAV，与原 PID/双 Token 数据源完全隔离 | `new-platform/src`、`new-platform/server` | [独立平台架构](./new-platform/architecture.md)、[NewAV API 清单](./new-platform/newav0-api-inventory.md) | 基础应用完成，等待生产 Token 复验 | 2026-08-25：完成独立应用与 12 个接口 Adapter |
 | 工作区持久化 | 模板和卡片资产保存到 PostgreSQL；无数据库时使用磁盘文件并保留上一版本备份 | `server/persistence` | [后端 API](./modules/backend-api.md) | 可用 | 2026-07-23：修复服务重启后模板丢失 |
 | 部署与运行 | systemd 管理 API/Web，Nginx 普通入口、Caddy HTTPS 管理入口、安全响应头与访问统计 | `deploy`、`package.json` | [部署运维](./modules/deployment.md) | VPS 运行中 | 2026-07-23：配置页安全登录与HTTP自动跳转 |
 | 文档治理与版本管理 | 修改前读索引，修改后更新模块和时间线；源码通过 Git/GitHub 管理，运行密钥和生成产物不入库 | `AGENTS.md`、`.gitignore`、`docs` | 本文件、[部署运维](./modules/deployment.md) | 强制执行 | 2026-08-17：初始化 GitHub 仓库 |
@@ -50,7 +50,7 @@
 
 ## 已知待处理
 
-- NewAV 接入前需补充原始 JSON 响应样本、`Authorization` 格式、刷新机制、金额单位和时区复验，详见 [NewAV API 清单](./new-platform/newav0-api-inventory.md)。
+- NewAV 已确认使用 Bearer Token；仍需配置有效 Token，复验 12 个接口原始响应、金额单位和服务端时区，详见 [NewAV API 清单](./new-platform/newav0-api-inventory.md)。
 
 | 内部 ID | 真实接口 | 文档模块 | 状态 |
 |---|---|---|---|

@@ -88,6 +88,12 @@
 - 来源收入：`channelNewUserChargeAmt`、`channelInternalNewUserChargeAmt`。
 - 收入统一归一化为 `revenue`，避免原 `diamondChargeAmount` 与指标注册表字段名不一致。
 
+## 独立产品数据平台（2026-08-25）
+
+- `new-platform/` 是单独运行的产品 BI，不使用本模块的 20 平台 PID 注册表和双后台凭证。
+- NewAV 使用独立 Bearer Token、独立接口目录和 Adapter；未来新增产品沿用产品注册机制，但数据源、指标和模板分别归属各产品。
+- 架构、运行端口和扩展方式见 [独立产品 BI 平台架构](../new-platform/architecture.md)。
+
 ## 2026-07-22 全目录复验
 
 - 28 个接口使用目录参数直接成功。
