@@ -1,5 +1,7 @@
 # NewAV API 接口清单
 
+> BI 兼容入口：前端统一调用 `POST /api/bi/analytics/query`，由 `server/newav/bi-adapter.ts` 按指标、维度和日期范围组合下列 NewAV 原始接口，并返回成熟 BI 分析引擎所需的统一结构。
+
 > 采集日期：2026-08-25。来源：Codex 内置浏览器已登录页面、前端脚本 `index-CMOB1MaT.js` 与渠道日报渲染结果。本文不记录 Token、Cookie 或登录密码。
 
 ## 基本信息

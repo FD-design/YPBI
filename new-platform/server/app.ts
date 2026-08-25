@@ -4,8 +4,11 @@ import { z } from "zod";
 import type { PlatformEnv } from "./config";
 import { NewavAdapter } from "./newav/adapter";
 import { NewavClient, NewavError } from "./newav/client";
+import { NewavBiAdapter } from "./newav/bi-adapter";
 import { newavDatasets } from "./newav/catalog";
 import { productRegistry } from "./products";
+import { analyticsQuerySchema } from "../contracts/analytics";
+import { readWorkspace, writeWorkspace } from "./workspace";
 
 const querySchema = z.object({
   productId: z.literal("newav"),
@@ -21,10 +24,22 @@ export async function buildApp(env: PlatformEnv) {
   await app.register(cors, { origin: env.NODE_ENV === "production" ? false : true });
   const client = new NewavClient({ baseUrl: env.NEWAV_API_BASE_URL, token: env.NEWAV_ACCESS_TOKEN, timeoutMs: env.REQUEST_TIMEOUT_MS });
   const adapter = new NewavAdapter(client);
+  const biAdapter = new NewavBiAdapter(adapter);
 
   app.get("/api/health", async () => ({ success: true, data: { status: "ok", products: productRegistry.length } }));
   app.get("/api/products", async () => ({ success: true, data: productRegistry }));
   app.get("/api/products/newav/status", async () => ({ success: true, data: client.status() }));
+  app.get("/api/bi/workspace", async () => ({ success: true, data: await readWorkspace() }));
+  app.put("/api/bi/workspace", async (request) => { await writeWorkspace(request.body); return { success: true, data: { saved: true } }; });
+  app.post("/api/bi/analytics/query", async (request, reply) => {
+    const parsed = analyticsQuerySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_QUERY", message: "分析查询参数不合法", details: parsed.error.issues } });
+    try { return { success: true, data: await biAdapter.query(parsed.data) }; }
+    catch (error) {
+      if (error instanceof NewavError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
+      throw error;
+    }
+  });
   app.post("/api/query", async (request, reply) => {
     const parsed = querySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_QUERY", message: "查询参数不合法", details: parsed.error.issues } });

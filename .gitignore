@@ -13,10 +13,12 @@ coverage/
 
 # Runtime state and credentials. Keep src/data/ tracked.
 /data/
+/new-platform/data/
 
 # Local deployment packages and browser QA output.
 /.deploy-*.tar.gz
 /qa-*.png
+/new-platform/qa-*.png
 /qa/**/*.png
 /test-results/
 /playwright-report/
