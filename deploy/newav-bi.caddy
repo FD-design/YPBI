@@ -1,0 +1,21 @@
+https://newav-bi.187.77.129.207.nip.io {
+  encode gzip
+
+  header {
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'self'"
+  }
+
+  handle /api/* {
+    header Cache-Control "no-store"
+    reverse_proxy 127.0.0.1:3200
+  }
+
+  handle {
+    root * /opt/newav-bi/dist
+    try_files {path} /index.html
+    file_server
+  }
+}

@@ -19,6 +19,7 @@ coverage/
 /.deploy-*.tar.gz
 /qa-*.png
 /new-platform/qa-*.png
+/new-platform/.deploy-*.tar.gz
 /qa/**/*.png
 /test-results/
 /playwright-report/

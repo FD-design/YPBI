@@ -9,6 +9,16 @@
 
 ## 环境
 
+### NewAV 独立 BI
+
+- 公网入口：`https://newav-bi.187.77.129.207.nip.io`
+- 部署目录：`/opt/newav-bi`
+- API：`newav-bi-api.service`，仅监听 `127.0.0.1:3200`
+- Web：由 Caddy 直接读取 `/opt/newav-bi/dist`，不占用原 BI 的 `3000`、`5179` 服务。
+- 运行凭证：`/opt/newav-bi/.env.local`，权限 `0600`，不进入部署包和 Git。
+- 工作区：`/opt/newav-bi/data/newav-workspace-v4.json`，后续发布不得覆盖 `data/`。
+- 首次部署：2026-08-26。线上页面与 API 验证通过；Caddy、NewAV API 和原 BI 两项服务均为 `active`。
+
 - VPS：`187.77.129.207`
 - 项目目录：`/opt/config-driven-bi-demo`
 - Web：`http://187.77.129.207:5178`
