@@ -50,4 +50,47 @@ describe("NewAV 旧 BI 兼容映射", () => {
     });
     expect(calls).toEqual(["channelDaily"]);
   });
+
+  test("跨天转化率按分子分母加权而不是平均每日百分比", async () => {
+    const adapter = {
+      query: async () => ({
+        rows: [
+          { date: "2026-08-02", registNew: 9, ipUniq: 90, playOk: 90, playErr: 10 },
+          { date: "2026-08-01", registNew: 1, ipUniq: 10, playOk: 1, playErr: 9 }
+        ],
+        summary: {}, warnings: [], definition: {}
+      })
+    } as unknown as NewavAdapter;
+    const response = await new NewavBiAdapter(adapter).query({
+      modelId: "business_overview", analysisType: "trend", metricIds: ["visitRegisterRate", "playRate"], dimensionIds: ["date"], eventIds: [],
+      platformMode: "single", platformIds: ["newav"], dateRange: ["2026-08-01", "2026-08-02"], filters: {}, limit: 50
+    });
+    expect(response.data.summary.visitRegisterRate).toBeCloseTo(10 / 100);
+    expect(response.data.summary.playRate).toBeCloseTo(91 / 110);
+  });
+
+  test("累计充值总额取日期最大的周期末快照", async () => {
+    const adapter = {
+      query: async () => ({
+        rows: [
+          { date: "2026-08-03", rechargeTotal: 300 },
+          { date: "2026-08-01", rechargeTotal: 100 },
+          { date: "2026-08-02", rechargeTotal: 200 }
+        ],
+        summary: {}, warnings: [], definition: {}
+      })
+    } as unknown as NewavAdapter;
+    const response = await new NewavBiAdapter(adapter).query({
+      modelId: "business_overview", analysisType: "kpi", metricIds: ["revenue"], dimensionIds: ["date"], eventIds: [],
+      platformMode: "single", platformIds: ["newav"], dateRange: ["2026-08-01", "2026-08-03"], filters: {}, limit: 50
+    });
+    expect(response.data.summary.revenue).toBe(300);
+  });
+
+  test("缺失字段保持空值且周期数据不伪造新增购买率", async () => {
+    const row = periodRow({ date: "2026-08-25", retentionD1: null, cardBuy: 3, registNew: 100 });
+    expect(row.retentionD1).toBeNull();
+    expect(row.adClickUsers).toBeNull();
+    expect(row.payRate).toBeNull();
+  });
 });
