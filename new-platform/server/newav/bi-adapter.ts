@@ -91,10 +91,11 @@ export class NewavBiAdapter {
     const useAds = query.dimensionIds.includes("position") || query.dimensionIds.includes("content") || query.metricIds.includes("adClickRate") || query.metricIds.includes("pageViews");
     const useChannels = query.dimensionIds.includes("channel");
     const useOverview = query.metricIds.some((metric) => ["currentPaidMembers", "historicalPaidMembers"].includes(metric));
-    const period = await this.queryShared("period", query.dateRange);
-    const periodRows = period.rows.map((row) => periodRow(row as unknown as Record<string, unknown>));
+    const needsPeriod = query.analysisType === "funnel" || (!useChannels && !useAds);
+    const period = needsPeriod ? await this.queryShared("period", query.dateRange) : null;
+    const periodRows = period?.rows.map((row) => periodRow(row as unknown as Record<string, unknown>)) ?? [];
     let rows = periodRows;
-    const warnings = [...period.warnings];
+    const warnings = [...(period?.warnings ?? [])];
 
     if (useChannels) {
       const channel = await this.queryShared("channelDaily", query.dateRange);
@@ -113,7 +114,7 @@ export class NewavBiAdapter {
       summary.currentPaidMembers = number(overviewSummary.activeVips);
       summary.historicalPaidMembers = number(overviewSummary.orders);
     }
-    if (query.analysisType === "funnel") rows = funnelRows(query.modelId, period.summary, query.eventIds);
+    if (query.analysisType === "funnel" && period) rows = funnelRows(query.modelId, period.summary, query.eventIds);
 
     const sourceApiIds = useChannels ? ["/api/v1/admin/analytics/channels-daily"] : useAds ? ["/api/v1/admin/analytics/ad-stats"] : ["/api/v1/admin/analytics/period"];
     return {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { adRow, channelRow, periodRow } from "./bi-adapter";
+import type { NewavAdapter } from "./adapter";
+import { adRow, channelRow, NewavBiAdapter, periodRow } from "./bi-adapter";
 
 describe("NewAV 旧 BI 兼容映射", () => {
   test("周期行派生活跃、播放成功率和注册转化", () => {
@@ -18,5 +19,35 @@ describe("NewAV 旧 BI 兼容映射", () => {
   test("广告行将素材和广告位映射为旧 BI 内容维度", () => {
     const row = adRow({ slot: "floating", title: "活动素材", shows: 1000, clicks: 45, clickUsers: 32, ctr: 4.5 });
     expect(row).toMatchObject({ position: "floating", content: "活动素材", pageViews: 1000, adClickCount: 45, adClickUsers: 32, adClickRate: 0.045 });
+  });
+
+  test("广告查询不会额外请求周期总览", async () => {
+    const calls: string[] = [];
+    const adapter = {
+      query: async ({ datasetId }: { datasetId: string }) => {
+        calls.push(datasetId);
+        return { rows: [], summary: {}, warnings: [], definition: {} };
+      }
+    } as unknown as NewavAdapter;
+    await new NewavBiAdapter(adapter).query({
+      modelId: "custom_table", analysisType: "table", metricIds: ["pageViews"], dimensionIds: ["position"], eventIds: [],
+      platformMode: "single", platformIds: ["newav"], dateRange: ["2026-08-19", "2026-08-25"], filters: {}, limit: 50
+    });
+    expect(calls).toEqual(["adStats"]);
+  });
+
+  test("渠道查询不会额外请求周期总览", async () => {
+    const calls: string[] = [];
+    const adapter = {
+      query: async ({ datasetId }: { datasetId: string }) => {
+        calls.push(datasetId);
+        return { rows: [], summary: {}, warnings: [], definition: {} };
+      }
+    } as unknown as NewavAdapter;
+    await new NewavBiAdapter(adapter).query({
+      modelId: "acquisition_conversion", analysisType: "trend", metricIds: ["newUsers"], dimensionIds: ["channel"], eventIds: [],
+      platformMode: "single", platformIds: ["newav"], dateRange: ["2026-08-19", "2026-08-25"], filters: {}, limit: 50
+    });
+    expect(calls).toEqual(["channelDaily"]);
   });
 });
