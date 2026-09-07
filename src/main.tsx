@@ -1,9 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
+import { ArrowDown, ArrowUp, CalendarRange, ChartNoAxesCombined, CheckCircle2, ChevronDown, ChevronLeft, CircleHelp, Cloud, Copy, Layers3, Maximize2, Pencil, Save, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { Chart, type ChartOption as EChartsOption } from "./components/Chart";
 import { DataState } from "./components/DataState";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { PlatformTopbar } from "./components/layout/PlatformTopbar";
+import { PlatformSidebar } from "./components/layout/PlatformSidebar";
+import { useBodyScrollLock } from "./components/layout/useBodyScrollLock";
+import { MenuSelect, MultiMenuSelect, type MenuSelectGroup } from "./components/ui/MenuSelect";
+import { DashboardReadFrame } from "./features/dashboard/DashboardReadFrame";
+import { resolveUiVersion } from "./app/uiVersion";
+import { CHART_PALETTE } from "./theme/tokens";
+import { v13SeriesStyle } from "./theme/chartTheme";
 import type { AnalysisModelId, ChartType, DashboardCardConfig, DashboardTemplate, DimensionId, DrilldownPayload, MetricId } from "./types";
 import {
   analysisModels,
@@ -40,8 +49,16 @@ import {
 } from "./analytics/mockEngine";
 import { buildDrillInsights, useRealCardQuery } from "./analytics/realEngine";
 import "./styles.css";
+import "./theme/tokens.css";
+import "./components/ui/primitives.css";
+import "./components/layout/platform-shell.css";
+import "./features/dashboard/dashboard-v13.css";
+import "./features/filters/global-filter.css";
+import "./features/workspaces/workspaces-v13.css";
+import "./features/overlays/overlays-v13.css";
 
 const color = ["#2563eb", "#16a34a", "#f59e0b", "#7c3aed", "#ef4444", "#0891b2"];
+const uiVersion = resolveUiVersion(window.location.search, import.meta.env.VITE_UI_VERSION);
 const platformPid: Record<string, string> = { Pornhub: "PH", TikTok: "TT", 小红书: "FBI", 色虎: "SH", "PH·Prem": "BZMH", 调教师: "TJS", 快播: "KB", 黄片网盘: "PD", 性欲社: "HJ", 抖阴Pro: "DYP", 抖阴Plus: "DYS", "X-chat": "YK", 白嫖社: "BPS", 好妻网: "HQW", 台姬店: "TJD", 魅魔vlog: "MMV", 稚嫩学园: "AF", 铁粉空间: "TFKJ", 精日头条: "JRTT", "91淫妻": "YQ" };
 
 function selectedPlatformScope(filters: DashboardFilters) {
@@ -237,6 +254,14 @@ interface CardAsset {
 
 function notify(message: string) {
   window.dispatchEvent(new CustomEvent("bi-notify", { detail: message }));
+}
+
+async function readJsonResponse<T>(response: Response, serviceName: string): Promise<T> {
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new Error(response.ok ? `${serviceName}返回格式异常，请稍后重试` : `${serviceName}暂时不可用，请稍后重试`);
+  }
 }
 
 function downloadCsv(filename: string, rows: Record<string, string | number>[]) {
@@ -448,8 +473,14 @@ function makeTreeOption(): EChartsOption {
   };
 }
 
-function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult): EChartsOption {
+function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult, modern = false): EChartsOption {
   const baseGrid = { left: 56, right: 28, top: 46, bottom: 38, containLabel: true };
+  const activePalette = modern ? CHART_PALETTE : color;
+  const platformColor = (name: string, index = 0) => {
+    if (!modern) return PLATFORM_COLORS[name] ?? color[index % color.length];
+    const platformIndex = Object.keys(platformPid).indexOf(name);
+    return CHART_PALETTE[(platformIndex >= 0 ? platformIndex : index) % CHART_PALETTE.length];
+  };
   if (card.type === "line") {
     const units = [...new Set(result.series.map((series) => METRIC_META[series.metric].unit))];
     const yAxis = units.slice(0, 2).map((unit, index) => ({
@@ -459,25 +490,25 @@ function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult): EC
       axisLabel: { formatter: (value: string | number) => { const numeric = Number(value); return unit === "percent" ? `${numeric}%` : unit === "currency" ? `¥${Math.round(numeric / 10000)}万` : numeric >= 10000 ? `${roundForChart(numeric / 10000)}万` : String(numeric); } }
     }));
     return {
-      animationDuration: 420,
+      animationDuration: modern ? 180 : 420,
       tooltip: { trigger: "axis", valueFormatter: (value: unknown) => typeof value === "number" ? value.toLocaleString() : String(value) },
       legend: { type: "scroll", right: 8, left: 8, top: 4, itemWidth: 18, itemHeight: 8, pageButtonPosition: "end" },
       grid: { ...baseGrid, top: result.series.length > 8 ? 58 : 46, right: units.length > 1 ? 68 : 28 },
       xAxis: { type: "category", data: result.categories, boundaryGap: false, axisLine: { lineStyle: { color: "#dbe3ee" } } },
       yAxis,
-      series: result.series.map((series, index) => ({
-        name: series.name,
-        type: "line",
-        yAxisIndex: Math.min(1, Math.max(0, units.indexOf(METRIC_META[series.metric].unit))),
-        smooth: 0.32,
-        symbolSize: 7,
-        showSymbol: false,
-        data: series.data,
-        color: PLATFORM_COLORS[series.name] ?? color[index % color.length],
-        lineStyle: { width: 2.5 },
-        areaStyle: index === 0 ? { opacity: 0.1 } : undefined,
-        emphasis: { focus: "series" }
-      }))
+      series: result.series.map((series, index) => {
+        const visual = modern ? v13SeriesStyle(index) : { color: platformColor(series.name, index), lineStyle: { width: 2.5 }, symbolSize: 7, showSymbol: false };
+        return {
+          name: series.name,
+          type: "line",
+          yAxisIndex: Math.min(1, Math.max(0, units.indexOf(METRIC_META[series.metric].unit))),
+          smooth: 0.32,
+          data: series.data,
+          ...visual,
+          areaStyle: index === 0 ? { opacity: 0.08 } : undefined,
+          emphasis: { focus: "series", disabled: false }
+        };
+      })
     };
   }
   if (card.type === "bar") {
@@ -485,12 +516,12 @@ function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult): EC
     const categories = [...result.categories].reverse();
     const values = [...(result.series[0]?.data ?? [])].reverse();
     return {
-      animationDuration: 420,
+      animationDuration: modern ? 180 : 420,
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
       grid: { ...baseGrid, left: 118, right: 56, top: 20 },
       xAxis: { type: "value", splitNumber: card.size === "md" ? 2 : 4, splitLine: { lineStyle: { color: "#edf1f7" } }, axisLabel: { hideOverlap: true, fontSize: 10, formatter: (value: number) => METRIC_META[metric].unit === "currency" ? `¥${roundForChart(value / 10000)}万` : value >= 10000 ? `${roundForChart(value / 10000)}万` : String(value) } },
       yAxis: { type: "category", data: categories, axisTick: { show: false }, axisLine: { show: false }, axisLabel: { width: 108, overflow: "break", lineHeight: 14 } },
-      series: [{ type: "bar", data: values, barWidth: 16, itemStyle: { borderRadius: [0, 5, 5, 0], color: color[0] }, label: { show: true, position: "right", formatter: (params: any) => formatMetric(metric, Number(params.value)) } }]
+      series: [{ type: "bar", data: values, barWidth: 16, itemStyle: { borderRadius: [0, 5, 5, 0], color: activePalette[0] }, label: { show: true, position: "right", formatter: (params: any) => formatMetric(metric, Number(params.value)) } }]
     };
   }
   if (card.type === "heatmap") {
@@ -502,7 +533,7 @@ function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult): EC
       grid: { ...baseGrid, left: 72, top: 24 },
       xAxis: { type: "category", data: result.heatmapX, splitArea: { show: true } },
       yAxis: { type: "category", data: result.heatmapY, splitArea: { show: true } },
-      visualMap: { min: 0, max: maxValue, orient: "horizontal", right: 8, top: 0, itemWidth: 90, itemHeight: 8, inRange: { color: ["#eff6ff", "#93c5fd", "#2563eb", "#172554"] } },
+      visualMap: { min: 0, max: maxValue, orient: "horizontal", right: 8, top: 0, itemWidth: 90, itemHeight: 8, inRange: { color: modern ? ["#EDF3FF", "#8EAEF5", "#285FE8", "#1748B8"] : ["#eff6ff", "#93c5fd", "#2563eb", "#172554"] } },
       series: [{ type: "heatmap", data: result.heatmap, label: { show: true, formatter: (params: any) => formatMetric(metric, Number(params.value[2])) }, itemStyle: { borderColor: "#fff", borderWidth: 3, borderRadius: 5 } }]
     };
   }
@@ -516,7 +547,7 @@ function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult): EC
       yAxis: { type: "category", inverse: true, data: rows.map((row) => row.name), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontWeight: 700, color: "#334155" } },
       series: [
         { type: "bar", silent: true, data: rows.map(() => axisMax), barWidth: 26, barGap: "-100%", itemStyle: { color: "#eef2f7", borderRadius: 5 } },
-        { type: "bar", data: rows.map((row) => row.conversion), barWidth: 26, itemStyle: { color: (params: any) => ["#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"][Math.min(params.dataIndex, 4)], borderRadius: 5 }, label: { show: true, position: "right", formatter: (params: any) => { const row = rows[params.dataIndex]; return `${row.value.toLocaleString()}  ·  ${row.stepConversion}%`; }, color: "#334155", fontWeight: 700 } }
+        { type: "bar", data: rows.map((row) => row.conversion), barWidth: 26, itemStyle: { color: (params: any) => modern ? activePalette[Math.min(params.dataIndex, activePalette.length - 1)] : ["#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"][Math.min(params.dataIndex, 4)], borderRadius: 5 }, label: { show: true, position: "right", formatter: (params: any) => { const row = rows[params.dataIndex]; return `${row.value.toLocaleString()}  ·  ${row.stepConversion}%`; }, color: "#334155", fontWeight: 700 } }
       ]
     };
   }
@@ -545,7 +576,7 @@ function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult): EC
         type: "scatter",
         data: result.scatter,
         symbolSize: (value: number[]) => Math.max(8, Math.min(34, 8 + 26 * Math.sqrt(value[2] / maxBubbleValue))),
-        itemStyle: { color: (params: any) => PLATFORM_COLORS[params.data.name] ?? "#2563eb", opacity: 0.82 },
+        itemStyle: { color: (params: any) => platformColor(params.data.name), opacity: 0.82 },
         label: { show: true, position: "top", formatter: (params: any) => labeledNames.has(params.data.name) ? params.data.name : "", color: "#334155", fontWeight: 700 },
         labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
         emphasis: { label: { show: true, formatter: (params: any) => params.data.name } }
@@ -557,13 +588,13 @@ function makeQueryOption(card: DashboardCardConfig, result: CardQueryResult): EC
     grid: { ...baseGrid, left: 72, top: 24 },
     xAxis: { type: "category", data: result.cohortX, splitArea: { show: true } },
     yAxis: { type: "category", data: result.cohortY, splitArea: { show: true } },
-    visualMap: { min: 3, max: 38, show: false, inRange: { color: ["#f8fafc", "#bfdbfe", "#60a5fa", "#1d4ed8", "#172554"] } },
+    visualMap: { min: 3, max: 38, show: false, inRange: { color: modern ? ["#F5F7FA", "#DCE8FF", "#8EAEF5", "#285FE8", "#1748B8"] : ["#f8fafc", "#bfdbfe", "#60a5fa", "#1d4ed8", "#172554"] } },
     series: [{ type: "heatmap", data: result.cohort, label: { show: true, formatter: (params: any) => `${params.value[2]}%`, color: "#0f172a" }, itemStyle: { borderColor: "#fff", borderWidth: 3, borderRadius: 4 } }]
   };
   if (card.type === "waterfall") {
     const values = result.waterfall ?? [];
     const totals = values.map((_, index) => values.slice(0, index).reduce((sum, item) => sum + item.value, 0));
-    return { tooltip: { trigger: "axis" }, grid: { ...baseGrid, bottom: values.length > 10 ? 86 : 48 }, xAxis: { type: "category", data: [...values.map((item) => item.name), "合计"], axisLabel: { interval: 0, rotate: values.length > 10 ? 40 : 0, fontSize: 10 } }, yAxis: { type: "value", splitLine: { lineStyle: { color: "#edf1f7" } } }, series: [{ type: "bar", stack: "total", data: [...totals, 0], itemStyle: { color: "transparent" }, silent: true }, { type: "bar", stack: "total", data: [...values.map((item) => item.value), values.reduce((sum, item) => sum + item.value, 0)], itemStyle: { color: (params: any) => params.dataIndex === values.length ? "#16a34a" : color[params.dataIndex % color.length], borderRadius: [4, 4, 0, 0] }, label: { show: values.length <= 10, position: "top", formatter: (params: any) => formatMetric(card.metrics[0], Number(params.value)) } }] };
+    return { tooltip: { trigger: "axis" }, grid: { ...baseGrid, bottom: values.length > 10 ? 86 : 48 }, xAxis: { type: "category", data: [...values.map((item) => item.name), "合计"], axisLabel: { interval: 0, rotate: values.length > 10 ? 40 : 0, fontSize: 10 } }, yAxis: { type: "value", splitLine: { lineStyle: { color: "#edf1f7" } } }, series: [{ type: "bar", stack: "total", data: [...totals, 0], itemStyle: { color: "transparent" }, silent: true }, { type: "bar", stack: "total", data: [...values.map((item) => item.value), values.reduce((sum, item) => sum + item.value, 0)], itemStyle: { color: (params: any) => params.dataIndex === values.length ? (modern ? "#117A4F" : "#16a34a") : activePalette[params.dataIndex % activePalette.length], borderRadius: [4, 4, 0, 0] }, label: { show: values.length <= 10, position: "top", formatter: (params: any) => formatMetric(card.metrics[0], Number(params.value)) } }] };
   }
   if (card.type === "sankey") return { tooltip: { trigger: "item" }, series: [{ type: "sankey", data: result.sankey?.nodes, links: result.sankey?.links, emphasis: { focus: "adjacency" }, nodeWidth: 16, nodeGap: 14, lineStyle: { color: "gradient", curveness: 0.5, opacity: 0.36 }, label: { color: "#334155", fontWeight: 700 } }] };
   return {};
@@ -713,18 +744,19 @@ const fieldApiSources: Record<string, string[]> = {
 };
 
 function FieldExplanationDialog({ label, metric, card, onClose }: { label: string; metric?: MetricId; card: DashboardCardConfig | null; onClose: () => void }) {
+  useBodyScrollLock(true);
   const capability = card ? getApiCapability(card.model) : null;
   const metricHelp = metric ? metricFieldHelp[metric] : null;
   const apiPaths = metricHelp?.apis ?? fieldApiSources[label] ?? ["当前分析模块对应的真实后台接口"];
   const algorithm = metricHelp?.algorithm ?? "作为分组或明细字段使用；数量指标按分组求和，比例指标按汇总分子 ÷ 汇总分母计算。";
   const limitation = metricHelp?.limitation ?? capability?.limitations.join("；") ?? "无额外限制";
-  return createPortal(<div className="field-explanation-modal" role="presentation" onMouseDown={onClose}><section role="dialog" aria-modal="true" aria-label={`${label}字段说明`} onMouseDown={(event) => event.stopPropagation()}><div className="field-explanation-head"><div><span>字段说明</span><h3>{label}</h3></div><button aria-label="关闭字段说明" onClick={onClose}>×</button></div><dl><div><dt>中文解释</dt><dd>{getFieldExplanation(label, metric)}</dd></div>{metricHelp && <div><dt>计算公式</dt><dd>{metricHelp.formula}</dd></div>}<div><dt>聚合算法</dt><dd>{algorithm}</dd></div><div><dt>使用接口</dt><dd className="field-api-paths">{apiPaths.map((path) => <code key={path}>{path}</code>)}</dd></div>{capability && <div><dt>数据粒度</dt><dd>{capability.dataGrain}</dd></div>}<div><dt>口径限制</dt><dd>{limitation}</dd></div></dl><div className="field-explanation-foot">统计时间统一按北京时间自然日；比例指标默认采用汇总分子 ÷ 汇总分母，不简单平均每日百分比。</div></section></div>, document.body);
+  return createPortal(<div className="ui-v13 platform-portal-layer"><div className="field-explanation-modal" role="presentation" onMouseDown={onClose}><section role="dialog" aria-modal="true" aria-label={`${label}字段说明`} onMouseDown={(event) => event.stopPropagation()}><div className="field-explanation-head"><div><span>字段说明</span><h3>{label}</h3></div><button aria-label="关闭字段说明" onClick={onClose}><X aria-hidden="true" /></button></div><dl><div><dt>中文解释</dt><dd>{getFieldExplanation(label, metric)}</dd></div>{metricHelp && <div><dt>计算公式</dt><dd>{metricHelp.formula}</dd></div>}<div><dt>聚合算法</dt><dd>{algorithm}</dd></div><div><dt>使用接口</dt><dd className="field-api-paths">{apiPaths.map((path) => <code key={path}>{path}</code>)}</dd></div>{capability && <div><dt>数据粒度</dt><dd>{capability.dataGrain}</dd></div>}<div><dt>口径限制</dt><dd>{limitation}</dd></div></dl><div className="field-explanation-foot">统计时间统一按北京时间自然日；比例指标默认采用汇总分子 ÷ 汇总分母，不简单平均每日百分比。</div></section></div></div>, document.body);
 }
 
 function FieldHelpTrigger({ label, metric }: { label: string; metric?: MetricId }) {
   const card = React.useContext(CardFieldContext);
   const [open, setOpen] = useState(false);
-  return <><button type="button" className="field-help" title={`查看${label}完整说明`} aria-label={`查看${label}字段解释`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpen(true); }}>?</button>{open && <FieldExplanationDialog label={label} metric={metric} card={card} onClose={() => setOpen(false)} />}</>;
+  return <><button type="button" className="field-help" title={`查看${label}完整说明`} aria-label={`查看${label}字段解释`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpen(true); }}><CircleHelp aria-hidden="true" /></button>{open && <FieldExplanationDialog label={label} metric={metric} card={card} onClose={() => setOpen(false)} />}</>;
 }
 
 function FieldLabel({ label, metric }: { label: string; metric?: MetricId }) {
@@ -789,7 +821,7 @@ function DataTable({ rows, compact = false }: { rows: Record<string, string | nu
   const visibleRows = rows.slice(safePage * pageSize, safePage * pageSize + pageSize);
   const headers = Object.keys(rows[0] ?? {});
   if (!rows.length) return <div className="empty-preview">当前筛选条件下暂无数据</div>;
-  return <div className="table-wrap"><table><thead><tr>{headers.map((header) => <th key={header}><FieldLabel label={header} /></th>)}</tr></thead><tbody>{visibleRows.map((row, index) => <tr key={`${safePage}-${index}`}>{headers.map((header) => <td key={header}>{row[header]}</td>)}</tr>)}</tbody></table>{!compact && pageCount > 1 && <div className="table-pagination"><span>共 {rows.length} 条</span><button disabled={safePage === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>上一页</button><b>{safePage + 1} / {pageCount}</b><button disabled={safePage >= pageCount - 1} onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}>下一页</button></div>}</div>;
+  return <div className="table-wrap"><div className="table-scroll"><table><thead><tr>{headers.map((header) => <th key={header}><FieldLabel label={header} /></th>)}</tr></thead><tbody>{visibleRows.map((row, index) => <tr key={`${safePage}-${index}`}>{headers.map((header) => <td key={header}>{row[header]}</td>)}</tr>)}</tbody></table></div>{!compact && pageCount > 1 && <div className="table-pagination"><span>共 {rows.length} 条</span><button disabled={safePage === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>上一页</button><b>{safePage + 1} / {pageCount}</b><button disabled={safePage >= pageCount - 1} onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}>下一页</button></div>}</div>;
 }
 
 function DiagnosisCard({ insights }: { insights: string[] }) {
@@ -884,10 +916,11 @@ function useLoadingProgress(loading: boolean) {
   return progress;
 }
 
-function CardRenderer({ card, filters = DEFAULT_FILTERS, onDrill, resizable = false, onResize, onPlatformScopeChange }: { card: DashboardCardConfig; filters?: DashboardFilters; onDrill: (payload: DrilldownPayload) => void; resizable?: boolean; onResize?: (size: DashboardCardConfig["size"]) => void; onPlatformScopeChange?: (patch: Pick<DashboardCardConfig, "platformMode" | "platforms">) => void }) {
+function CardRenderer({ card, filters = DEFAULT_FILTERS, onDrill, resizable = false, onResize, onPlatformScopeChange, modern = false }: { card: DashboardCardConfig; filters?: DashboardFilters; onDrill: (payload: DrilldownPayload) => void; resizable?: boolean; onResize?: (size: DashboardCardConfig["size"]) => void; onPlatformScopeChange?: (patch: Pick<DashboardCardConfig, "platformMode" | "platforms">) => void; modern?: boolean }) {
   const [viewMode, setViewMode] = useState<"trend" | "change" | "table">("trend");
   const [retryKey, setRetryKey] = useState(0);
   const [completePreview, setCompletePreview] = useState(false);
+  useBodyScrollLock(completePreview);
   const [previewFilters, setPreviewFilters] = useState<DashboardFilters | null>(null);
   const configuredFilters = useMemo(() => cardScopedFilters(card, filters), [card, filters]);
   const effectiveFilters = completePreview && previewFilters ? previewFilters : configuredFilters;
@@ -898,61 +931,62 @@ function CardRenderer({ card, filters = DEFAULT_FILTERS, onDrill, resizable = fa
     categories: [], series: [], summary: [], table: [],
     insights: [realQuery.error ?? "该卡片的指标、维度或平台组合无法由现有 API 真实计算，请在卡片工厂调整配置。"]
   }), [realQuery.eligible, realQuery.error, realQuery.result]);
-  const chartOption = useMemo(() => makeQueryOption(card, result), [card, result]);
+  const chartOption = useMemo(() => makeQueryOption(card, result, modern), [card, modern, result]);
   const capability = getApiCapability(card.model);
   const chartHasData = hasChartData(card, result);
   const platformRowCount = card.dimensions.includes("platform") ? (card.type === "heatmap" ? result.heatmapY?.length ?? 0 : card.type === "cohort" ? result.cohortY?.length ?? 0 : card.type === "bar" ? result.categories.length : 0) : 0;
   const chartHeight = platformRowCount > 10 ? Math.max(310, platformRowCount * 25 + 76) : undefined;
   const coverageInsight = result.insights.find((insight) => insight.startsWith("数据覆盖："));
+  const simpleCard = card.type === "kpi" || card.type === "table" || card.type === "diagnosis";
+  const simpleCardHasData = card.type === "kpi" ? result.summary.length > 0 : card.type === "table" ? result.table.length > 0 : result.insights.length > 0;
+  const simpleCardReady = simpleCard && !realQuery.loading && !realQuery.error && simpleCardHasData;
 
-  const className = `card ${card.size}${completePreview ? " complete-preview-card" : ""}`;
+  const className = `card ${card.size}${completePreview ? " complete-preview-card" : ""}${modern ? " card--v13" : ""}`;
   const hasViewTabs = ["line", "bar", "heatmap", "funnel", "treemap", "scatter", "cohort", "waterfall", "sankey"].includes(card.type);
   return <CardFieldContext.Provider value={card}><>{completePreview && <div className="complete-preview-backdrop" onMouseDown={() => setCompletePreview(false)} />}
-  <section className={className} data-resize-card={resizable ? "true" : undefined}>
-    {completePreview && <div className="complete-preview-toolbar"><div><b>完整预览</b><span>当前范围：{platformScopeLabel(effectiveFilters)}</span></div><div className="complete-preview-controls"><select value={effectiveFilters.mode} onChange={(event) => {
-      const mode = event.target.value as PlatformMode;
+  <section className={className} data-card-type={card.type} data-resize-card={resizable ? "true" : undefined} data-mobile-visibility={card.mobileVisibility ?? "show"} style={{ "--mobile-order": card.mobileOrder ?? 0 } as React.CSSProperties}>
+    {completePreview && <div className="complete-preview-toolbar"><div><b>完整预览</b><span>当前范围：{platformScopeLabel(effectiveFilters)}</span></div><div className="complete-preview-controls"><MenuSelect label="平台模式" ariaLabel="完整预览平台模式" align="end" value={effectiveFilters.mode} onChange={(value) => {
+      const mode = value as PlatformMode;
       setPreviewFilters(cardScopedFilters({ ...card, platformMode: mode }, filters));
-    }}><option value="all">全部平台</option><option value="single">单个平台</option><option value="compare">多平台对比</option></select>{effectiveFilters.mode !== "all" && <select multiple={effectiveFilters.mode === "compare"} value={effectiveFilters.platforms} onChange={(event) => {
-      const selected = Array.from(event.currentTarget.selectedOptions).map((option) => option.value).slice(0, effectiveFilters.mode === "single" ? 1 : card.model === "usage_depth" ? 4 : 8);
-      if (effectiveFilters.mode === "compare" && selected.length < 2) return;
-      setPreviewFilters({ ...effectiveFilters, platforms: selected });
-    }}>{Object.keys(platformPid).map((name) => <option key={name} value={name}>{name}</option>)}</select>}{onPlatformScopeChange && <button className="primary-btn" onClick={() => { onPlatformScopeChange({ platformMode: effectiveFilters.mode, platforms: effectiveFilters.mode === "all" ? [] : effectiveFilters.platforms }); notify("已应用到卡片，保存布局后生效"); }}>应用到卡片</button>}<button onClick={() => setCompletePreview(false)}>关闭</button></div></div>}
+    }} groups={[{ label: "范围", options: [{ value: "all", label: "全部平台" }, { value: "single", label: "单个平台" }, { value: "compare", label: "多平台对比" }] }]} />{effectiveFilters.mode === "single" && <MenuSelect label="选择平台" ariaLabel="完整预览平台" align="end" value={effectiveFilters.platforms[0] ?? Object.keys(platformPid)[0]} onChange={(value) => setPreviewFilters({ ...effectiveFilters, platforms: [value] })} groups={[{ label: "平台", options: Object.keys(platformPid).map((name) => ({ value: name, label: name, meta: platformPid[name] })) }]} />}{effectiveFilters.mode === "compare" && <MultiMenuSelect label="对比平台" ariaLabel="完整预览对比平台" align="end" values={effectiveFilters.platforms} minSelected={2} maxSelected={card.model === "usage_depth" ? 4 : 8} onChange={(values) => setPreviewFilters({ ...effectiveFilters, platforms: values })} options={Object.keys(platformPid).map((name) => ({ value: name, label: name, meta: platformPid[name] }))} />}{onPlatformScopeChange && <button className="primary-btn" onClick={() => { onPlatformScopeChange({ platformMode: effectiveFilters.mode, platforms: effectiveFilters.mode === "all" ? [] : effectiveFilters.platforms }); notify("已应用到卡片，保存布局后生效"); }}>应用到卡片</button>}<button onClick={() => setCompletePreview(false)}>关闭</button></div></div>}
     <div className="chart-card-head">
-      <div>
-        <div className="card-title">
-          <span>{card.title}</span>
-          <small>{modelName[card.model]}</small>
+      <div className="card-heading">
+        <div className="card-title"><span>{card.title}</span><small>{modelName[card.model]}</small></div>
+        <div className="card-meta-row">
           <button className="card-platform-scope" title="点击进入完整预览并切换平台范围" onClick={() => { setPreviewFilters(configuredFilters); setCompletePreview(true); }}>平台：{card.platformMode && card.platformMode !== "global" ? platformScopeLabel(configuredFilters) : `跟随看板 · ${platformScopeLabel(configuredFilters)}`}</button>
           {coverageInsight && <span className="coverage-status" title={coverageInsight}>{coverageInsight.split("；")[0]}</span>}
-          <i
+          <span
             className={realQuery.result ? "query-state ready" : realQuery.loading ? "query-state loading" : "query-state unavailable"}
             title={`${filters.dateRange} · ${result.scopeLabel} · ${capability.dataGrain}`}
-          >{realQuery.loading ? `更新中 ${Math.round(loadingProgress)}%` : realQuery.result ? "已更新" : realQuery.eligible && realQuery.error ? "异常" : "不可用"}</i>
+          >{realQuery.loading ? `更新中 ${Math.round(loadingProgress)}%` : realQuery.result ? "已更新" : realQuery.eligible && realQuery.error ? "异常" : "不可用"}</span>
         </div>
       </div>
       <div className="chart-view-tabs">
-        <button className="complete-preview-entry" onClick={() => { setPreviewFilters(configuredFilters); setCompletePreview(true); }}>完整预览</button>
       {hasViewTabs && <>
-        <button className="drill-entry" onClick={() => onDrill(buildDrill(card, result, effectiveFilters, card.title))}>查看明细</button>
-        <button className={viewMode === "table" ? "on" : ""} onClick={() => setViewMode("table")}>表格</button>
-        <button className={viewMode === "change" ? "on" : ""} onClick={() => setViewMode("change")}>变化</button>
-        <button className={viewMode === "trend" ? "on" : ""} onClick={() => setViewMode("trend")}>趋势</button>
+        <div className="card-view-mode" role="group" aria-label={`${card.title}视图`}>
+          <button aria-pressed={viewMode === "trend"} className={viewMode === "trend" ? "on" : ""} onClick={() => setViewMode("trend")}>趋势</button>
+          <button aria-pressed={viewMode === "change"} className={viewMode === "change" ? "on" : ""} onClick={() => setViewMode("change")}>变化</button>
+          <button aria-pressed={viewMode === "table"} className={viewMode === "table" ? "on" : ""} onClick={() => setViewMode("table")}>表格</button>
+        </div>
+        <span className="card-action-divider" aria-hidden="true" />
+        <button className="card-icon-action drill-entry" aria-label={`查看${card.title}明细`} title="查看明细" onClick={() => onDrill(buildDrill(card, result, effectiveFilters, card.title))}><ChartNoAxesCombined aria-hidden="true" /></button>
       </>}
+        <button className="card-icon-action complete-preview-entry" aria-label={`完整预览${card.title}`} title="完整预览" onClick={() => { setPreviewFilters(configuredFilters); setCompletePreview(true); }}><Maximize2 aria-hidden="true" /></button>
       </div>
     </div>
     <div className={`card-query-progress${loadingProgress > 0 ? " visible" : ""}`} role={realQuery.loading ? "progressbar" : undefined} aria-label={realQuery.loading ? `${card.title}数据读取进度` : undefined} aria-valuemin={realQuery.loading ? 0 : undefined} aria-valuemax={realQuery.loading ? 100 : undefined} aria-valuenow={realQuery.loading ? Math.round(loadingProgress) : undefined}>
       <span style={{ width: `${loadingProgress}%` }} />
     </div>
-    {realQuery.error && <div className="card-data-warning compact-warning"><span>数据更新失败：{realQuery.error}{realQuery.result ? "，当前保留上次结果。" : "。"}</span><button onClick={() => setRetryKey((value) => value + 1)}>重试</button></div>}
-    {!realQuery.eligible && <div className="card-data-warning">现有 API 无法支持该字段组合，请进入卡片工厂调整。</div>}
+    {realQuery.error && realQuery.result && <div className="card-data-warning compact-warning"><span>数据更新失败：{realQuery.error}，当前保留上次结果。</span><button onClick={() => setRetryKey((value) => value + 1)}>重试</button></div>}
     {hasViewTabs && <div className="card-summary-line"><b>{card.metrics.map((metric) => metricName[metric]).slice(0, 3).join(" / ")}</b><div className="summary-comparisons">{result.summary.slice(0, 3).map((item) => <span key={item.metric}><strong>{metricName[item.metric]} {item.formatted}</strong><ComparisonBadge change={item.change} positive={METRIC_META[item.metric].positive ? item.change >= 0 : item.change <= 0} comparison={item.changeLabel} /></span>)}</div></div>}
-    {card.type === "kpi" && <KpiCard result={result} />}
-    {hasViewTabs && viewMode === "trend" && chartHasData && <Chart option={chartOption} style={chartHeight ? { height: chartHeight } : undefined} ariaLabel={`${card.title}图表`} onClick={(params: any) => onDrill(buildDrill(card, result, effectiveFilters, params?.name ?? "图表节点"))} />}
-    {hasViewTabs && viewMode === "trend" && !chartHasData && <DataState loading={realQuery.loading} error={realQuery.error} empty={!realQuery.loading} loadingLabel={`正在加载${card.title}...`} emptyLabel={realQuery.eligible ? "当前筛选条件没有真实数据" : "现有 API 不支持该卡片配置"} />}
+    {simpleCard && <DataState loading={realQuery.loading} error={realQuery.error} empty={!realQuery.loading && !realQuery.error && !simpleCardHasData} loadingLabel={`正在加载${card.title}...`} emptyLabel={realQuery.eligible ? "当前筛选条件没有真实数据" : "现有 API 不支持该卡片配置，请在分析中心调整字段组合"} onRetry={realQuery.eligible && realQuery.error ? () => setRetryKey((value) => value + 1) : undefined} />}
+    {card.type === "kpi" && simpleCardReady && <KpiCard result={result} />}
+    {hasViewTabs && viewMode === "trend" && chartHasData && <Chart option={chartOption} theme={modern ? "v13" : "classic"} style={chartHeight ? { height: chartHeight } : undefined} ariaLabel={`${card.title}图表`} onClick={(params: any) => onDrill(buildDrill(card, result, effectiveFilters, params?.name ?? "图表节点"))} />}
+    {hasViewTabs && viewMode === "trend" && !chartHasData && <DataState loading={realQuery.loading} error={realQuery.error} empty={!realQuery.loading} loadingLabel={`正在加载${card.title}...`} emptyLabel={realQuery.eligible ? "当前筛选条件没有真实数据" : "现有 API 不支持该卡片配置，请在分析中心调整字段组合"} onRetry={realQuery.eligible && realQuery.error ? () => setRetryKey((value) => value + 1) : undefined} />}
     {hasViewTabs && viewMode === "change" && <DiagnosisCard insights={result.insights} />}
     {hasViewTabs && viewMode === "table" && <DataTable rows={result.table} />}
-    {card.type === "table" && <DataTable rows={result.table} />}
-    {card.type === "diagnosis" && <DiagnosisCard insights={result.insights} />}
+    {card.type === "table" && simpleCardReady && <DataTable rows={result.table} />}
+    {card.type === "diagnosis" && simpleCardReady && <DiagnosisCard insights={result.insights} />}
     {completePreview && <CardMethodology card={card} />}
     {resizable && onResize && !completePreview && <CardResizeHandle size={card.size} onResize={onResize} />}
   </section></></CardFieldContext.Provider>;
@@ -960,18 +994,19 @@ function CardRenderer({ card, filters = DEFAULT_FILTERS, onDrill, resizable = fa
 
 function CardAssetPreview({ card }: { card: DashboardCardConfig }) {
   const result = useMemo(() => executeCardQuery(card, DEFAULT_FILTERS), [card]);
-  const option = useMemo(() => makeQueryOption(card, result), [card, result]);
+  const modern = uiVersion === "v13";
+  const option = useMemo(() => makeQueryOption(card, result, modern), [card, modern, result]);
 
   if (card.type === "kpi") return <KpiCard result={result} />;
   if (card.type === "table") return <div className="mini-table"><DataTable rows={result.table} compact /></div>;
   if (card.type === "diagnosis") return <DiagnosisCard insights={result.insights} />;
   if (["line", "bar", "heatmap", "funnel", "treemap", "scatter", "cohort", "waterfall", "sankey"].includes(card.type)) {
-    return <div className="asset-chart"><Chart option={option} /></div>;
+    return <div className="asset-chart"><Chart option={option} theme={modern ? "v13" : "classic"} /></div>;
   }
   return <div className="empty-preview">暂无预览</div>;
 }
 
-function DashboardRenderer({ template, filters, onDrill, onSaveLayout }: { template: DashboardTemplate; filters: DashboardFilters; onDrill: (payload: DrilldownPayload) => void; onSaveLayout: (cards: DashboardCardConfig[]) => void }) {
+function DashboardRenderer({ template, filters, onDrill, onSaveLayout, toolbar, modern = false }: { template: DashboardTemplate; filters: DashboardFilters; onDrill: (payload: DrilldownPayload) => void; onSaveLayout: (cards: DashboardCardConfig[]) => void; toolbar?: React.ReactNode; modern?: boolean }) {
   const model = analysisModels.find((item) => item.id === template.model);
   const [layoutCards, setLayoutCards] = useState(template.cards);
   const [layoutDirty, setLayoutDirty] = useState(false);
@@ -988,16 +1023,33 @@ function DashboardRenderer({ template, filters, onDrill, onSaveLayout }: { templ
     setLayoutDirty(true);
   };
   const exportRows = () => {
-    const rows = template.cards.flatMap((card) => executeCardQuery(card, cardScopedFilters(card, filters)).table.map((row) => ({ 卡片: card.title, ...row })));
+    const rows = layoutCards.flatMap((card) => executeCardQuery(card, cardScopedFilters(card, filters)).table.map((row) => ({ 卡片: card.title, ...row })));
     downloadCsv(`${template.name}-${filters.dateRange}.csv`, rows);
   };
+  const saveLayout = () => {
+    onSaveLayout(layoutCards);
+    setLayoutDirty(false);
+    notify("看板布局已保存");
+  };
+  const cards = <div className="cards-grid resizable-grid">{layoutCards.map((card) => <CardRenderer key={card.id} card={card} filters={filters} onDrill={onDrill} resizable onResize={(size) => resizeCard(card.id, size)} onPlatformScopeChange={(patch) => updateCardPlatformScope(card.id, patch)} modern={modern} />)}</div>;
+  if (modern) return <DashboardReadFrame
+    title={template.name}
+    description={template.scenario}
+    modelName={model?.name}
+    focus={dashboardFocus[template.id] ?? []}
+    layoutDirty={layoutDirty}
+    onSaveLayout={saveLayout}
+    onExport={exportRows}
+    toolbar={toolbar}
+    mobileHiddenCount={layoutCards.filter((card) => card.mobileVisibility === "hide").length}
+  >{cards}</DashboardReadFrame>;
   return <div>
     <div className="dashboard-head">
       <div><h1>{template.name}</h1><p>{template.scenario}</p></div>
-      <div className="dashboard-actions"><div className="model-pill">{model?.name}</div><button className={layoutDirty ? "blue-action" : ""} disabled={!layoutDirty} onClick={() => { onSaveLayout(layoutCards); setLayoutDirty(false); notify("看板布局已保存"); }}>保存布局</button><button onClick={exportRows}>导出</button></div>
+      <div className="dashboard-actions"><div className="model-pill">{model?.name}</div><button className={layoutDirty ? "blue-action" : ""} disabled={!layoutDirty} onClick={saveLayout}>保存布局</button><button onClick={exportRows}>导出</button></div>
     </div>
     <div className="decision-strip">{(dashboardFocus[template.id] ?? []).map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div>
-    <div className="cards-grid resizable-grid">{layoutCards.map((card) => <CardRenderer key={card.id} card={card} filters={filters} onDrill={onDrill} resizable onResize={(size) => resizeCard(card.id, size)} onPlatformScopeChange={(patch) => updateCardPlatformScope(card.id, patch)} />)}</div>
+    {cards}
   </div>;
 }
 
@@ -1018,10 +1070,10 @@ function filterAssetsByType(assets: CardAsset[], activeType: ChartType | "all") 
 }
 
 function AssetTypeFilters({ activeType, assets, onChange }: { activeType: ChartType | "all"; assets: CardAsset[]; onChange: (type: ChartType | "all") => void }) {
-  return <div className="asset-type-filters">
+  return <div className="asset-type-filters" role="tablist" aria-label="卡片类型">
     {assetFilterTypes.map((type) => {
       const count = type === "all" ? assets.length : assets.filter((asset) => asset.config.type === type).length;
-      return <button key={type} className={activeType === type ? "on" : ""} onClick={() => onChange(type)}>{type === "all" ? "全部" : chartTypeName[type]}<span>{count}</span></button>;
+      return <button key={type} type="button" role="tab" aria-selected={activeType === type} className={activeType === type ? "on" : ""} onClick={() => onChange(type)}>{type === "all" ? "全部" : chartTypeName[type]}<span>{count}</span></button>;
     })}
   </div>;
 }
@@ -1055,11 +1107,12 @@ function TemplateCenter({ templates, surfaces, activeId, onChange }: { templates
   const customTemplates = templates.filter((template) => !builtInTemplateIds.has(template.id));
   const activeTemplate = templates.find((template) => template.id === activeId);
   const activeSurface = surfaces.find((surface) => surface.id === activeId);
+  const groups: MenuSelectGroup[] = [
+    { label: "系统模板", options: [...systemTemplates.map((template) => ({ value: template.id, label: template.name, meta: `${template.cards.length} 张卡片` })), ...surfaces.map((surface) => ({ value: surface.id, label: surface.name, meta: "专用接口" }))] },
+    { label: "我的模板", options: customTemplates.map((template) => ({ value: template.id, label: template.name, meta: `${template.cards.length} 张卡片` })) }
+  ];
   return <div className="dashboard-switcher">
-    <label><span>当前模板</span><select value={activeId} onChange={(event) => onChange(event.target.value)}>
-      <optgroup label="系统模板">{systemTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}{surfaces.map((surface) => <option key={surface.id} value={surface.id}>{surface.name}</option>)}</optgroup>
-      {customTemplates.length > 0 && <optgroup label="我的模板">{customTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</optgroup>}
-    </select></label>
+    <MenuSelect label="当前模板" value={activeId} groups={groups} onChange={onChange} />
     <span>{activeSurface ? "系统模板 · 专用接口" : `${builtInTemplateIds.has(activeTemplate?.id ?? "") ? "系统模板" : "我的模板"} · ${activeTemplate?.cards.length ?? 0} 张卡片`}</span>
   </div>;
 }
@@ -1081,13 +1134,75 @@ function WorkspaceNav({ active }: { active: Workspace }) {
 }
 
 function GlobalFilterBar({ filters, onChange }: { filters: DashboardFilters; onChange: (filters: DashboardFilters) => void }) {
-  const [openPanel, setOpenPanel] = useState<"platform" | "date" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"mobile" | "platform" | "date" | null>(null);
+  const filterDialogRef = useRef<HTMLElement | null>(null);
+  const activeFilterAnchor = useRef<HTMLElement | null>(null);
+  const previousFilterFocus = useRef<HTMLElement | null>(null);
+  const [filterPanelStyle, setFilterPanelStyle] = useState<React.CSSProperties>({});
   const [modeDraft, setModeDraft] = useState<PlatformMode>(filters.mode);
   const [platformDraft, setPlatformDraft] = useState(filters.platforms);
   const [platformSearch, setPlatformSearch] = useState("");
+  const [dateRangeDraft, setDateRangeDraft] = useState<DateRange>(filters.dateRange);
   const [dateDraft, setDateDraft] = useState<[string, string]>(() => resolveDashboardDateRange(filters));
   const [comparisonDraft, setComparisonDraft] = useState<[string, string]>(() => resolveComparisonDateRange(filters));
   const [comparisonModeDraft, setComparisonModeDraft] = useState<ComparisonMode>(filters.comparisonMode ?? "equalLength");
+  useBodyScrollLock(Boolean(openPanel));
+  useEffect(() => {
+    if (!openPanel || openPanel === "mobile") {
+      setFilterPanelStyle({});
+      return undefined;
+    }
+    const positionPanel = () => {
+      if (window.innerWidth < 768) {
+        setFilterPanelStyle({});
+        return;
+      }
+      const anchor = activeFilterAnchor.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const panelWidth = Math.min(openPanel === "date" ? 720 : 560, window.innerWidth - 32);
+      const left = Math.min(Math.max(16, rect.right - panelWidth), window.innerWidth - panelWidth - 16);
+      const top = Math.min(rect.bottom + 8, window.innerHeight - 120);
+      setFilterPanelStyle({ left, top, width: panelWidth, maxHeight: `calc(100dvh - ${top + 16}px)` });
+    };
+    positionPanel();
+    window.addEventListener("resize", positionPanel);
+    window.addEventListener("scroll", positionPanel, true);
+    return () => {
+      window.removeEventListener("resize", positionPanel);
+      window.removeEventListener("scroll", positionPanel, true);
+    };
+  }, [openPanel]);
+  useEffect(() => {
+    if (!openPanel) return undefined;
+    const dialog = filterDialogRef.current;
+    const focusables = () => [...(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') ?? [])].filter((element) => element.getClientRects().length > 0);
+    window.requestAnimationFrame(() => dialog?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpenPanel(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFilterFocus.current?.focus();
+    };
+  }, [openPanel]);
   const today = useMemo(() => {
     const now = new Date();
     const pad = (value: number) => String(value).padStart(2, "0");
@@ -1096,7 +1211,17 @@ function GlobalFilterBar({ filters, onChange }: { filters: DashboardFilters; onC
   const scope = filters.mode === "all" ? `全部 ${platforms.length} 个平台` : filters.platforms.join("、");
   const comparisonScope = resolveComparisonDateRange(filters);
   const dateScope = `${filters.dateRange === "自定义" && filters.customStart && filters.customEnd ? `${filters.customStart} 至 ${filters.customEnd}` : filters.dateRange} · 对比 ${comparisonScope[0]} 至 ${comparisonScope[1]}`;
-  const openPlatformPanel = () => {
+  const rememberFilterTrigger = () => {
+    if (!openPanel && document.activeElement instanceof HTMLElement) previousFilterFocus.current = document.activeElement;
+  };
+  const openMobilePanel = (anchor?: HTMLElement) => {
+    rememberFilterTrigger();
+    activeFilterAnchor.current = anchor ?? null;
+    setOpenPanel("mobile");
+  };
+  const openPlatformPanel = (anchor?: HTMLElement) => {
+    rememberFilterTrigger();
+    activeFilterAnchor.current = anchor ?? previousFilterFocus.current;
     setModeDraft(filters.mode);
     setPlatformDraft(filters.platforms.length ? filters.platforms : ["Pornhub"]);
     setPlatformSearch("");
@@ -1120,16 +1245,20 @@ function GlobalFilterBar({ filters, onChange }: { filters: DashboardFilters; onC
     onChange({ ...filters, mode: modeDraft, platforms: modeDraft === "all" ? filters.platforms : platformDraft });
     setOpenPanel(null);
   };
-  const openDatePanel = () => {
+  const openDatePanel = (anchor?: HTMLElement) => {
+    rememberFilterTrigger();
+    activeFilterAnchor.current = anchor ?? previousFilterFocus.current;
+    setDateRangeDraft(filters.dateRange);
     setDateDraft(resolveDashboardDateRange(filters));
     setComparisonDraft(resolveComparisonDateRange(filters));
     setComparisonModeDraft(filters.comparisonMode ?? "equalLength");
     setOpenPanel("date");
   };
-  const applyPreset = (dateRange: Exclude<DateRange, "自定义">) => {
-    const next = { ...filters, dateRange, customStart: undefined, customEnd: undefined, compareStart: undefined, compareEnd: undefined, comparisonMode: "equalLength" as ComparisonMode };
-    onChange(next);
-    setOpenPanel(null);
+  const applyPresetDraft = (dateRange: Exclude<DateRange, "自定义">) => {
+    const current = resolveDashboardDateRange({ ...filters, dateRange, customStart: undefined, customEnd: undefined });
+    setDateRangeDraft(dateRange);
+    setDateDraft(current);
+    updateComparisonMode(comparisonModeDraft, current);
   };
   const customDateValid = Boolean(dateDraft[0] && dateDraft[1] && dateDraft[0] <= dateDraft[1]);
   const periodDays = ([start, end]: [string, string]) => start && end && start <= end ? Math.round((new Date(`${end}T00:00:00`).getTime() - new Date(`${start}T00:00:00`).getTime()) / 86400000) + 1 : 0;
@@ -1139,24 +1268,38 @@ function GlobalFilterBar({ filters, onChange }: { filters: DashboardFilters; onC
     setComparisonDraft(resolveComparisonDateRange({ ...filters, dateRange: "自定义", customStart: current[0], customEnd: current[1], compareStart: undefined, compareEnd: undefined, comparisonMode: mode }));
   };
   const updateDateDraft = (range: [string, string]) => {
+    setDateRangeDraft("自定义");
     setDateDraft(range);
     if (range[0] && range[1] && range[0] <= range[1]) updateComparisonMode(comparisonModeDraft, range);
   };
-  const applyCustomDate = () => {
+  const applyDateSelection = () => {
     if (!customDateValid || !comparisonDateValid) return;
-    onChange({ ...filters, dateRange: "自定义", customStart: dateDraft[0], customEnd: dateDraft[1], compareStart: comparisonDraft[0], compareEnd: comparisonDraft[1], comparisonMode: comparisonModeDraft });
+    onChange({
+      ...filters,
+      dateRange: dateRangeDraft,
+      customStart: dateRangeDraft === "自定义" ? dateDraft[0] : undefined,
+      customEnd: dateRangeDraft === "自定义" ? dateDraft[1] : undefined,
+      compareStart: comparisonDraft[0],
+      compareEnd: comparisonDraft[1],
+      comparisonMode: comparisonModeDraft
+    });
     setOpenPanel(null);
   };
   const visiblePlatforms = platforms.filter((item) => !platformSearch.trim() || item.platform.toLowerCase().includes(platformSearch.trim().toLowerCase()) || platformPid[item.platform]?.toLowerCase().includes(platformSearch.trim().toLowerCase()));
   return <>
     <div className="global-filter-bar">
-      <button className="filter-trigger platform-trigger" onClick={openPlatformPanel}><span>平台范围</span><b>{scope}</b><small>{filters.mode === "all" ? "全部 20 个平台" : filters.mode === "single" ? "单平台分析" : `${filters.platforms.length} 个平台对比`}</small><i>设置</i></button>
-      <button className="filter-trigger date-trigger" onClick={openDatePanel}><span>分析周期</span><b>{dateScope}</b><small>{filters.comparisonMode === "calendarMonth" ? "自然月对比" : filters.comparisonMode === "sameProgress" ? "同期进度对比" : "等长周期对比"}</small><i>设置</i></button>
-      <button className="save-view-btn" onClick={() => { localStorage.setItem("bi-global-filters", JSON.stringify(filters)); notify("全局分析范围已保存"); }}>保存范围</button>
+      <div className="global-filter-inner">
+        <div className="global-filter-context"><SlidersHorizontal aria-hidden="true" /><span><b>全局筛选</b><small>作用于当前看板</small></span></div>
+        <button className="mobile-filter-trigger" onClick={(event) => openMobilePanel(event.currentTarget)}><SlidersHorizontal aria-hidden="true" /><span><b>筛选</b><small>{scope} · {filters.dateRange}</small></span><i>查看</i></button>
+        <button className="filter-trigger platform-trigger" aria-expanded={openPanel === "platform"} onClick={(event) => openPlatformPanel(event.currentTarget)}><Layers3 aria-hidden="true" /><span><small>平台范围</small><b>{scope}</b></span><ChevronDown aria-hidden="true" /></button>
+        <button className="filter-trigger date-trigger" aria-expanded={openPanel === "date"} onClick={(event) => openDatePanel(event.currentTarget)}><CalendarRange aria-hidden="true" /><span><small>分析周期</small><b>{dateScope}</b></span><ChevronDown aria-hidden="true" /></button>
+        <button className="save-view-btn" onClick={() => { localStorage.setItem("bi-global-filters", JSON.stringify(filters)); notify("全局分析范围已保存"); }}><Save aria-hidden="true" />保存当前筛选</button>
+      </div>
     </div>
     {openPanel && <div className="filter-modal" role="presentation" onMouseDown={() => setOpenPanel(null)}>
-      <section className={`filter-popover ${openPanel}`} role="dialog" aria-modal="true" aria-label={openPanel === "platform" ? "选择平台范围" : "选择时间范围"} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="filter-popover-head"><div><b>{openPanel === "platform" ? "选择平台范围" : "选择时间范围"}</b><span>{openPanel === "platform" ? "选择后统一应用，避免重复加载" : "设置当前周期和对比周期，两段时间分别查询"}</span></div><button aria-label="关闭" onClick={() => setOpenPanel(null)}>×</button></div>
+      <section ref={filterDialogRef} tabIndex={-1} style={filterPanelStyle} className={`filter-popover ${openPanel}`} role="dialog" aria-modal="true" aria-label={openPanel === "platform" ? "选择平台范围" : openPanel === "date" ? "选择时间范围" : "查看当前筛选"} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="filter-popover-head"><div><b>{openPanel === "platform" ? "选择平台范围" : openPanel === "date" ? "选择时间范围" : "当前筛选"}</b><span>{openPanel === "platform" ? "选择后统一应用，避免重复加载" : openPanel === "date" ? "设置当前周期和对比周期，两段时间分别查询" : "分别修改平台和分析周期"}</span></div><button aria-label="关闭" onClick={() => setOpenPanel(null)}><X aria-hidden="true" /></button></div>
+        {openPanel === "mobile" && <><div className="mobile-filter-menu"><button onClick={() => openPlatformPanel()}><Layers3 aria-hidden="true" /><span><small>平台范围</small><b>{scope}</b></span><i>修改</i></button><button onClick={() => openDatePanel()}><CalendarRange aria-hidden="true" /><span><small>分析周期</small><b>{dateScope}</b></span><i>修改</i></button></div><div className="filter-popover-actions"><button onClick={() => setOpenPanel(null)}>完成</button></div></>}
         {openPanel === "platform" && <>
           <div className="platform-mode-tabs"><button className={modeDraft === "all" ? "on" : ""} onClick={() => changeModeDraft("all")}><b>全部平台</b><span>汇总 20 个平台</span></button><button className={modeDraft === "single" ? "on" : ""} onClick={() => changeModeDraft("single")}><b>单个平台</b><span>查看一个平台</span></button><button className={modeDraft === "compare" ? "on" : ""} onClick={() => changeModeDraft("compare")}><b>平台对比</b><span>同时选择 2-8 个</span></button></div>
           {modeDraft !== "all" && <><div className="platform-picker-toolbar"><input value={platformSearch} onChange={(event) => setPlatformSearch(event.target.value)} placeholder="搜索平台名称或 PID" /><span>已选 {platformDraft.length}{modeDraft === "compare" ? "/8" : ""}</span></div><div className="platform-option-grid">{visiblePlatforms.map((item) => <button aria-pressed={platformDraft.includes(item.platform)} className={platformDraft.includes(item.platform) ? "on" : ""} key={item.platform} onClick={() => togglePlatformDraft(item.platform)}><i style={{ background: PLATFORM_COLORS[item.platform] }} /><span><b>{item.platform}</b><small>{platformPid[item.platform]}</small></span><em>{platformDraft.includes(item.platform) ? "已选" : ""}</em></button>)}</div></>}
@@ -1164,10 +1307,19 @@ function GlobalFilterBar({ filters, onChange }: { filters: DashboardFilters; onC
           <div className="filter-popover-actions"><button onClick={() => setOpenPanel(null)}>取消</button><button className="primary-btn" disabled={!platformSelectionValid} onClick={applyPlatformSelection}>应用范围</button></div>
         </>}
         {openPanel === "date" && <>
-          <div className="date-preset-grid">{(["今日", "近7日", "近30日"] as const).map((range) => <button className={filters.dateRange === range ? "on" : ""} key={range} onClick={() => applyPreset(range)}><b>{range}</b><span>{range === "今日" ? "只看当天" : range === "近7日" ? "连续 7 天" : "连续 30 天"}</span></button>)}</div>
-          <div className="comparison-mode-tabs"><button className={comparisonModeDraft === "calendarMonth" ? "on" : ""} onClick={() => updateComparisonMode("calendarMonth")}><b>自然月</b><span>上一个完整月份</span></button><button className={comparisonModeDraft === "equalLength" ? "on" : ""} onClick={() => updateComparisonMode("equalLength")}><b>等长周期</b><span>紧邻的相同天数</span></button><button className={comparisonModeDraft === "sameProgress" ? "on" : ""} onClick={() => updateComparisonMode("sameProgress")}><b>同期进度</b><span>上月1日至相同日序</span></button></div>
-          <div className="period-compare-grid"><div className="custom-date-panel"><div><b>当前周期</b><span>作为看板主要数据范围 · {periodDays(dateDraft)} 天</span></div><div className="custom-date-inputs"><label><span>开始日期</span><input type="date" max={today} value={dateDraft[0]} onChange={(event) => updateDateDraft([event.target.value, dateDraft[1]])} /></label><i>至</i><label><span>结束日期</span><input type="date" min={dateDraft[0]} max={today} value={dateDraft[1]} onChange={(event) => updateDateDraft([dateDraft[0], event.target.value])} /></label></div>{!customDateValid && <em>开始日期不能晚于结束日期</em>}</div><div className="custom-date-panel comparison"><div><b>对比周期</b><span>系统按所选模式生成 · {periodDays(comparisonDraft)} 天</span></div><div className="generated-comparison-range"><b>{comparisonDraft[0]}</b><i>至</i><b>{comparisonDraft[1]}</b></div><small>{comparisonModeDraft === "calendarMonth" ? "日均指标可直接比较；累计指标会同时保留两个自然月的实际累计值。" : comparisonModeDraft === "sameProgress" ? "适合月中比较相同进度，避免完整月与未完整月混比。" : "适合收入、新增、次数等累计指标做严格等天数对比。"}</small>{!comparisonDateValid && <em>系统未能生成合法的对比周期</em>}</div></div>
-          <div className="filter-popover-actions"><button onClick={() => setOpenPanel(null)}>取消</button><button className="primary-btn" disabled={!customDateValid || !comparisonDateValid} onClick={applyCustomDate}>应用两个周期</button></div>
+          <div className="date-filter-body">
+            <section className="date-filter-section" aria-labelledby="current-period-label">
+              <header><span>分析周期</span><div><b id="current-period-label">选择看板统计时间</b><small>可使用快捷范围，也可以直接调整起止日期</small></div></header>
+              <div className="date-preset-grid">{(["今日", "近7日", "近30日"] as const).map((range) => <button aria-pressed={dateRangeDraft === range} className={dateRangeDraft === range ? "on" : ""} key={range} onClick={() => applyPresetDraft(range)}><b>{range}</b><span>{range === "今日" ? "只看当天" : range === "近7日" ? "连续 7 天" : "连续 30 天"}</span></button>)}</div>
+              <div className="custom-date-panel current"><div><b>当前周期</b><span>{dateRangeDraft === "自定义" ? "自定义日期" : dateRangeDraft} · 共 {periodDays(dateDraft)} 天</span></div><div className="custom-date-inputs"><label><span>开始日期</span><input aria-label="当前周期开始日期" type="date" max={today} value={dateDraft[0]} onChange={(event) => updateDateDraft([event.target.value, dateDraft[1]])} /></label><i>至</i><label><span>结束日期</span><input aria-label="当前周期结束日期" type="date" min={dateDraft[0]} max={today} value={dateDraft[1]} onChange={(event) => updateDateDraft([dateDraft[0], event.target.value])} /></label></div>{!customDateValid && <em>开始日期不能晚于结束日期</em>}</div>
+            </section>
+            <section className="date-filter-section comparison-section" aria-labelledby="comparison-period-label">
+              <header><span>对比周期</span><div><b id="comparison-period-label">选择对比生成方式</b><small>系统自动生成日期，避免两个周期误配</small></div></header>
+              <div className="comparison-mode-tabs"><button aria-pressed={comparisonModeDraft === "equalLength"} className={comparisonModeDraft === "equalLength" ? "on" : ""} onClick={() => updateComparisonMode("equalLength")}><b>等长周期</b><span>紧邻的相同天数</span></button><button aria-pressed={comparisonModeDraft === "sameProgress"} className={comparisonModeDraft === "sameProgress" ? "on" : ""} onClick={() => updateComparisonMode("sameProgress")}><b>同期进度</b><span>上月 1 日至相同日序</span></button><button aria-pressed={comparisonModeDraft === "calendarMonth"} className={comparisonModeDraft === "calendarMonth" ? "on" : ""} onClick={() => updateComparisonMode("calendarMonth")}><b>上月完整月</b><span>上一个完整自然月</span></button></div>
+              <div className="custom-date-panel comparison"><div><b>对比周期</b><span>系统生成 · 共 {periodDays(comparisonDraft)} 天</span></div><div className="generated-comparison-range"><b>{comparisonDraft[0]}</b><i>至</i><b>{comparisonDraft[1]}</b></div><small>{comparisonModeDraft === "calendarMonth" ? "适合按完整自然月复盘；累计值按两个周期各自的实际天数展示。" : comparisonModeDraft === "sameProgress" ? "适合月中比较相同进度，避免完整月与未完整月混比。" : "适合收入、新增、次数等累计指标做严格等天数对比。"}</small>{!comparisonDateValid && <em>系统未能生成合法的对比周期</em>}</div>
+            </section>
+          </div>
+          <div className="filter-popover-actions"><span>应用后，当前看板内所有卡片统一刷新</span><button onClick={() => setOpenPanel(null)}>取消</button><button className="primary-btn" disabled={!customDateValid || !comparisonDateValid} onClick={applyDateSelection}>应用筛选</button></div>
         </>}
       </section>
     </div>}
@@ -1205,7 +1357,7 @@ function CardLibrary({ assets, onCreate, onEdit, onDuplicate, onDelete }: { asse
     .filter((group) => group.assets.length > 0);
   return <section className="asset-page">
     <div className="dashboard-head"><div><h1>分析中心</h1><p>管理已有分析卡片，或创建新的指标、趋势、排行和漏斗分析。</p></div><div className="dashboard-actions"><div className="model-pill">{assets.length} 张卡片</div><button className="blue-action" onClick={onCreate}>创建分析</button></div></div>
-    <div className="asset-filter-toolbar"><div className="asset-search"><span>搜索</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索卡片、指标或模型" /></div><label><span>分析模型</span><select value={activeModel} onChange={(event) => setActiveModel(event.target.value as AnalysisModelId | "all")}><option value="all">全部模型</option>{analysisModels.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}</select></label></div>
+    <div className="asset-filter-toolbar"><div className="asset-search"><span>搜索</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索卡片、指标或模型" /></div><MenuSelect label="分析模型" ariaLabel="分析模型筛选" align="end" value={activeModel} onChange={(value) => setActiveModel(value as AnalysisModelId | "all")} groups={[{ label: "筛选范围", options: [{ value: "all", label: "全部模型", meta: `${assets.length} 张卡片` }, ...analysisModels.map((model) => ({ value: model.id, label: model.name, meta: model.description }))] }]} /></div>
     <AssetTypeFilters activeType={activeType} assets={assets} onChange={setActiveType} />
     {!visibleAssets.length && <div className="library-empty"><b>没有匹配的分析卡片</b><span>调整筛选条件，或新建一张卡片。</span><button onClick={onCreate}>新建卡片</button></div>}
     {groupedAssets.map((group, index) => <details className="asset-type-section" key={`${group.type}-${activeType}-${activeModel}-${search}`} open={activeType !== "all" || activeModel !== "all" || Boolean(search) || index === 0}>
@@ -1216,7 +1368,7 @@ function CardLibrary({ assets, onCreate, onEdit, onDuplicate, onDelete }: { asse
         <CardAssetPreview card={asset.config} />
         <div className="chips"><span>{modelName[asset.config.model]}</span>{asset.config.metrics.slice(0, 3).map((metric) => <span key={metric}>{metricName[metric]}</span>)}</div>
         <div className="asset-meta"><span>配置更新于 {asset.updatedAt}</span><span>已用于 {1 + asset.name.length % 4} 个模板</span></div>
-        <div className="asset-actions"><button onClick={() => onEdit(asset)}>编辑</button><button onClick={() => onDuplicate(asset)}>复制</button><button onClick={() => onDelete(asset.id)}>删除</button></div>
+        <div className="asset-actions"><button className="asset-primary-action" onClick={() => onEdit(asset)}><Pencil aria-hidden="true" />编辑</button><button onClick={() => onDuplicate(asset)}><Copy aria-hidden="true" />复制</button><button className="danger-action" onClick={() => onDelete(asset.id)}><Trash2 aria-hidden="true" />删除</button></div>
       </div>)}</div>
     </details>)}
   </section>;
@@ -1244,6 +1396,7 @@ function TemplateFactory({ templates, assets, activeTemplateId, filters, onTempl
   }, [activeTemplateId]);
   const template = draftTemplate;
   const editingCard = template.cards.find((card) => card.id === editingCardId) ?? null;
+  useBodyScrollLock(assetDrawerOpen || Boolean(editingCard));
   const visibleAssets = filterAssetsByType(assets, activeAssetType);
   const previewAsset = visibleAssets.find((asset) => asset.id === previewAssetId) ?? visibleAssets[0] ?? null;
   const filterDimensions = template.cards.length
@@ -1355,7 +1508,7 @@ function TemplateFactory({ templates, assets, activeTemplateId, filters, onTempl
     <div className="template-preview-canvas"><DashboardRenderer template={template} filters={filters} onDrill={onDrill} onSaveLayout={(cards) => commitTemplate({ ...template, cards }, "模板布局已保存")} /></div>
   </section>;
   return <section className="template-factory">
-    <div className="dashboard-head template-factory-header"><div className="template-editor-heading"><button className="back-action" onClick={onExit}>返回</button><div><h1>模板管理</h1><p>编辑画布中的卡片布局，完成后保存或发布模板。</p></div></div><div className="dashboard-actions"><button onClick={() => setIsPreviewing(true)}>预览</button><button disabled={!templateDirty} onClick={cancelTemplateChanges}>取消修改</button><button disabled={!templateDirty} onClick={() => commitTemplate()}>保存</button><button className="primary-btn" onClick={publishTemplate}>保存并发布</button><button className="blue-action" onClick={() => setAssetDrawerOpen(true)}>添加卡片</button></div></div>
+    <div className="dashboard-head template-factory-header"><div className="template-editor-heading"><button className="back-action" onClick={onExit}>返回</button><div><h1>模板管理</h1><p>编辑画布中的卡片布局，完成后保存或发布模板。</p></div></div><div className="dashboard-actions"><button onClick={() => setIsPreviewing(true)}>预览</button><button disabled={!templateDirty} onClick={cancelTemplateChanges}>取消修改</button><button disabled={!templateDirty} onClick={() => commitTemplate()}>保存</button><button className="primary-btn" onClick={publishTemplate}>保存并发布</button></div></div>
     <div className="factory-layout">
       <div className="factory-column">
         <div className="panel-title">选择模板</div>
@@ -1366,16 +1519,16 @@ function TemplateFactory({ templates, assets, activeTemplateId, filters, onTempl
       <div className="factory-column wide">
         <div className="template-edit-panel">
           <div className="template-edit-top">
-            <div><div className="panel-title">编辑模板</div><div className="template-status"><span>{template.status === "published" ? "已发布" : "草稿"}</span><span>{templateDirty ? "有未保存修改" : "已保存"}</span><span>{template.cards.length} 张卡片</span></div></div>
+            <div><div className="panel-title">编辑模板</div><div className="template-status"><span className={template.status === "published" ? "is-published" : "is-draft"}><CheckCircle2 aria-hidden="true" />{template.status === "published" ? "已发布" : "草稿"}</span><span className={templateDirty ? "is-dirty" : "is-saved"}><Cloud aria-hidden="true" />{templateDirty ? "有未保存修改" : "已保存"}</span><em>{template.cards.length} 张卡片</em></div></div>
             <label><span>模板名称</span><input value={template.name} onChange={(event) => updateTemplate({ ...template, name: event.target.value })} /></label>
           </div>
           <div className="template-edit-bottom">
             <label><span>使用场景</span><input value={template.scenario} onChange={(event) => updateTemplate({ ...template, scenario: event.target.value })} /></label>
-            <label><span>主分析模型</span><select value={template.model} onChange={(event) => {
-              const nextModel = analysisModels.find((item) => item.id === event.target.value as AnalysisModelId) ?? analysisModels[0];
+            <MenuSelect className="form-menu-select" label="主分析模型" value={template.model} onChange={(value) => {
+              const nextModel = analysisModels.find((item) => item.id === value as AnalysisModelId) ?? analysisModels[0];
               updateTemplate({ ...template, model: nextModel.id, filters: nextModel.allowedDimensions.slice(0, 3) });
-            }}>{analysisModels.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label><span>公共筛选器</span><select value={filterDimensions.includes(template.filters[0]) ? template.filters[0] : filterDimensions[0]} disabled={!filterDimensions.length} onChange={(event) => updateTemplate({ ...template, filters: [event.target.value as DimensionId] })}>{filterDimensions.map((id) => <option key={id} value={id}>{dimensionName[id]}</option>)}</select></label>
+            }} groups={[{ label: "分析模型", options: analysisModels.map((item) => ({ value: item.id, label: item.name, meta: item.description })) }]} />
+            <MenuSelect className="form-menu-select" label="公共筛选器" value={filterDimensions.includes(template.filters[0]) ? template.filters[0] : filterDimensions[0] ?? ""} disabled={!filterDimensions.length} onChange={(value) => updateTemplate({ ...template, filters: [value as DimensionId] })} groups={[{ label: "可用维度", options: filterDimensions.map((id) => ({ value: id, label: dimensionName[id] })) }]} />
           </div>
         </div>
         <div
@@ -1417,7 +1570,7 @@ function TemplateFactory({ templates, assets, activeTemplateId, filters, onTempl
           ><div className="selected-card-head"><div><b>{index + 1}. {card.title}</b><span>{chartTypeName[card.type]} · {modelName[card.model]} · 示例数据结构预览</span></div><div><button onClick={() => setEditingCardId(card.id)}>编辑</button><button onClick={() => moveCard(card.id, -1)}>上移</button><button onClick={() => moveCard(card.id, 1)}>下移</button><button onClick={() => removeCard(card.id)}>移除</button></div></div><CardAssetPreview card={card} /><CardResizeHandle size={card.size} onResize={(size) => resizeTemplateCard(card.id, size)} /></div>{insertIndex === index + 1 && <div className="insert-line"><span>插入到这里</span></div>}</React.Fragment>)}
         </div>
       </div>
-      {assetDrawerOpen && <aside className="factory-column asset-drawer"><div className="asset-drawer-head"><div><b>添加分析卡片</b><span>拖到画布指定位置，或直接添加到顶部</span></div><button aria-label="关闭卡片库" onClick={() => setAssetDrawerOpen(false)}>×</button></div><div className="asset-drawer-toolbar"><div className="panel-title asset-drawer-title"><span>卡片库</span><button onClick={onCreateCard}>新建卡片</button></div><AssetTypeFilters activeType={activeAssetType} assets={assets} onChange={setActiveAssetType} /></div><div className="drag-hint">拖动卡片到左侧画布，蓝色插入线表示放置位置</div>
+      {assetDrawerOpen && <aside className="factory-column asset-drawer"><div className="asset-drawer-head"><div><b>添加分析卡片</b><span>拖到画布指定位置，或直接添加到顶部</span></div><button aria-label="关闭卡片库" onClick={() => setAssetDrawerOpen(false)}><X aria-hidden="true" /></button></div><div className="asset-drawer-toolbar"><div className="panel-title asset-drawer-title"><span>卡片库</span><button onClick={onCreateCard}>新建卡片</button></div><AssetTypeFilters activeType={activeAssetType} assets={assets} onChange={setActiveAssetType} /></div><div className="drag-hint">拖动卡片到左侧画布，蓝色插入线表示放置位置</div>
       {previewAsset && <div className="asset-drawer-preview"><div><b>{previewAsset.name}</b><span>{chartTypeName[previewAsset.config.type]} · 示例预览</span></div><CardAssetPreview card={previewAsset.config} /></div>}
       <div className="asset-source-list">{visibleAssets.map((asset) => <div
         className={draggingAssetId === asset.id ? "asset-source-card dragging" : "asset-source-card"}
@@ -1472,18 +1625,18 @@ function CardEditDrawer({ card, onChange, onClose }: { card: DashboardCardConfig
     if (platformMode !== "compare" || next.length >= 2) onChange({ platforms: next });
   };
   return <aside className="card-edit-drawer">
-    <div className="drawer-head"><div><b>编辑分析卡片</b><span>{card.title}</span></div><button onClick={onClose}>×</button></div>
+    <div className="drawer-head"><div><b>编辑分析卡片</b><span>{card.title}</span></div><button aria-label="关闭卡片编辑" onClick={onClose}><X aria-hidden="true" /></button></div>
     <div className="drawer-body">
       <div className="config-block"><b>基础信息</b><input value={card.title} onChange={(event) => onChange({ title: event.target.value })} /></div>
       <div className="editor-grid">
-        <label><span>图表类型</span><select value={card.type} onChange={(event) => onChange({ type: event.target.value as ChartType })}>{capability.allowedCharts.map((type) => <option key={type} value={type}>{chartTypeName[type]}</option>)}</select></label>
-        <label><span>卡片尺寸</span><select value={card.size} onChange={(event) => onChange({ size: event.target.value as DashboardCardConfig["size"] })}>{cardSizes.map((size) => <option key={size} value={size}>{sizeName[size]}</option>)}</select></label>
-        <label><span>分析模型</span><select value={card.model} onChange={(event) => {
-          const nextModel = analysisModels.find((item) => item.id === event.target.value as AnalysisModelId) ?? analysisModels[0];
+        <MenuSelect className="form-menu-select" label="图表类型" value={card.type} onChange={(value) => onChange({ type: value as ChartType })} groups={[{ label: "可用图表", options: capability.allowedCharts.map((type) => ({ value: type, label: chartTypeName[type] })) }]} />
+        <MenuSelect className="form-menu-select" label="卡片尺寸" value={card.size} onChange={(value) => onChange({ size: value as DashboardCardConfig["size"] })} groups={[{ label: "布局宽度", options: cardSizes.map((size) => ({ value: size, label: sizeName[size] })) }]} />
+        <MenuSelect className="form-menu-select" label="分析模型" value={card.model} onChange={(value) => {
+          const nextModel = analysisModels.find((item) => item.id === value as AnalysisModelId) ?? analysisModels[0];
           const nextCapability = getApiCapability(nextModel.id);
           onChange({ model: nextModel.id, type: nextCapability.allowedCharts[0], metrics: nextCapability.allowedMetrics.slice(0, 2), dimensions: nextCapability.allowedDimensions.slice(0, 2), drillPath: nextModel.defaultDrillPath, funnelSteps: nextCapability.funnelEvents, sourceApi: nextCapability.apiPaths[0] });
-        }}>{analysisModels.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label><span>数据粒度</span><select value={capability.dataGrain} disabled><option>{capability.dataGrain}</option></select></label>
+        }} groups={[{ label: "分析模型", options: analysisModels.map((item) => ({ value: item.id, label: item.name, meta: item.description })) }]} />
+        <MenuSelect className="form-menu-select" label="数据粒度" value={capability.dataGrain} disabled onChange={() => undefined} groups={[{ label: "只读", options: [{ value: capability.dataGrain, label: capability.dataGrain }] }]} />
       </div>
       <div className="config-block card-platform-config"><b>平台范围</b><span>默认跟随顶部看板，也可为该卡片保存独立范围。{card.model === "usage_depth" ? "24小时曲线最多对比4个平台。" : ""}</span><div className="platform-mode-tabs compact"><button className={platformMode === "global" ? "on" : ""} onClick={() => onChange({ platformMode: "global" })}>跟随看板</button><button className={platformMode === "all" ? "on" : ""} onClick={() => onChange({ platformMode: "all" })}>全部平台</button><button className={platformMode === "single" ? "on" : ""} onClick={() => onChange({ platformMode: "single", platforms: [selectedPlatforms[0] ?? "Pornhub"] })}>单平台</button><button className={platformMode === "compare" ? "on" : ""} onClick={() => onChange({ platformMode: "compare", platforms: selectedPlatforms.length >= 2 ? selectedPlatforms : ["Pornhub", "TikTok"] })}>多平台对比</button></div>{(platformMode === "single" || platformMode === "compare") && <div className="chips editable platform-config-chips">{Object.keys(platformPid).map((name) => <button className={selectedPlatforms.includes(name) ? "on" : ""} key={name} onClick={() => toggleCardPlatform(name)}>{name}</button>)}</div>}</div>
       <div className="config-label">指标</div>
@@ -1624,35 +1777,22 @@ function ConfigPanel({ template, onTemplateChange, variant = "side" }: { templat
         const cardCapability = getApiCapability(cardModel.id);
         return <div className="card-editor" key={card.id}>
           <input value={card.title} onChange={(event) => updateCard(card.id, { title: event.target.value })} />
+          <div className="select-row"><MenuSelect className="form-menu-select" label="展示" value={card.type} onChange={(value) => updateCard(card.id, { type: value as ChartType })} groups={[{ label: "可用图表", options: cardCapability.allowedCharts.map((type) => ({ value: type, label: chartTypeName[type] })) }]} /></div>
           <div className="select-row">
-            <label>展示</label>
-            <select value={card.type} onChange={(event) => updateCard(card.id, { type: event.target.value as ChartType })}>
-              {cardCapability.allowedCharts.map((type) => <option key={type} value={type}>{chartTypeName[type]}</option>)}
-            </select>
-          </div>
-          <div className="select-row">
-            <label>模型</label>
-            <select value={card.model} onChange={(event) => {
-              const nextModel = analysisModels.find((item) => item.id === event.target.value as AnalysisModelId) ?? analysisModels[0];
+            <MenuSelect className="form-menu-select" label="模型" value={card.model} onChange={(value) => {
+              const nextModel = analysisModels.find((item) => item.id === value as AnalysisModelId) ?? analysisModels[0];
               const nextCapability = getApiCapability(nextModel.id);
               updateCard(card.id, { model: nextModel.id, type: nextCapability.allowedCharts[0], metrics: [nextCapability.allowedMetrics[0]], dimensions: [nextCapability.allowedDimensions[0]], drillPath: nextModel.defaultDrillPath });
-            }}>
-              {analysisModels.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+            }} groups={[{ label: "分析模型", options: analysisModels.map((item) => ({ value: item.id, label: item.name, meta: item.description })) }]} />
           </div>
-          <div className="select-row">
-            <label>布局</label>
-            <select value={card.size} onChange={(event) => updateCard(card.id, { size: event.target.value as DashboardCardConfig["size"] })}>
-              {cardSizes.map((size) => <option key={size} value={size}>{sizeName[size]}</option>)}
-            </select>
-          </div>
+          <div className="select-row"><MenuSelect className="form-menu-select" label="布局" value={card.size} onChange={(value) => updateCard(card.id, { size: value as DashboardCardConfig["size"] })} groups={[{ label: "卡片宽度", options: cardSizes.map((size) => ({ value: size, label: sizeName[size] })) }]} /></div>
           <div className="config-label">分析指标</div>
           <MetricPicker metrics={cardCapability.allowedMetrics} selected={card.metrics} onToggle={(metric) => toggleMetric(card, metric)} />
           <div className="config-label">按维度查看</div>
           <div className="chips editable">{cardCapability.allowedDimensions.map((dimension) => <ConfigFieldChoice label={dimensionName[dimension]} selected={card.dimensions.includes(dimension)} key={dimension} onClick={() => toggleDimension(card, dimension)} />)}</div>
           <div className="card-actions">
-            <button onClick={() => moveCard(card.id, -1)}>上移</button>
-            <button onClick={() => moveCard(card.id, 1)}>下移</button>
+            <button onClick={() => moveCard(card.id, -1)}><ArrowUp aria-hidden="true" />上移</button>
+            <button onClick={() => moveCard(card.id, 1)}><ArrowDown aria-hidden="true" />下移</button>
           </div>
           {(card.type === "funnel" || card.type === "sankey") && <div className="funnel-config">
             <div className="config-label">漏斗步骤</div>
@@ -1663,23 +1803,15 @@ function ConfigPanel({ template, onTemplateChange, variant = "side" }: { templat
                   <span>{index + 1}</span>
                   <b>{event?.name ?? eventId}</b>
                   <code>{event?.domain ?? "事件"}</code>
-                  <button onClick={() => moveFunnelStep(card, index, -1)}>↑</button>
-                  <button onClick={() => moveFunnelStep(card, index, 1)}>↓</button>
-                  <button onClick={() => removeFunnelStep(card, index)}>删</button>
+                  <button className="step-icon-action" aria-label={`上移第 ${index + 1} 步`} title="上移" onClick={() => moveFunnelStep(card, index, -1)}><ArrowUp aria-hidden="true" /></button>
+                  <button className="step-icon-action" aria-label={`下移第 ${index + 1} 步`} title="下移" onClick={() => moveFunnelStep(card, index, 1)}><ArrowDown aria-hidden="true" /></button>
+                  <button className="step-icon-action danger-action" aria-label={`删除第 ${index + 1} 步`} title="删除" onClick={() => removeFunnelStep(card, index)}><Trash2 aria-hidden="true" /></button>
                 </div>;
               })}
             </div>
             <div className="config-label">添加步骤事件</div>
             <div className="chips editable">{eventDictionary.map((event) => <button key={event.id} onClick={() => addFunnelStep(card, event.id)}>{event.name}</button>)}</div>
-            <div className="select-row">
-              <label>窗口期</label>
-              <select value={card.conversionWindow ?? "当日"} onChange={(event) => updateCard(card.id, { conversionWindow: event.target.value })}>
-                <option value="当日">当日</option>
-                <option value="24小时">24小时</option>
-                <option value="7天">7天</option>
-                <option value="同会话">同会话</option>
-              </select>
-            </div>
+            <div className="select-row"><MenuSelect className="form-menu-select" label="窗口期" value={card.conversionWindow ?? "当日"} onChange={(value) => updateCard(card.id, { conversionWindow: value })} groups={[{ label: "转化窗口", options: ["当日", "24小时", "7天", "同会话"].map((value) => ({ value, label: value })) }]} /></div>
           </div>}
           <button className="ghost-btn" onClick={() => removeCard(card.id)}>删除卡片</button>
         </div>;
@@ -1749,7 +1881,7 @@ function AnalysisCreator({ modelId, draft, onDraftChange, onUndo, canUndo, onSav
     <div className="analysis-main">
       <div className="creator-head">
         <div className="creator-heading">
-          <button className="back-action" onClick={onExit}>返回卡片库</button>
+          <button className="back-action" onClick={onExit}><ChevronLeft aria-hidden="true" />返回卡片库</button>
           <div>
             <h1>{isFunnelModel ? "生成漏斗分析卡片" : "生成分析卡片"}</h1>
             <p>先选择已有 API 对应的分析模型，再在接口允许的指标、维度和图表范围内生成卡片。</p>
@@ -1759,7 +1891,7 @@ function AnalysisCreator({ modelId, draft, onDraftChange, onUndo, canUndo, onSav
       </div>
 
       <div className="analysis-section">
-        <div className="section-title"><b>当前分析模型</b><span className={`capability-badge ${capability.status}`}>{capability.statusLabel}</span></div>
+        <div className="section-title"><b>1. 当前分析模型</b><span className={`capability-badge ${capability.status}`}>{capability.statusLabel}</span></div>
         <div className="analysis-model-card">
           <div className="model-summary"><div><b>{model.name}</b><p>{model.description}</p></div><span>{capability.dataGrain}</span></div>
           <details className="capability-details">
@@ -1812,9 +1944,9 @@ function AnalysisCreator({ modelId, draft, onDraftChange, onUndo, canUndo, onSav
               >
                 <span>{index + 1}</span>
                 <div><b>{event?.name ?? eventId}</b><em>{event?.description}</em></div>
-                <button onClick={() => moveStep(index, -1)}>上移</button>
-                <button onClick={() => moveStep(index, 1)}>下移</button>
-                <button onClick={() => removeStep(index)}>删除</button>
+                <button className="step-icon-action" aria-label={`上移第 ${index + 1} 步`} title="上移" onClick={() => moveStep(index, -1)}><ArrowUp aria-hidden="true" /></button>
+                <button className="step-icon-action" aria-label={`下移第 ${index + 1} 步`} title="下移" onClick={() => moveStep(index, 1)}><ArrowDown aria-hidden="true" /></button>
+                <button className="step-icon-action danger-action" aria-label={`删除第 ${index + 1} 步`} title="删除" onClick={() => removeStep(index)}><Trash2 aria-hidden="true" /></button>
               </div>;
             })}
           </div>
@@ -1848,7 +1980,7 @@ function AnalysisCreator({ modelId, draft, onDraftChange, onUndo, canUndo, onSav
             <span>查询筛选</span>
             <div className="chips editable compact">{capability.allowedDimensions.map((dimension) => <ConfigFieldChoice label={dimensionName[dimension]} selected={draft.filters.includes(dimension)} key={dimension} onClick={() => toggleFilter(dimension)} />)}</div>
           </div>
-          <label><span>默认图表</span><select value={configurableCard.type} onChange={(event) => updateCard(configurableCard.id, { type: event.target.value as ChartType })}>{capability.allowedCharts.map((type) => <option key={type} value={type}>{chartTypeName[type]}</option>)}</select></label>
+          <MenuSelect className="form-menu-select" label="默认图表" value={configurableCard.type} onChange={(value) => updateCard(configurableCard.id, { type: value as ChartType })} groups={[{ label: "可用图表", options: capability.allowedCharts.map((type) => ({ value: type, label: chartTypeName[type] })) }]} />
         </div>
         <div className="config-label">拆分维度 <small>至少选择 1 项</small></div>
         <div className="chips editable selectable">{capability.allowedDimensions.map((dimension) => <ConfigFieldChoice label={dimensionName[dimension]} selected={configurableCard.dimensions.includes(dimension)} key={dimension} onClick={() => toggleDimension(dimension)} />)}</div>
@@ -1876,7 +2008,7 @@ function AnalysisCreator({ modelId, draft, onDraftChange, onUndo, canUndo, onSav
       <div className="live-preview">
         <div className="section-title"><b>实时预览</b><span>配置后自动更新</span></div>
         <div className="result-grid">
-          <CardRenderer card={configurableCard} onDrill={() => undefined} />
+          <CardRenderer card={configurableCard} onDrill={() => undefined} modern={uiVersion === "v13"} />
         </div>
       </div>
     </aside>
@@ -1916,7 +2048,7 @@ function Drawer({ payload, onClose }: { payload: DrilldownPayload | null; onClos
       signal: controller.signal,
       body: JSON.stringify({ platformId: detailPlatform, dateRange: payload.dateRange, page: detailPage, pageSize: 20 })
     }).then(async (response) => {
-      const body = await response.json() as { success: boolean; data?: { rows: Record<string, string | number>[]; warnings?: string[] }; error?: { message?: string } };
+      const body = await readJsonResponse<{ success: boolean; data?: { rows: Record<string, string | number>[]; warnings?: string[] }; error?: { message?: string } }>(response, "明细查询服务");
       if (!response.ok || !body.success || !body.data) throw new Error(body.error?.message ?? "真实明细查询失败");
       setDetailRows(body.data.rows);
       setDetailWarnings(body.data.warnings ?? []);
@@ -1938,7 +2070,7 @@ function Drawer({ payload, onClose }: { payload: DrilldownPayload | null; onClos
   return <>
     <div className={payload ? "mask show" : "mask"} onClick={onClose} />
     <aside ref={ref} role="dialog" aria-modal="true" aria-label="下钻分析" tabIndex={-1} className={payload ? "drawer show" : "drawer"}>
-      <div className="drawer-head"><div><b>{payload?.title ?? "下钻分析"}</b><span>{payload?.subtitle}</span></div><button onClick={onClose}>×</button></div>
+      <div className="drawer-head"><div><b>{payload?.title ?? "下钻分析"}</b><span>{payload?.subtitle}</span></div><button aria-label="关闭下钻分析" onClick={onClose}><X aria-hidden="true" /></button></div>
       {payload && <div className="drawer-body">
         <div className="drill-context"><span>当前范围</span><b>{payload.scope}</b><em>{payload.benchmark}</em></div>
         <div className="drawer-kpis"><div><span>分析模型</span><b>{modelName[payload.model]}</b></div><div><span>明细行数</span><b>{payload.rows.length}</b></div><div><span>下钻维度</span><b>{payload.dimensions.map((item) => dimensionName[item]).join(" / ")}</b></div><div><span>核心指标</span><b>{payload.metrics.map((item) => metricName[item]).slice(0, 3).join(" / ")}</b></div></div>
@@ -1947,7 +2079,7 @@ function Drawer({ payload, onClose }: { payload: DrilldownPayload | null; onClos
           <p>{payload.diagnosis[0]}</p>
           <div className="drawer-mini-chart"><Chart option={trendOption} /></div>
         </div>
-        <div className="detail-section-head"><div><h3>真实业务明细</h3><span>来自后台明细接口，不使用演示数据</span></div><div className="detail-controls"><select value={detailPlatform} onChange={(event) => { setDetailPlatform(event.target.value); setDetailPage(1); }}>{payload.platformIds.map((pid) => <option key={pid} value={pid}>{pid}</option>)}</select><div className="segmented-control"><button className={detailKind === "users" ? "on" : ""} onClick={() => { setDetailKind("users"); setDetailPage(1); }}>用户</button><button className={detailKind === "circles" ? "on" : ""} onClick={() => { setDetailKind("circles"); setDetailPage(1); }}>圈子</button></div></div></div>
+        <div className="detail-section-head"><div><h3>真实业务明细</h3><span>来自后台明细接口，不使用演示数据</span></div><div className="detail-controls"><MenuSelect label="平台" ariaLabel="下钻明细平台" align="end" value={detailPlatform} onChange={(value) => { setDetailPlatform(value); setDetailPage(1); }} groups={[{ label: "当前可用平台", options: payload.platformIds.map((pid) => ({ value: pid, label: pid })) }]} /><div className="segmented-control"><button className={detailKind === "users" ? "on" : ""} onClick={() => { setDetailKind("users"); setDetailPage(1); }}>用户</button><button className={detailKind === "circles" ? "on" : ""} onClick={() => { setDetailKind("circles"); setDetailPage(1); }}>圈子</button></div></div></div>
         {detailLoading && <div className="detail-state">正在加载真实明细...</div>}
         {detailError && <div className="card-data-warning">{detailError}</div>}
         {!detailLoading && !detailError && <DataTable rows={detailRows} />}
@@ -1988,7 +2120,7 @@ function Dictionaries({ onUseModel }: { onUseModel: (modelId: AnalysisModelId) =
       const supportedModels = analysisModels.filter((model) => model.allowedDimensions.includes(id as DimensionId));
       return <article className="dictionary-item dimension-item" key={id}><div className="dictionary-item-head"><div><b>{name}</b><code>{id}</code></div><span className={`data-status ${supportedModels.length ? "ready" : "missing"}`}>{supportedModels.length ? `${supportedModels.length} 个模型可用` : "当前 API 不支持"}</span></div><p>{supportedModels.length ? `可用于：${supportedModels.map((model) => model.name).join("、")}` : "字段已保留在规划字典中，现阶段不能用于生成真实分析卡片。"}</p><div className="dictionary-meta"><span>API 能力约束</span><span>{supportedModels.length ? "支持筛选或分组" : "等待接口补充"}</span></div><button disabled={!supportedModels.length} onClick={() => supportedModels.length && onUseModel(supportedModels[0].id)}>{supportedModels.length ? "用于新建分析" : "暂不可用"}</button></article>;
     })}</div>}
-    {tab === "taxonomy" && <><div className="taxonomy-toolbar"><label>标签平台<select value={taxonomyPlatform} onChange={(event) => setTaxonomyPlatform(event.target.value)}>{Object.entries(platformPid).map(([name, pid]) => <option key={pid} value={pid}>{name}</option>)}</select></label><span>真实分类树 {categoryRoots.length} 个根节点 · 标签 {realTags.length} 个</span></div><div className="dictionary-grid">{categoryRoots.flatMap((root) => root.groups.map((group) => ({ ...group, platformName: root.platformName }))).filter((item) => !normalized || `${item.name} ${item.type} ${item.platformName}`.toLowerCase().includes(normalized)).slice(0, 60).map((item) => <article className="dictionary-item" key={`${item.platformName}-${item.id}`}><div className="dictionary-item-head"><div><b>{item.name}</b><code>{item.type}</code></div><span className="data-status ready">真实分类</span></div><p>{item.platformName} · 下级分类 {item.childCount} 个</p></article>)}{realTags.filter((item) => !normalized || `${item.name} ${item.type}`.toLowerCase().includes(normalized)).slice(0, 60).map((item) => <article className="dictionary-item" key={item.id}><div className="dictionary-item-head"><div><b>{item.name}</b><code>{item.type}</code></div><span className="data-status ready">真实标签</span></div><p>标签组：{item.group}</p></article>)}</div></>}
+    {tab === "taxonomy" && <><div className="taxonomy-toolbar"><MenuSelect label="标签平台" ariaLabel="标签平台筛选" value={taxonomyPlatform} onChange={setTaxonomyPlatform} groups={[{ label: "平台", options: Object.entries(platformPid).map(([name, pid]) => ({ value: pid, label: name, meta: pid })) }]} /><span>真实分类树 {categoryRoots.length} 个根节点 · 标签 {realTags.length} 个</span></div><div className="dictionary-grid">{categoryRoots.flatMap((root) => root.groups.map((group) => ({ ...group, platformName: root.platformName }))).filter((item) => !normalized || `${item.name} ${item.type} ${item.platformName}`.toLowerCase().includes(normalized)).slice(0, 60).map((item) => <article className="dictionary-item" key={`${item.platformName}-${item.id}`}><div className="dictionary-item-head"><div><b>{item.name}</b><code>{item.type}</code></div><span className="data-status ready">真实分类</span></div><p>{item.platformName} · 下级分类 {item.childCount} 个</p></article>)}{realTags.filter((item) => !normalized || `${item.name} ${item.type}`.toLowerCase().includes(normalized)).slice(0, 60).map((item) => <article className="dictionary-item" key={item.id}><div className="dictionary-item-head"><div><b>{item.name}</b><code>{item.type}</code></div><span className="data-status ready">真实标签</span></div><p>标签组：{item.group}</p></article>)}</div></>}
   </section>;
 }
 
@@ -2039,7 +2171,7 @@ function ChannelDashboard({ filters }: { filters: DashboardFilters }) {
     setError(null);
     Promise.all(platformScope.map(async ({ pid }) => {
       const response = await fetch("/api/bi/channels/detail", { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ platformId: pid, dateRange: resolveDashboardDateRange(filters), page: 1, pageSize: 100 }) });
-      const payload = await response.json() as { success: boolean; data?: { rows: ChannelRow[]; total: number }; error?: { message?: string } };
+      const payload = await readJsonResponse<{ success: boolean; data?: { rows: ChannelRow[]; total: number }; error?: { message?: string } }>(response, "渠道数据服务");
       if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? `${pid} 渠道数据查询失败`);
       return payload.data;
     })).then((results) => {
@@ -2085,7 +2217,7 @@ function ContentDashboard({ filters }: { filters: DashboardFilters }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController(); setLoading(true); setError(null);
-    Promise.all(platformScope.map(async ({ pid }) => { const response = await fetch("/api/bi/content/categories", { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ platformId: pid, dateRange: resolveDashboardDateRange(filters), page: 1, pageSize: 100 }) }); const payload = await response.json() as { success: boolean; data?: { rows: ContentCategoryRow[]; approximateUv: boolean }; error?: { message?: string } }; if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? `${pid} 分类内容查询失败`); return payload.data; })).then((results) => {
+    Promise.all(platformScope.map(async ({ pid }) => { const response = await fetch("/api/bi/content/categories", { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ platformId: pid, dateRange: resolveDashboardDateRange(filters), page: 1, pageSize: 100 }) }); const payload = await readJsonResponse<{ success: boolean; data?: { rows: ContentCategoryRow[]; approximateUv: boolean }; error?: { message?: string } }>(response, "分类内容服务"); if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? `${pid} 分类内容查询失败`); return payload.data; })).then((results) => {
       const groups = new Map<string, ContentCategoryRow[]>();
       results.flatMap((item) => item.rows).forEach((row) => groups.set(row.category, [...(groups.get(row.category) ?? []), row]));
       setRows([...groups].map(([category, items]) => { const sums = items.reduce((sum, row) => ({ watches: sum.watches + row.watches, viewers: sum.viewers + row.viewers, clicks: sum.clicks + row.clicks, likes: sum.likes + row.likes, collects: sum.collects + row.collects }), { watches: 0, viewers: 0, clicks: 0, likes: 0, collects: 0 }); return { category, ...sums, watchesPerViewer: sums.viewers ? sums.watches / sums.viewers : 0, playPerClick: sums.clicks ? sums.watches / sums.clicks : 0, likeRate: sums.viewers ? sums.likes / sums.viewers : 0, collectRate: sums.viewers ? sums.collects / sums.viewers : 0 }; }).sort((a, b) => b.watches - a.watches));
@@ -2129,7 +2261,7 @@ function SpecialDashboard({ filters }: { filters: DashboardFilters }) {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError(null);
-    Promise.all(platformScope.map(async ({ pid, name }) => { const response = await fetch(`/api/bi/special/${domain}`, { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ platformId: pid, dateRange: resolveDashboardDateRange(filters), page: 1, pageSize: 100 }) }); const payload = await response.json() as { success: boolean; data?: { rows: Array<Record<string, string | number | boolean>>; total: number; warnings: string[] }; error?: { message?: string } }; if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? `${name} 专项数据查询失败`); return { ...payload.data, rows: payload.data.rows.map((row) => ({ 分析平台: name, ...row })) }; }))
+    Promise.all(platformScope.map(async ({ pid, name }) => { const response = await fetch(`/api/bi/special/${domain}`, { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ platformId: pid, dateRange: resolveDashboardDateRange(filters), page: 1, pageSize: 100 }) }); const payload = await readJsonResponse<{ success: boolean; data?: { rows: Array<Record<string, string | number | boolean>>; total: number; warnings: string[] }; error?: { message?: string } }>(response, "专项数据服务"); if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? `${name} 专项数据查询失败`); return { ...payload.data, rows: payload.data.rows.map((row) => ({ 分析平台: name, ...row })) }; }))
       .then((results) => { setRows(results.flatMap((item) => item.rows)); setTotal(results.reduce((sum, item) => sum + item.total, 0)); setWarnings([...new Set(results.flatMap((item) => item.warnings))]); })
       .catch((reason) => { if (!controller.signal.aborted) { setRows([]); setWarnings([]); setError(reason instanceof Error ? reason.message : "专项数据查询失败"); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -2176,7 +2308,7 @@ function DataSourceMaintenance() {
 
   const request = async (path: string, init: RequestInit = {}) => {
     const response = await fetch(path, { ...init, credentials: "same-origin", headers: { "content-type": "application/json", ...(init.headers ?? {}) } });
-    const payload = await response.json() as { success: boolean; data?: unknown; error?: { message?: string } };
+    const payload = await readJsonResponse<{ success: boolean; data?: unknown; error?: { message?: string } }>(response, "数据源维护服务");
     if (!response.ok || !payload.success) throw new Error(payload.error?.message ?? "数据源维护请求失败");
     return payload.data;
   };
@@ -2249,9 +2381,21 @@ function App() {
   const [draftHistory, setDraftHistory] = useState<DashboardTemplate[]>([]);
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
   const [workspaceHydrated, setWorkspaceHydrated] = useState(false);
+  const [workspaceRemoteAvailable, setWorkspaceRemoteAvailable] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => loadPersisted("bi-sidebar-collapsed", false));
   const [globalFilters, setGlobalFilters] = useState<DashboardFilters>(() => loadPersisted("bi-global-filters", { dateRange: "近7日", mode: "all", platforms: ["Pornhub", "TikTok"] }));
   const template = templates.find((item) => item.id === templateId) ?? templates[0];
   const systemSurface = systemSurfaceTemplates.find((item) => item.id === templateId) ?? null;
+  const modernActive = uiVersion === "v13";
+  const workspaceLabel: Record<Workspace, string> = { templates: "看板中心", cards: "分析中心", cardFactory: "创建分析", templateFactory: "模板管理", dictionary: "数据字典", dataSources: "数据源维护" };
+  useBodyScrollLock(Boolean(drill) || (modernActive && navOpen));
+  useEffect(() => {
+    if (!modernActive) setNavOpen(false);
+  }, [modernActive]);
+  useEffect(() => {
+    try { localStorage.setItem("bi-sidebar-collapsed", JSON.stringify(sidebarCollapsed)); } catch { /* 保持当前会话状态 */ }
+  }, [sidebarCollapsed]);
   useEffect(() => {
     try {
       localStorage.setItem("bi-templates-v3-api", JSON.stringify(templates));
@@ -2266,10 +2410,16 @@ function App() {
     window.history.replaceState(null, "", url);
   }, [workspace]);
   useEffect(() => {
+    const restoreWorkspace = () => setWorkspace(initialWorkspace());
+    window.addEventListener("popstate", restoreWorkspace);
+    return () => window.removeEventListener("popstate", restoreWorkspace);
+  }, []);
+  useEffect(() => {
     const controller = new AbortController();
     fetch("/api/bi/workspace", { signal: controller.signal }).then(async (response) => {
-      const payload = await response.json() as { success: boolean; data?: { templates?: unknown; cardAssets?: unknown } | null };
+      const payload = await readJsonResponse<{ success: boolean; data?: { templates?: unknown; cardAssets?: unknown } | null }>(response, "工作区服务");
       if (!response.ok || !payload.success) throw new Error("工作区读取失败");
+      setWorkspaceRemoteAvailable(true);
       if (payload.data) {
         const remoteTemplates = normalizeTemplates(payload.data.templates);
         setTemplates((current) => normalizeTemplates(mergeTemplatesByRecency(remoteTemplates, current)));
@@ -2278,12 +2428,12 @@ function App() {
         }
       }
     }).catch((error) => {
-      if (!controller.signal.aborted) notify(error instanceof Error ? `${error.message}，本次使用浏览器迁移数据` : "工作区读取失败");
+      if (!controller.signal.aborted) notify(error instanceof Error ? `${error.message}，当前使用浏览器本地数据` : "工作区服务暂时不可用，当前使用浏览器本地数据");
     }).finally(() => { if (!controller.signal.aborted) setWorkspaceHydrated(true); });
     return () => controller.abort();
   }, []);
   useEffect(() => {
-    if (!workspaceHydrated) return undefined;
+    if (!workspaceHydrated || !workspaceRemoteAvailable) return undefined;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       fetch("/api/bi/workspace", { method: "PUT", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ schemaVersion: 1, templates, cardAssets }) })
@@ -2291,12 +2441,23 @@ function App() {
         .catch((error) => { if (!controller.signal.aborted) notify(error instanceof Error ? error.message : "工作区保存失败"); });
     }, 500);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [cardAssets, templates, workspaceHydrated]);
+  }, [cardAssets, templates, workspaceHydrated, workspaceRemoteAvailable]);
   const changeCreateModel = (modelId: AnalysisModelId) => {
     setActiveCreateModel(modelId);
     setDraftTemplate(createCardDraft(modelId));
     setDraftHistory([]);
     setEditingAssetId(null);
+  };
+  const navigateWorkspace = (nextWorkspace: Workspace) => {
+    if (nextWorkspace === workspace) {
+      setNavOpen(false);
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("workspace", nextWorkspace);
+    window.history.pushState({ workspace: nextWorkspace }, "", url);
+    setWorkspace(nextWorkspace);
+    setNavOpen(false);
   };
   const startCreateCard = (modelId: AnalysisModelId = activeCreateModel) => {
     setActiveCreateModel(modelId);
@@ -2352,17 +2513,16 @@ function App() {
     setWorkspace("cards");
   };
 
-  return <div className="app">
-    <header className="topbar"><div><b>多平台经营分析 BI</b><span>真实数据 · 受控自助分析</span></div><QueryHealth /></header>
-    {workspace === "templates" && <GlobalFilterBar filters={globalFilters} onChange={setGlobalFilters} />}
-    <main className={workspace === "templateFactory" ? "layout template-editor-shell" : workspace === "cardFactory" ? "layout card-factory-layout" : workspace === "templates" ? "layout dashboard-layout" : "layout compact-workspace-layout"}>
-      {workspace !== "templateFactory" && <WorkspaceNav active={workspace} />}
+  return <div className={`app${modernActive ? ` ui-v13 workspace-${workspace}${sidebarCollapsed ? " sidebar-collapsed" : ""}` : ""}`}>
+    {modernActive ? <PlatformTopbar section={workspaceLabel[workspace]} status={<QueryHealth />} onOpenNavigation={() => setNavOpen(true)} onNavigateHome={() => navigateWorkspace("templates")} /> : <header className="topbar"><div><b>多平台经营分析 BI</b><span>真实数据 · 受控自助分析</span></div><QueryHealth /></header>}
+    <main className={workspace === "templateFactory" ? `layout template-editor-shell${modernActive ? " platform-layout platform-template-layout" : ""}` : workspace === "cardFactory" ? `layout card-factory-layout${modernActive ? " platform-layout" : ""}` : workspace === "templates" ? `layout dashboard-layout${modernActive ? " platform-dashboard-layout platform-layout" : ""}` : `layout compact-workspace-layout${modernActive ? " platform-layout" : ""}`}>
+      {modernActive ? <PlatformSidebar active={workspace} version={uiVersion} open={navOpen} collapsed={sidebarCollapsed} onClose={() => setNavOpen(false)} onToggleCollapse={() => setSidebarCollapsed((current) => !current)} onNavigate={(next) => navigateWorkspace(next as Workspace)} /> : workspace !== "templateFactory" && <WorkspaceNav active={workspace} />}
       {workspace === "templates" && <section className="main-panel dashboard-workspace">
-        <TemplateCenter templates={templates} surfaces={systemSurfaceTemplates} activeId={templateId} onChange={setTemplateId} />
+        {(!modernActive || systemSurface) && <div className="dashboard-command-bar"><TemplateCenter templates={templates} surfaces={systemSurfaceTemplates} activeId={templateId} onChange={setTemplateId} /><GlobalFilterBar filters={globalFilters} onChange={setGlobalFilters} /></div>}
         {systemSurface?.id === "system-content-categories" && <ContentDashboard filters={globalFilters} />}
         {systemSurface?.id === "system-channels" && <ChannelDashboard filters={globalFilters} />}
         {systemSurface?.id === "system-special" && <SpecialDashboard filters={globalFilters} />}
-        {!systemSurface && <DashboardRenderer template={template} filters={globalFilters} onDrill={setDrill} onSaveLayout={(cards) => setTemplates((current) => current.map((item) => item.id === template.id ? { ...item, cards, updatedAt: "刚刚" } : item))} />}
+        {!systemSurface && <DashboardRenderer template={template} filters={globalFilters} onDrill={setDrill} onSaveLayout={(cards) => setTemplates((current) => current.map((item) => item.id === template.id ? { ...item, cards, updatedAt: "刚刚" } : item))} toolbar={modernActive ? <><TemplateCenter templates={templates} surfaces={systemSurfaceTemplates} activeId={templateId} onChange={setTemplateId} /><GlobalFilterBar filters={globalFilters} onChange={setGlobalFilters} /></> : undefined} modern={modernActive} />}
       </section>}
       {workspace === "cards" && <section className="main-panel span-workspace"><CardLibrary assets={cardAssets} onCreate={() => startCreateCard("content_position")} onEdit={(asset) => { setDraftTemplate({ ...createCardDraft(asset.config.model), name: asset.name, scenario: asset.description, cards: [asset.config] }); setDraftHistory([]); setEditingAssetId(asset.id); setActiveCreateModel(asset.config.model); setWorkspace("cardFactory"); }} onDuplicate={(asset) => { const stamp = Date.now(); setCardAssets((current) => [{ ...asset, id: `asset-${stamp}`, name: `${asset.name} 副本`, config: { ...asset.config, id: `asset-card-${stamp}`, title: `${asset.name} 副本` }, updatedAt: "刚刚" }, ...current]); notify("卡片副本已创建"); }} onDelete={(id) => { if (window.confirm("确认删除这张分析卡片？模板中已使用的副本不会受到影响。")) { setCardAssets((current) => current.filter((asset) => asset.id !== id)); notify("卡片已删除"); } }} /></section>}
       {workspace === "cardFactory" && <section className="main-panel create-main">

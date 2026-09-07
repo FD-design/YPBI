@@ -190,6 +190,8 @@ export interface DashboardCardConfig {
   sourceApi?: string;
   platformMode?: "global" | "all" | "single" | "compare";
   platforms?: string[];
+  mobileOrder?: number;
+  mobileVisibility?: "show" | "hide";
 }
 
 export interface DashboardTemplate {

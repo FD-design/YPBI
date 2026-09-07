@@ -4,12 +4,13 @@ import { BarChart, FunnelChart, HeatmapChart, LineChart, PieChart, SankeyChart, 
 import { AriaComponent, GridComponent, LegendComponent, TitleComponent, TooltipComponent, VisualMapComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { ECharts, EChartsCoreOption } from "echarts/core";
+import { V13_CHART_BASE } from "../theme/chartTheme";
 
 use([BarChart, FunnelChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart, AriaComponent, GridComponent, LegendComponent, TitleComponent, TooltipComponent, VisualMapComponent, CanvasRenderer]);
 
 export type ChartOption = EChartsCoreOption;
 
-export function Chart({ option, onClick, ariaLabel, style }: { option: ChartOption; onClick?: (params: unknown) => void; ariaLabel?: string; style?: CSSProperties }) {
+export function Chart({ option, onClick, ariaLabel, style, theme = "classic" }: { option: ChartOption; onClick?: (params: unknown) => void; ariaLabel?: string; style?: CSSProperties; theme?: "classic" | "v13" }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const instance = useRef<ECharts | null>(null);
 
@@ -39,6 +40,7 @@ export function Chart({ option, onClick, ariaLabel, style }: { option: ChartOpti
       }
       : sourceTooltip.formatter;
     instance.current?.setOption({
+      ...(theme === "v13" ? V13_CHART_BASE : {}),
       ...option,
       tooltip: {
         ...sourceTooltip,
@@ -49,7 +51,7 @@ export function Chart({ option, onClick, ariaLabel, style }: { option: ChartOpti
       },
       aria: { enabled: true, description: ariaLabel }
     }, { notMerge: true });
-  }, [ariaLabel, option]);
+  }, [ariaLabel, option, theme]);
   useEffect(() => {
     const chart = instance.current;
     if (!chart || !onClick) return undefined;
