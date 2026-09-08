@@ -24,16 +24,16 @@
 
 | 模块 | 当前功能 | 主要代码 | 详细文档 | 当前状态 | 最后修改 |
 |---|---|---|---|---|---|
-| 看板与前端工作区 | 看板中心、分析中心、模板管理、数据字典、数据源维护及全部弹层统一使用 UI v1.5 稳定骨架；共享整合式 YPBI 字标、自定义业务选择器、单层任务表面、全屏 Portal 层级和稳定响应式 Shell | `src/main.tsx`、`src/app`、`src/theme`、`src/components`、`src/features` | [前端模块](./modules/frontend.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md) | 1280/1024/390px 页面、筛选、分类、弹层、sticky 和无位移回归通过 | 2026-08-28：全平台视觉与交互完整收口 |
+| 看板与前端工作区 | 经典版 UI v1.5 继续作为回退；新增独立 Product Shell、语义路由、指标中心和 M016 单 PID 日趋势页，其余目标路径只显示未开放状态 | `src/main.tsx`、`src/legacyApp.tsx`、`src/v2`、`src/theme`、`src/components` | [前端模块](./modules/frontend.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md) | 首批只读本地代码完成；新旧入口系统 Chrome 回归通过，待真实身份、M016 验数与生产门禁 | 2026-09-08：完成 Product Shell 与首批只读页面本地回归 |
 | 卡片与模板配置 | 分析卡片创建与管理；独立模板编辑模式；卡片级平台范围；最多 16 项指标；完整预览、保存、发布、排序和宽度调整 | `src/main.tsx`、`contracts/card.ts` | [前端模块](./modules/frontend.md) | 可用 | 2026-07-27：补充卡片编辑返回入口 |
-| 分析引擎 | 指标校验、查询编排、跨接口关联、日均/累计/加权计算、五分钟实时走势、查询状态事件、失败保留上次结果、短时有界缓存、图表转换、固定阶段量对比、留存、排行、趋势、热力、瀑布、贡献矩形和汇总桑基；尚无用户级真实漏斗 | `src/analytics`、`server/analytics` | [分析模块](./modules/analytics.md) | 现有聚合能力可用，真实漏斗待建设 | 2026-09-03：纠正阶段量与真实漏斗边界 |
-| BI 后端 API | 查询、校验、就绪探测、下钻、渠道、内容、专项、元数据、工作区存储 | `server/app.ts`、`contracts` | [后端 API](./modules/backend-api.md) | 可用 | 2026-07-22：就绪探测与数据源参数保护 |
+| 分析引擎 | V2 以独立 M016 source / query service 保留真实 0、无记录、空值、部分数据与未知水位；旧聚合、阶段量、固定 PID 和高级图表仅作迁移事实 | `server/v2`、`src/v2`、`src/analytics`、`server/analytics` | [分析模块](./modules/analytics.md) | V2 的 M016 单 PID 日序列本地代码完成但待真实验数；遗留分析不代表目标 V1 准入 | 2026-09-08：完成 V2 M016 本地切片与状态回归 |
+| BI 后端 API | 新增只读 `/api/bi/v2` 路由命名空间、指标 / 平台目录和 M016 查询，默认 IdentityProvider 失败关闭；查询日志已移除 PID 与原始错误对象；旧查询、维护和 workspace API 保留迁移事实 | `server/app.ts`、`contracts/bi-v2.ts`、`server/identity`、`server/v2` | [后端 API](./modules/backend-api.md) | V2 身份源、网关 / 功能开关隔离证据、权限正反用例、生产日志核验、M016 验数和生产门禁未完成；遗留 `/ready` 不证明 V2 就绪 | 2026-09-08：注册 V2 只读纵向切片 |
 | 上游接口接入 | 30 个后台接口登记、双后台按 PID 路由、Token 安全热更新、Adapter 归一化、超时与错误映射 | `server/upstream` | [数据与平台](./modules/data-platform.md) | 30 个有效参数调用通过 | 2026-07-22：视频表现切换真实排行接口 |
 | 平台注册表 | 20 个 HX 平台与 PID 映射 | `server/platforms/registry.ts` | [数据与平台](./modules/data-platform.md) | 可用 | 2026-07-15：正式平台表确认 |
 | 工作区持久化 | 模板和卡片资产保存到 PostgreSQL；无数据库时使用磁盘文件并保留上一版本备份 | `server/persistence` | [后端 API](./modules/backend-api.md) | 可用 | 2026-07-23：修复服务重启后模板丢失 |
 | 部署与运行 | systemd 管理 API/Web，Nginx 普通入口、Caddy HTTPS 管理入口、安全响应头与访问统计 | `deploy`、`package.json` | [部署运维](./modules/deployment.md) | VPS 运行中 | 2026-07-23：配置页安全登录与HTTP自动跳转 |
-| 产品需求治理 | 用一份总 PRD 维护产品架构、看板、指标速览、分析、数据中心和全局规则；用一份调整方案维护当前实现差异、真实 API 能力与迁移事项 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 1.63、调整方案 1.59；V1 产品架构与页面行为均已确认，官方看板只引用维护范围来源，个人来源加入时生成独立维护副本。实施采用同仓分层迁移：复用技术与真实数据接入底座，重做产品领域层；来源删除治理后置。最终分类映射、指标权威项及身份权限源按数据准入和实施依赖核对 | 2026-09-08：确认官方看板来源归属 |
-| 文档治理与版本管理 | 修改前读索引，UI 任务额外读取已确认问题清单；修改后同步模块、问题护栏和时间线 | `AGENTS.md`、`.gitignore`、`docs` | 本文件、[UI 防回归规则](./UI-已确认问题与防回归规则.md)、[部署运维](./modules/deployment.md) | 强制执行 | 2026-08-28：UI 问题记录纳入项目完成门槛 |
+| 产品需求治理 | 用一份总 PRD 维护产品架构、看板、指标速览、分析、数据中心和全局规则；用一份调整方案维护当前实现差异、真实 API 能力、架构风险与迁移事项 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 1.64、调整方案 1.62；V1 产品目标已确认，Product Shell / V2 / M016 首批本地代码与浏览器回归完成。正式身份、PID 范围、M016 验数、Bun 测试与生产门禁未完成；最终分类映射继续按数据准入核对 | 2026-09-08：记录首批完成结果与剩余门禁 |
+| 文档治理与版本管理 | 长期工程规则覆盖权威源、影响面、模块边界、高风险确认、迁移可靠性、可观测性、分级验证与交付；UI 任务额外读取已确认问题清单 | `AGENTS.md`、`.gitignore`、`docs` | 本文件、[现有平台调整方案](./requirements/BI-现有平台调整方案.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md)、[部署运维](./modules/deployment.md) | 强制执行；不为单个功能重复建文档 | 2026-09-08：长期工程规则与架构风险纳入完成门槛 |
 
 ## 当前代码分析模型（现状，不代表目标产品分类）
 
@@ -64,7 +64,7 @@
 
 - `/api/bi/workspace` 的读写尚未接入身份、对象归属、服务端权限和 `revision` 并发条件，公网访问者理论上可以读取或覆盖同一份工作区配置。
 - 当前公网入口只有 HTTP，尚未配置 HTTPS。
-- `src/main.tsx` 和 `src/styles.css` 体积较大，后续功能开发应按工作区逐步拆分。
+- `src/legacyApp.tsx` 和 `src/styles.css` 体积较大；目标功能已从轻量 `src/main.tsx` 分流到 `src/v2`，后续只随迁移切片继续拆分旧实现。
 - 已建立工作区 Shell 的 Playwright E2E；真实 API 成功态、权限矩阵和生产浏览器回归仍需在部署环境持续补齐。
 
 ## 时间线入口

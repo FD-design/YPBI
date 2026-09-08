@@ -25,8 +25,18 @@ import { SpecialAdapter } from "./upstream/special.adapter";
 import { MetadataAdapter } from "./upstream/metadata.adapter";
 import { ContentAdapter } from "./upstream/content.adapter";
 import { MaintenanceAuth } from "./security/maintenance-auth";
+import type { IdentityProvider } from "./identity/identity-provider";
+import { UnavailableIdentityProvider } from "./identity/identity-provider";
+import { PDaySumM016Source } from "./v2/m016-source";
+import { V2MetricQueryService } from "./v2/metric-query.service";
+import { v2BiPlugin, type V2MetricQueryExecutor } from "./v2/plugin";
 
-export async function buildApp(env: AppEnv) {
+export interface BuildAppDependencies {
+  identityProvider?: IdentityProvider;
+  v2MetricQueryService?: V2MetricQueryExecutor;
+}
+
+export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies = {}) {
   const app = Fastify({ logger: env.NODE_ENV !== "test" });
   await app.register(cors, { origin: env.NODE_ENV === "production" ? false : true });
   const upstream = new UpstreamClient(env);
@@ -38,6 +48,8 @@ export async function buildApp(env: AppEnv) {
   const metadata = new MetadataAdapter(upstream);
   const content = new ContentAdapter(upstream);
   const maintenanceAuth = new MaintenanceAuth(env.TOKEN_MAINTENANCE_KEY);
+  const identityProvider = dependencies.identityProvider ?? new UnavailableIdentityProvider();
+  const v2MetricQueryService = dependencies.v2MetricQueryService ?? new V2MetricQueryService(new PDaySumM016Source(upstream));
   app.addHook("onClose", async () => workspaceStore.close());
   const overviewAdapter = new OverviewAdapter(upstream);
   const orchestrator = new QueryOrchestrator(overviewAdapter, new EventAdapter(upstream), new SearchAdapter(upstream), new VideoAdapter(upstream), new RealtimeAdapter(upstream), new RetentionAdapter(upstream), new AcquisitionAdapter(special, overviewAdapter), env.MAX_PLATFORM_CONCURRENCY);
@@ -217,9 +229,20 @@ export async function buildApp(env: AppEnv) {
     return reply.code(result.valid ? 200 : 422).send({ success: result.valid, data: result.valid ? result : undefined, error: result.valid ? undefined : { code: "UNSUPPORTED_COMBINATION", message: "卡片超出 API 能力范围", details: result.issues } });
   });
 
+  // Preserve the legacy /api/bi/* error contract exactly. The V2 plugin owns
+  // a more specific encapsulated handler for its routes. This must be set
+  // before awaiting plugin registration, because awaiting boots Fastify and
+  // freezes the already-declared legacy route contexts.
   app.setErrorHandler((error, _request, reply) => {
     app.log.error(error);
     reply.code(500).send({ success: false, error: { code: "INTERNAL_ERROR", message: "BI 服务处理失败" } });
   });
+
+  await app.register(v2BiPlugin, {
+    prefix: "/api/bi/v2",
+    identityProvider,
+    metricQueryService: v2MetricQueryService
+  });
+
   return app;
 }
