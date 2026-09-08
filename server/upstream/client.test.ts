@@ -53,6 +53,40 @@ describe("UpstreamClient business errors", () => {
     expect(requestHeaders).toEqual({ "x-token": "test-token", name: "primary-user" });
   });
 
+  test("主数据源未配置 Token 时失败关闭且绝不发出匿名请求", async () => {
+    let fetchCount = 0;
+    const client = new UpstreamClient({ ...env, UPSTREAM_X_TOKEN: undefined }, async () => {
+      fetchCount += 1;
+      return new Response(JSON.stringify({ code: 200 }), { status: 200 });
+    });
+
+    await expect(client.get("/api/test", { pid: "PH" })).rejects.toMatchObject({
+      code: "UPSTREAM_NOT_CONFIGURED",
+      statusCode: 503
+    });
+    expect(fetchCount).toBe(0);
+  });
+
+  test("命中备用 PID 但备用路由不完整时失败关闭且不回落主后台", async () => {
+    let fetchCount = 0;
+    const client = new UpstreamClient({
+      ...env,
+      UPSTREAM_SECONDARY_API_BASE_URL: undefined,
+      UPSTREAM_SECONDARY_USER_NAME: undefined,
+      UPSTREAM_SECONDARY_X_TOKEN: undefined,
+      UPSTREAM_SECONDARY_PIDS: "FBI"
+    }, async () => {
+      fetchCount += 1;
+      return new Response(JSON.stringify({ code: 200 }), { status: 200 });
+    });
+
+    await expect(client.get("/api/test", { pid: "FBI" })).rejects.toMatchObject({
+      code: "UPSTREAM_NOT_CONFIGURED",
+      statusCode: 503
+    });
+    expect(fetchCount).toBe(0);
+  });
+
   test("将重新登录业务码映射为认证失败", async () => {
     const client = new UpstreamClient(env, async () => new Response(JSON.stringify({ code: 2002, err: "请重新登陆" }), { status: 200, headers: { "content-type": "application/json" } }));
     await expect(client.get("/api/test", {})).rejects.toMatchObject({ code: "UPSTREAM_AUTH_FAILED", statusCode: 401 });

@@ -7,10 +7,21 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/config-driven-bi-demo
 EnvironmentFile=/opt/config-driven-bi-demo/.env.local
-ExecStart=/usr/bin/env NODE_ENV=production /root/.bun/bin/bun server/index.ts
+ExecStart=/usr/bin/env NODE_ENV=production /usr/local/bin/bun server/index.ts
 Restart=always
 RestartSec=3
-User=root
+User=ypbi
+Group=ypbi
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/opt/config-driven-bi-demo/data
 
 [Install]
 WantedBy=multi-user.target

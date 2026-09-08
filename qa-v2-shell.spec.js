@@ -7,6 +7,35 @@ test.use({
   channel: "chrome"
 });
 
+function authenticatedSession(role = "maintainer", mustChangePassword = false, csrfToken = "c".repeat(43)) {
+  return {
+    success: true,
+    data: {
+      user: {
+        subjectId: "00000000-0000-4000-8000-000000000001",
+        username: "qa.user",
+        displayName: "QA 用户",
+        role,
+        permissions: role === "maintainer"
+          ? ["bi:read", "bi:data-source-maintenance:enter"]
+          : ["bi:read"],
+        pidScope: "all"
+      },
+      expiresAt: "2099-09-08T00:00:00.000Z",
+      mustChangePassword,
+      csrfToken
+    }
+  };
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/bi/v2/auth/session", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(authenticatedSession())
+  }));
+});
+
 // These route fixtures exist only in browser QA. Production V2 code always calls
 // the real read-only /api/bi/v2 endpoints and never imports data from this file.
 const metric = {
@@ -244,6 +273,13 @@ test("390 移动导航使用 modal dialog、恢复焦点且不横向溢出", asy
   await expect(page.getByRole("heading", { name: "指标中心", exact: true })).toBeVisible();
   await expect(page.locator(".v2-table-surface")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  await page.getByRole("link", { name: "进入分析" }).click();
+  await expect(page.getByRole("heading", { name: "日活跃用户数", exact: true })).toBeVisible();
+  await expect(page.locator(".v2-result-table")).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 220));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(220);
+  await expect.poll(async () => (await page.locator(".v2-topbar").boundingBox())?.y ?? -1).toBe(0);
 
   const navigation = page.locator("#v2-primary-navigation");
   await expect(navigation).toHaveAttribute("aria-hidden", "true");

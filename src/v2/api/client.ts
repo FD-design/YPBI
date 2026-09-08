@@ -6,6 +6,7 @@ import {
   v2PlatformCatalogSuccessSchema,
   type V2MetricQuery
 } from "../../../contracts/bi-v2";
+import { notifyAuthenticationRequired } from "./authEvents";
 
 export type V2FailureKind = "identity_unavailable" | "unauthenticated" | "forbidden" | "error";
 
@@ -41,6 +42,7 @@ function invalidResponse(status: number) {
 }
 
 async function parseResponse<T>(response: Response, successSchema: z.ZodType<T>): Promise<T> {
+  if (response.status === 401) notifyAuthenticationRequired();
   let payload: unknown;
   try {
     payload = await response.json();

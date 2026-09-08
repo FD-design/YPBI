@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:server": "bun --watch server/index.ts",
     "start:server": "bun server/index.ts",
+    "user:manage": "bun server/scripts/manage-bi-user.ts",
     "build": "tsc -b && vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "typecheck": "tsc -b && tsc -p server/tsconfig.json --noEmit",
@@ -14,7 +15,8 @@
     "test": "bun test src server",
     "test:coverage": "bun test src server --coverage",
     "test:e2e": "playwright test qa-small-drawer.spec.js",
-    "test:e2e:ui": "playwright test qa-ui-shell.spec.js"
+    "test:e2e:ui": "playwright test qa-ui-shell.spec.js",
+    "test:e2e:v2": "playwright test qa-v2-shell.spec.js qa-v2-data-sources.spec.js qa-v2-auth.spec.js"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

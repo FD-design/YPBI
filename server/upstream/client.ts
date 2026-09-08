@@ -84,10 +84,13 @@ export class UpstreamClient {
   async get(path: string, params: Record<string, string>, inboundToken?: string): Promise<unknown> {
     if (!this.env.UPSTREAM_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "尚未配置真实后台 API 地址", 503);
     const profile = this.selectProfile(params.pid);
+    const token = inboundToken || profile.token;
+    if (!token) {
+      throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源 Token 尚未配置", 503);
+    }
     const url = new URL(path, profile.baseUrl);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    const token = inboundToken || profile.token;
-    const cacheKey = `${token ?? "anonymous"}\u0000${url.toString()}`;
+    const cacheKey = `${token}\u0000${url.toString()}`;
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     if (cached) this.responseCache.delete(cacheKey);
@@ -116,7 +119,10 @@ export class UpstreamClient {
 
   private selectProfile(pid?: string) {
     const secondaryPids = new Set(this.env.UPSTREAM_SECONDARY_PIDS.split(",").map((value) => value.trim()).filter(Boolean));
-    if (pid && secondaryPids.has(pid) && this.env.UPSTREAM_SECONDARY_API_BASE_URL) {
+    if (pid && secondaryPids.has(pid)) {
+      if (!this.env.UPSTREAM_SECONDARY_API_BASE_URL || !this.env.UPSTREAM_SECONDARY_USER_NAME) {
+        throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "该 PID 的备用数据源路由尚未完整配置", 503);
+      }
       return {
         baseUrl: this.env.UPSTREAM_SECONDARY_API_BASE_URL,
         token: this.credentials.secondary?.token ?? this.env.UPSTREAM_SECONDARY_X_TOKEN,
@@ -132,7 +138,9 @@ export class UpstreamClient {
 
   private profileForSite(site: CredentialSite) {
     if (site === "secondary") {
-      if (!this.env.UPSTREAM_SECONDARY_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "站2尚未配置后台地址", 503);
+      if (!this.env.UPSTREAM_SECONDARY_API_BASE_URL || !this.env.UPSTREAM_SECONDARY_USER_NAME) {
+        throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "站2尚未完整配置后台地址和用户名", 503);
+      }
       return { baseUrl: this.env.UPSTREAM_SECONDARY_API_BASE_URL, token: this.credentials.secondary?.token ?? this.env.UPSTREAM_SECONDARY_X_TOKEN, userName: this.env.UPSTREAM_SECONDARY_USER_NAME };
     }
     if (!this.env.UPSTREAM_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "站1尚未配置后台地址", 503);

@@ -9,6 +9,29 @@ test.use({
   channel: "chrome"
 });
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/bi/v2/auth/session", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      success: true,
+      data: {
+        user: {
+          subjectId: "00000000-0000-4000-8000-000000000001",
+          username: "qa.maintainer",
+          displayName: "QA 维护者",
+          role: "maintainer",
+          permissions: ["bi:read", "bi:data-source-maintenance:enter"],
+          pidScope: "all"
+        },
+        expiresAt: "2099-09-08T00:00:00.000Z",
+        mustChangePassword: false,
+        csrfToken: "c".repeat(43)
+      }
+    })
+  }));
+});
+
 function sourceStatuses(primaryHint = "••••0001") {
   return [
     { site: "primary", configured: true, tokenHint: primaryHint, updatedAt: null, userName: "fake-primary-user" },

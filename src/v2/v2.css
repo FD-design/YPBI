@@ -1,17 +1,21 @@
 html:has(#root > .ypbi-v2) {
   width: 100%;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 body:has(#root > .ypbi-v2) {
   margin: 0;
   background: var(--color-page-bg);
-  overflow-x: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 #root:has(> .ypbi-v2) {
   min-height: 100vh;
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 .ypbi-v2,
@@ -34,6 +38,7 @@ body:has(#root > .ypbi-v2) {
   font-size: 14px;
   line-height: 1.5;
   overflow-x: clip;
+  overflow-y: visible;
 }
 
 .ypbi-v2 button,
@@ -161,7 +166,150 @@ body:has(#root > .ypbi-v2) {
 .ypbi-v2 .v2-topbar-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding-right: 18px;
+}
+
+.ypbi-v2 .v2-user-menu {
+  position: relative;
+}
+
+.ypbi-v2 .v2-user-trigger {
+  min-height: var(--size-control-md);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  padding: 3px 7px;
+  color: var(--color-text-2);
+  cursor: pointer;
+}
+
+.ypbi-v2 .v2-user-trigger:hover,
+.ypbi-v2 .v2-user-trigger[aria-expanded="true"] {
+  border-color: var(--color-border);
+  background: var(--color-surface-subtle);
+}
+
+.ypbi-v2 .v2-user-avatar {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-brand-100);
+  color: var(--color-brand-700);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ypbi-v2 .v2-user-copy {
+  min-width: 0;
+  display: grid;
+  text-align: left;
+}
+
+.ypbi-v2 .v2-user-copy b {
+  max-width: 120px;
+  overflow: hidden;
+  color: var(--color-text-1);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ypbi-v2 .v2-user-copy small {
+  color: var(--color-text-3);
+  font-size: 9px;
+}
+
+.ypbi-v2 .v2-user-trigger > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ypbi-v2 .v2-user-popover {
+  width: 240px;
+  display: grid;
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 7px);
+  right: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-overlay);
+  background: var(--color-surface);
+  padding: 7px;
+  box-shadow: var(--shadow-overlay);
+}
+
+.ypbi-v2 .v2-user-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 8px;
+}
+
+.ypbi-v2 .v2-user-summary > svg,
+.ypbi-v2 .v2-user-popover > button > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.ypbi-v2 .v2-user-summary span {
+  min-width: 0;
+  display: grid;
+}
+
+.ypbi-v2 .v2-user-summary b {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ypbi-v2 .v2-user-summary small {
+  overflow: hidden;
+  color: var(--color-text-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ypbi-v2 .v2-user-popover > button {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  padding: 0 9px;
+  color: var(--color-text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ypbi-v2 .v2-user-popover > button:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text-1);
+}
+
+.ypbi-v2 .v2-user-popover > button:disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.ypbi-v2 .v2-user-popover > p {
+  margin: 5px 7px 4px;
+  color: var(--color-danger);
+  font-size: 10px;
 }
 
 .ypbi-v2 .v2-classic-link {
@@ -1472,6 +1620,212 @@ body:has(#root > .ypbi-v2) {
   margin-top: 8px;
 }
 
+.ypbi-v2.v2-auth-root {
+  display: grid;
+  grid-template: minmax(100vh, auto) / minmax(0, 1fr);
+  background:
+    radial-gradient(circle at 15% 15%, var(--color-brand-050), transparent 34%),
+    var(--color-page-bg);
+}
+
+.ypbi-v2 .v2-auth-page {
+  min-width: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 32px 20px;
+  color: var(--color-text-2);
+}
+
+.ypbi-v2 .v2-auth-loading {
+  width: 26px;
+  height: 26px;
+  color: var(--color-brand-600);
+}
+
+.ypbi-v2 .v2-auth-page > p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.ypbi-v2 .v2-auth-card {
+  width: min(100%, 440px);
+  display: grid;
+  gap: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  padding: clamp(24px, 5vw, 36px);
+  color: var(--color-text-1);
+  box-shadow: var(--shadow-surface-raised);
+}
+
+.ypbi-v2 .v2-auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  letter-spacing: -.02em;
+}
+
+.ypbi-v2 .v2-auth-brand > span {
+  width: 23px;
+  height: 29px;
+  display: inline-flex;
+}
+
+.ypbi-v2 .v2-auth-brand svg {
+  width: 100%;
+  height: 100%;
+}
+
+.ypbi-v2 .v2-auth-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.ypbi-v2 .v2-auth-intro > svg {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--color-brand-600);
+}
+
+.ypbi-v2 .v2-auth-intro h1,
+.ypbi-v2 .v2-account-dialog h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.ypbi-v2 .v2-auth-intro p,
+.ypbi-v2 .v2-account-dialog__head p {
+  margin: 5px 0 0;
+  color: var(--color-text-2);
+  font-size: 12px;
+}
+
+.ypbi-v2 .v2-auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.ypbi-v2 .v2-auth-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.ypbi-v2 .v2-auth-form label > span {
+  color: var(--color-text-2);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ypbi-v2 .v2-auth-form label > small {
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.ypbi-v2 .v2-auth-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--size-control-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  padding: 0 11px;
+  color: var(--color-text-1);
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.ypbi-v2 .v2-auth-form input:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+}
+
+.ypbi-v2 .v2-auth-form input:focus {
+  border-color: var(--color-brand-600);
+  box-shadow: 0 0 0 3px var(--color-brand-050);
+  outline: 0;
+}
+
+.ypbi-v2 .v2-auth-form input:disabled {
+  background: var(--color-surface-disabled);
+  color: var(--color-text-disabled);
+}
+
+.ypbi-v2 .v2-auth-form > .v2-button {
+  width: 100%;
+}
+
+.ypbi-v2 .v2-auth-validation {
+  margin: -5px 0 0;
+  color: var(--color-danger);
+  font-size: 10px;
+}
+
+.ypbi-v2 .v2-auth-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ypbi-v2 .v2-auth-security {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-top: 1px solid var(--color-divider);
+  padding-top: 15px;
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.ypbi-v2 .v2-auth-security svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--color-success);
+}
+
+.ypbi-v2 .v2-auth-switch-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--color-divider);
+  padding-top: 15px;
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.ypbi-v2 .v2-account-dialog {
+  width: min(calc(100% - 32px), 500px);
+  max-width: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-overlay);
+  background: var(--color-surface);
+  padding: 22px;
+  color: var(--color-text-1);
+  box-shadow: var(--shadow-overlay);
+}
+
+.ypbi-v2 .v2-account-dialog::backdrop {
+  background: rgb(20 27 38 / 48%);
+  backdrop-filter: blur(1px);
+}
+
+.ypbi-v2 .v2-account-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
 .ypbi-v2 .is-spinning {
   animation: v2-spin .9s linear infinite;
 }
@@ -1542,6 +1896,42 @@ body:has(#root > .ypbi-v2) {
 
   .ypbi-v2 .v2-topbar-actions {
     padding-right: 10px;
+  }
+
+  .ypbi-v2 .v2-user-copy,
+  .ypbi-v2 .v2-user-trigger > svg {
+    display: none;
+  }
+
+  .ypbi-v2 .v2-user-trigger,
+  .ypbi-v2 .v2-user-popover > button,
+  .ypbi-v2 .v2-auth-card > .v2-button,
+  .ypbi-v2 .v2-account-dialog .v2-icon-button {
+    min-width: var(--size-touch-target);
+    min-height: var(--size-touch-target);
+  }
+
+  .ypbi-v2 .v2-auth-form input,
+  .ypbi-v2 .v2-auth-form .v2-button {
+    min-height: var(--size-touch-target);
+  }
+
+  .ypbi-v2 .v2-auth-form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .ypbi-v2 .v2-auth-form-actions .v2-button {
+    width: 100%;
+  }
+
+  .ypbi-v2 .v2-auth-switch-account {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ypbi-v2 .v2-auth-switch-account .v2-button {
+    width: 100%;
+    min-height: var(--size-touch-target);
   }
 
   .ypbi-v2 .v2-classic-link {

@@ -1,8 +1,11 @@
-import { ChevronRight, Menu, PanelsTopLeft, RotateCcw, X } from "lucide-react";
+import { ChevronDown, ChevronRight, KeyRound, LoaderCircle, LogOut, Menu, PanelsTopLeft, RotateCcw, UserRound, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useBodyScrollLock } from "../../components/layout/useBodyScrollLock";
 import { activeNavigationId, normalizeProductPath, PRODUCT_NAVIGATION, routeArea, routeTitle } from "./navigation";
 import { ProductLink, useBrowserLocation } from "./router";
+import { useAuthentication } from "./AuthProvider";
+import { AuthRequestError } from "../api/auth";
+import { PasswordForm } from "../pages/AuthenticationPages";
 
 function V2Mark() {
   return <span className="v2-brand-mark" aria-hidden="true">
@@ -11,6 +14,11 @@ function V2Mark() {
 }
 
 export function ProductShell({ children }: { children: ReactNode }) {
+  const { state, logout } = useAuthentication();
+  if (state.status !== "authenticated") throw new Error("ProductShell requires an authenticated session");
+  const { session } = state;
+  const user = session.user;
+  const displayName = user.displayName ?? user.username;
   const location = useBrowserLocation();
   const pathname = normalizeProductPath(location.pathname);
   const activeId = activeNavigationId(pathname);
@@ -18,8 +26,15 @@ export function ProductShell({ children }: { children: ReactNode }) {
   const [mobileNavigation, setMobileNavigation] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   const navigationRef = useRef<HTMLElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const userButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<AuthRequestError | null>(null);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const classicHref = pathname === "/admin/data-sources" ? "/?workspace=dataSources&ui=v13" : "/?workspace=templates&ui=v13";
   useBodyScrollLock(navigationOpen);
+  useBodyScrollLock(passwordDialogOpen);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 767px)");
@@ -34,6 +49,68 @@ export function ProductShell({ children }: { children: ReactNode }) {
   }, [mobileNavigation]);
 
   useEffect(() => setNavigationOpen(false), [location.key]);
+
+  useEffect(() => {
+    if (!userMenuOpen) return undefined;
+    const menuItems = () => [...(userMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+      .filter((element) => element.getClientRects().length > 0);
+    window.requestAnimationFrame(() => menuItems()[0]?.focus());
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!userMenuRef.current?.contains(event.target as Node)) setUserMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setUserMenuOpen(false);
+        window.requestAnimationFrame(() => userButtonRef.current?.focus());
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = menuItems();
+      if (!items.length) return;
+      event.preventDefault();
+      const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+      const nextIndex = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : event.key === "ArrowDown"
+            ? currentIndex < 0 ? 0 : (currentIndex + 1) % items.length
+            : currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
+      items[nextIndex]?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [userMenuOpen]);
+
+  const signOut = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setLogoutError(null);
+    try {
+      await logout();
+      setUserMenuOpen(false);
+    } catch (error) {
+      setLogoutError(error instanceof AuthRequestError ? error : new AuthRequestError("退出失败，请稍后重试", { kind: "error", code: "AUTH_LOGOUT_FAILED", status: 0 }));
+    } finally {
+      setLoggingOut(false);
+    }
+  };
+
+  const roleLabel = user.role === "maintainer" ? "维护者" : user.role === "analyst" ? "分析者" : "阅读者";
+  const canMaintainDataSources = user.role === "maintainer"
+    && user.permissions.includes("bi:data-source-maintenance:enter");
+  const navigationGroups = PRODUCT_NAVIGATION.map((group) => ({
+    ...group,
+    items: canMaintainDataSources ? group.items : group.items.filter((item) => item.id !== "sources")
+  })).filter((group) => group.items.length > 0);
+  const closePasswordDialog = () => {
+    setPasswordDialogOpen(false);
+    window.requestAnimationFrame(() => userButtonRef.current?.focus());
+  };
 
   useEffect(() => {
     if (!navigationOpen) return undefined;
@@ -78,7 +155,20 @@ export function ProductShell({ children }: { children: ReactNode }) {
         <span>{routeArea(pathname)}</span><ChevronRight aria-hidden="true" /><b>{routeTitle(pathname)}</b>
       </nav>
       <div className="v2-topbar-actions">
-        <a className="v2-classic-link" href={classicHref} aria-label="返回经典版"><RotateCcw aria-hidden="true" /><span>返回经典版</span></a>
+        {import.meta.env.MODE === "development" && <a className="v2-classic-link" href={classicHref} aria-label="返回经典版"><RotateCcw aria-hidden="true" /><span>返回经典版</span></a>}
+        <div className="v2-user-menu" ref={userMenuRef}>
+          <button ref={userButtonRef} type="button" className="v2-user-trigger" aria-label={`账号菜单，${displayName}`} aria-haspopup="menu" aria-expanded={userMenuOpen} onClick={() => { setUserMenuOpen((value) => !value); setLogoutError(null); }} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setUserMenuOpen(true); setLogoutError(null); } }}>
+            <span className="v2-user-avatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span>
+            <span className="v2-user-copy"><b>{displayName}</b><small>{roleLabel}</small></span>
+            <ChevronDown aria-hidden="true" />
+          </button>
+          {userMenuOpen && <div className="v2-user-popover" role="menu">
+            <div className="v2-user-summary"><UserRound aria-hidden="true"/><span><b>{displayName}</b><small>@{user.username} · {roleLabel}</small></span></div>
+            <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setPasswordDialogOpen(true); }}><KeyRound aria-hidden="true"/>修改密码</button>
+            <button type="button" role="menuitem" onClick={signOut} disabled={loggingOut}>{loggingOut ? <LoaderCircle className="is-spinning" aria-hidden="true"/> : <LogOut aria-hidden="true"/>}{loggingOut ? "正在退出" : "退出登录"}</button>
+            {logoutError && <p role="alert">{logoutError.message}</p>}
+          </div>}
+        </div>
       </div>
     </header>
 
@@ -96,7 +186,7 @@ export function ProductShell({ children }: { children: ReactNode }) {
     >
       <div className="v2-sidebar-mobile-head"><span id="v2-navigation-title">产品导航</span><button type="button" className="v2-icon-button" aria-label="关闭主导航" onClick={() => setNavigationOpen(false)}><X aria-hidden="true" /></button></div>
       <nav>
-        {PRODUCT_NAVIGATION.map((group) => <section key={group.label} className="v2-nav-group">
+        {navigationGroups.map((group) => <section key={group.label} className="v2-nav-group">
           <h2>{group.label}</h2>
           {group.items.map(({ id, label, description, href, icon: Icon }) => {
             const active = activeId === id;
@@ -111,5 +201,22 @@ export function ProductShell({ children }: { children: ReactNode }) {
     </aside>
 
     <main id="v2-main-content" className="v2-main" tabIndex={-1}>{children}</main>
+    {passwordDialogOpen && <PasswordDialog onClose={closePasswordDialog}/>}
   </div>;
+}
+
+function PasswordDialog({ onClose }: { onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) {
+      dialog.showModal();
+      window.requestAnimationFrame(() => dialog.querySelector<HTMLInputElement>('input[autocomplete="current-password"]')?.focus());
+    }
+    return () => { if (dialog?.open) dialog.close(); };
+  }, []);
+  return <dialog ref={dialogRef} className="v2-account-dialog" aria-labelledby="v2-account-password-title" onCancel={(event) => { event.preventDefault(); onClose(); }}>
+    <div className="v2-account-dialog__head"><div><h2 id="v2-account-password-title">修改密码</h2><p>更新后继续使用当前账号。</p></div><button type="button" className="v2-icon-button" aria-label="关闭修改密码" onClick={onClose}><X aria-hidden="true"/></button></div>
+    <PasswordForm forced={false} onCancel={onClose} onComplete={onClose}/>
+  </dialog>;
 }

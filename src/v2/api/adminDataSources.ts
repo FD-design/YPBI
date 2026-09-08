@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { notifyAuthenticationRequired } from "./authEvents";
 
 export type CredentialSite = "primary" | "secondary";
 export type AdminFailureKind = "login_required" | "disabled" | "locked" | "insecure" | "proxy_misconfigured" | "validation" | "upstream" | "error";
@@ -88,7 +89,7 @@ function failureKind(status: number, code: string): AdminFailureKind {
   if (status === 503 && code === "MAINTENANCE_PROXY_MISCONFIGURED") return "proxy_misconfigured";
   if (code === "MAINTENANCE_LOCKED") return "locked";
   if (status === 426 || code === "HTTPS_REQUIRED") return "insecure";
-  if (status === 400 || code === "INVALID_CREDENTIAL_INPUT" || code === "INVALID_MAINTENANCE_PASSWORD") return "validation";
+  if (status === 400 || code === "INVALID_CREDENTIAL_INPUT" || code === "INVALID_MAINTENANCE_PASSWORD" || code === "CSRF_VALIDATION_FAILED") return "validation";
   if (code.startsWith("UPSTREAM_")) return "upstream";
   return "error";
 }
@@ -134,6 +135,9 @@ async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: R
     }
     const problem = errorResponseSchema.safeParse(payload);
     if (!problem.success) throw invalidResponse(response.status);
+    if (response.status === 401 && problem.data.error.code === "AUTHENTICATION_REQUIRED") {
+      notifyAuthenticationRequired();
+    }
     throw new AdminRequestError(problem.data.error.message, {
       kind: failureKind(response.status, problem.data.error.code),
       code: problem.data.error.code,
@@ -166,31 +170,37 @@ export async function fetchDataSourceStatus(signal?: AbortSignal) {
   return payload.data;
 }
 
-export async function loginMaintenance(password: string) {
+export async function loginMaintenance(password: string, csrfToken: string) {
   const payload = await requestJson("/api/bi/admin/auth/login", loginResponseSchema, {
     method: "POST",
+    headers: { "x-csrf-token": csrfToken },
     body: JSON.stringify({ password })
   });
   return payload.data;
 }
 
-export async function logoutMaintenance() {
-  const payload = await requestJson("/api/bi/admin/auth/logout", logoutResponseSchema, { method: "POST" });
+export async function logoutMaintenance(csrfToken: string) {
+  const payload = await requestJson("/api/bi/admin/auth/logout", logoutResponseSchema, {
+    method: "POST",
+    headers: { "x-csrf-token": csrfToken }
+  });
   return payload.data;
 }
 
-export async function testDataSource(site: CredentialSite, token?: string) {
+export async function testDataSource(site: CredentialSite, csrfToken: string, token?: string) {
   const payload = await requestJson("/api/bi/admin/data-sources/test", testResponseSchema, {
     method: "POST",
+    headers: { "x-csrf-token": csrfToken },
     body: JSON.stringify(token === undefined ? { site } : { site, token })
   });
   if (payload.data.site !== site) throw invalidResponse(200);
   return payload.data;
 }
 
-export async function updateDataSourceToken(site: CredentialSite, token: string) {
+export async function updateDataSourceToken(site: CredentialSite, token: string, csrfToken: string) {
   const payload = await requestJson("/api/bi/admin/data-sources/token", updateResponseSchema, {
     method: "PUT",
+    headers: { "x-csrf-token": csrfToken },
     body: JSON.stringify({ site, token })
   });
   if (payload.data.site !== site) throw invalidResponse(200);

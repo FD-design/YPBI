@@ -6,11 +6,32 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app";
 import { loadEnv, type AppEnv } from "./config/env";
+import type { BiAuthService } from "./auth/service";
+import type { IdentityProvider } from "./identity/identity-provider";
 
 const MAINTENANCE_PASSWORD = "Fake-maintenance-password-2026";
 const CURRENT_PRIMARY_TOKEN = "fake-current-primary-token-0001";
 const CANDIDATE_PRIMARY_TOKEN = "fake-candidate-primary-token-0002";
 const REJECTED_PRIMARY_TOKEN = "fake-rejected-primary-token-0003";
+const PUBLIC_ORIGIN = "https://bi.example.test";
+const NORMAL_SESSION_TOKEN = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const NORMAL_CSRF_TOKEN = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+const NORMAL_SESSION_COOKIE = `__Host-ypbi_session=${NORMAL_SESSION_TOKEN}`;
+const SECONDARY_PIDS = "FBI,BZMH,TJS,BPS,HQW,TJD,MMV,AF,TFKJ,JRTT,YQ";
+
+const maintainerIdentity: IdentityProvider = {
+  resolve: async () => ({
+    status: "authenticated",
+    principal: {
+      subjectId: "maintainer-test-user",
+      displayName: "维护测试用户",
+      roles: ["maintainer"],
+      permissions: ["bi:read", "bi:data-source-maintenance:enter"],
+      pidScope: "all",
+      securityVersion: "1"
+    }
+  })
+};
 
 const originalFetch = globalThis.fetch;
 const openApps: FastifyInstance[] = [];
@@ -31,7 +52,9 @@ afterEach(async () => {
 async function createHarness(options: {
   maintenanceEnabled?: boolean;
   nodeEnv?: AppEnv["NODE_ENV"];
+  identityProvider?: IdentityProvider;
   upstreamResponse?: (request: ObservedUpstreamRequest) => Response;
+  envOverrides?: Partial<AppEnv>;
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "ypbi-admin-data-sources-"));
   temporaryDirectories.push(directory);
@@ -67,11 +90,23 @@ async function createHarness(options: {
     UPSTREAM_CREDENTIALS_FILE: credentialsFile,
     WORKSPACE_FILE: join(directory, "workspace.json"),
     TOKEN_MAINTENANCE_KEY: options.maintenanceEnabled === false ? undefined : MAINTENANCE_PASSWORD,
+    BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
     REQUEST_TIMEOUT_MS: 1_000,
-    MAX_PLATFORM_CONCURRENCY: 1
+    MAX_PLATFORM_CONCURRENCY: 1,
+    ...options.envOverrides
   };
 
-  const app = await buildApp(env);
+  const authService = options.nodeEnv === "production"
+    ? ({
+        csrfMatches: (sessionToken: string, csrfToken: string | undefined) => (
+          sessionToken === NORMAL_SESSION_TOKEN && csrfToken === NORMAL_CSRF_TOKEN
+        )
+      } as BiAuthService)
+    : undefined;
+  const app = await buildApp(env, {
+    identityProvider: options.identityProvider ?? maintainerIdentity,
+    authService
+  });
   openApps.push(app);
   return { app, credentialsFile, observedRequests };
 }
@@ -80,7 +115,10 @@ const forwardedRequest = (clientIp: string, protocol = "https") => ({
   remoteAddress: "127.0.0.1",
   headers: {
     "x-forwarded-for": clientIp,
-    "x-forwarded-proto": protocol
+    "x-forwarded-proto": protocol,
+    origin: PUBLIC_ORIGIN,
+    cookie: NORMAL_SESSION_COOKIE,
+    "x-csrf-token": NORMAL_CSRF_TOKEN
   }
 });
 
@@ -97,6 +135,96 @@ async function login(app: FastifyInstance) {
 }
 
 describe("数据源维护管理接口", () => {
+  test("readiness 必须同时通过主站与备用站真实探针", async () => {
+    const { app, observedRequests } = await createHarness();
+
+    const response = await app.inject({ method: "GET", url: "/api/bi/ready" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.dependencies).toMatchObject({
+      workspace: true,
+      identity: true,
+      upstream: true,
+      upstreamSites: { primary: true, secondary: true }
+    });
+    expect(observedRequests).toHaveLength(2);
+    expect(observedRequests.some((request) => request.url.includes("pid=PH") && request.token === CURRENT_PRIMARY_TOKEN)).toBe(true);
+    expect(observedRequests.some((request) => request.url.includes("pid=FBI") && request.token === "fake-current-secondary-token-0004")).toBe(true);
+  });
+
+  test("只有主站 Token 时 readiness 保持失败且明确站2未就绪", async () => {
+    const { app, observedRequests } = await createHarness({
+      envOverrides: { UPSTREAM_SECONDARY_X_TOKEN: undefined }
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/bi/ready" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json().data.dependencies).toMatchObject({
+      upstream: false,
+      upstreamSites: { primary: true, secondary: false }
+    });
+    expect(observedRequests).toHaveLength(1);
+    expect(observedRequests[0].token).toBe(CURRENT_PRIMARY_TOKEN);
+  });
+
+  test("只有备用站 Token 时 readiness 保持失败且明确站1未就绪", async () => {
+    const { app, observedRequests } = await createHarness({
+      envOverrides: { UPSTREAM_X_TOKEN: undefined }
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/bi/ready" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json().data.dependencies).toMatchObject({
+      upstream: false,
+      upstreamSites: { primary: false, secondary: true }
+    });
+    expect(observedRequests).toHaveLength(1);
+    expect(observedRequests[0].token).toBe("fake-current-secondary-token-0004");
+  });
+
+  test("普通账号未登录时不能尝试维护密码", async () => {
+    const { app } = await createHarness({
+      identityProvider: { resolve: async () => ({ status: "unauthenticated" }) }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/bi/admin/auth/login",
+      payload: { password: MAINTENANCE_PASSWORD }
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error.code).toBe("AUTHENTICATION_REQUIRED");
+  });
+
+  test("非维护者即使知道维护密码也不能进入数据源维护", async () => {
+    const { app } = await createHarness({
+      identityProvider: {
+        resolve: async () => ({
+          status: "authenticated",
+          principal: {
+            subjectId: "analyst-test-user",
+            roles: ["analyst"],
+            permissions: ["bi:read"],
+            pidScope: "all",
+            securityVersion: "1"
+          }
+        })
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/bi/admin/auth/login",
+      payload: { password: MAINTENANCE_PASSWORD }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe("ADMIN_ACCESS_DENIED");
+  });
+
   test("未登录时拒绝读取数据源状态", async () => {
     const { app } = await createHarness();
 
@@ -343,6 +471,78 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
     expect(spoofed.json().error.code).toBe("HTTPS_REQUIRED");
   });
 
+  test("生产维护写请求必须来自配置的同源页面", async () => {
+    const { app } = await createHarness({ nodeEnv: "production" });
+
+    const missingOrigin = await app.inject({
+      method: "POST",
+      url: "/api/bi/admin/auth/login",
+      remoteAddress: "127.0.0.1",
+      headers: {
+        "x-forwarded-for": "198.51.100.23",
+        "x-forwarded-proto": "https"
+      },
+      payload: { password: MAINTENANCE_PASSWORD }
+    });
+    expect(missingOrigin.statusCode).toBe(403);
+    expect(missingOrigin.json().error.code).toBe("MAINTENANCE_ORIGIN_REJECTED");
+
+    const foreignOrigin = await app.inject({
+      method: "POST",
+      url: "/api/bi/admin/auth/login",
+      remoteAddress: "127.0.0.1",
+      headers: {
+        "x-forwarded-for": "198.51.100.23",
+        "x-forwarded-proto": "https",
+        origin: "https://foreign.example.test"
+      },
+      payload: { password: MAINTENANCE_PASSWORD }
+    });
+    expect(foreignOrigin.statusCode).toBe(403);
+    expect(foreignOrigin.json().error.code).toBe("MAINTENANCE_ORIGIN_REJECTED");
+  });
+
+  test("生产维护写请求还必须携带当前普通会话的 CSRF 令牌", async () => {
+    const { app } = await createHarness({ nodeEnv: "production" });
+    const base = forwardedRequest("198.51.100.23");
+
+    for (const csrfToken of [undefined, "wrong-csrf-token"]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/bi/admin/auth/login",
+        remoteAddress: base.remoteAddress,
+        headers: {
+          "x-forwarded-for": base.headers["x-forwarded-for"],
+          "x-forwarded-proto": base.headers["x-forwarded-proto"],
+          origin: base.headers.origin,
+          cookie: base.headers.cookie,
+          ...(csrfToken ? { "x-csrf-token": csrfToken } : {})
+        },
+        payload: { password: MAINTENANCE_PASSWORD }
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error.code).toBe("CSRF_VALIDATION_FAILED");
+      expect(response.headers["set-cookie"]).toBeUndefined();
+    }
+  });
+
+  test("新版普通 API 同样拒绝绕过 HTTPS 和可信代理", async () => {
+    const { app } = await createHarness({ nodeEnv: "production" });
+
+    const insecure = await app.inject({ method: "GET", url: "/api/bi/v2/catalog/metrics" });
+    expect(insecure.statusCode).toBe(426);
+    expect(insecure.json().error.code).toBe("HTTPS_REQUIRED");
+    expect(insecure.json().error.requestId).toBeString();
+
+    const trusted = await app.inject({
+      method: "GET",
+      url: "/api/bi/v2/catalog/metrics",
+      ...forwardedRequest("198.51.100.23")
+    });
+    expect(trusted.statusCode).toBe(200);
+  });
+
   test("生产代理缺少、伪造或传入复合客户端 IP 时失败关闭", async () => {
     const { app } = await createHarness({ nodeEnv: "production" });
 
@@ -469,7 +669,7 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
       method: "POST",
       url: "/api/bi/admin/auth/logout",
       ...forwardedRequest("198.51.100.23", "http"),
-      headers: { ...forwardedRequest("198.51.100.23", "http").headers, cookie }
+      headers: { ...forwardedRequest("198.51.100.23", "http").headers, cookie: `${NORMAL_SESSION_COOKIE}; ${cookie}` }
     });
     expect(insecureLogout.statusCode).toBe(426);
 
@@ -485,7 +685,7 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
       method: "POST",
       url: "/api/bi/admin/auth/logout",
       ...forwardedRequest("198.51.100.23"),
-      headers: { ...forwardedRequest("198.51.100.23").headers, cookie }
+      headers: { ...forwardedRequest("198.51.100.23").headers, cookie: `${NORMAL_SESSION_COOKIE}; ${cookie}` }
     });
     expect(secureLogout.statusCode).toBe(200);
     expect(secureLogout.headers["set-cookie"]).toContain("Max-Age=0");
@@ -509,18 +709,164 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
     });
     expect(response.statusCode).toBe(200);
   });
+
+  test("生产环境冻结遗留匿名工作区写入", async () => {
+    const { app } = await createHarness({ nodeEnv: "production" });
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/bi/workspace",
+      payload: { schemaVersion: 1, templates: [], cardAssets: [] }
+    });
+
+    expect(response.statusCode).toBe(410);
+    expect(response.json().error.code).toBe("LEGACY_WORKSPACE_WRITE_DISABLED");
+  });
 });
 
 describe("生产环境配置", () => {
+  test("正式环境允许先启动登录与维护页，再由维护者录入首个 Token", () => {
+    const env = loadEnv({
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
+      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
+    });
+
+    expect(env.UPSTREAM_X_TOKEN).toBeUndefined();
+    expect(env.UPSTREAM_SECONDARY_X_TOKEN).toBeUndefined();
+  });
+
+  test("从环境模板读取空白可选项时按未配置处理而不是启动报错", () => {
+    const env = loadEnv({
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_X_TOKEN: "",
+      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
+      UPSTREAM_SECONDARY_X_TOKEN: "",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
+      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
+      DATABASE_URL: ""
+    });
+
+    expect(env.UPSTREAM_X_TOKEN).toBeUndefined();
+    expect(env.UPSTREAM_SECONDARY_API_BASE_URL).toBe("https://secondary.example.test");
+    expect(env.UPSTREAM_SECONDARY_X_TOKEN).toBeUndefined();
+    expect(env.TOKEN_MAINTENANCE_KEY).toBe(MAINTENANCE_PASSWORD);
+    expect(env.DATABASE_URL).toBeUndefined();
+  });
+
+  test("正式环境缺少主后台用户名时拒绝启动，避免维护页无法补救", () => {
+    expect(() => loadEnv({
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
+    })).toThrow("生产环境缺少 UPSTREAM_USER_NAME");
+  });
+
+  test("正式环境缺少维护二次密码时拒绝启动", () => {
+    expect(() => loadEnv({
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
+    })).toThrow("生产环境缺少 TOKEN_MAINTENANCE_KEY");
+  });
+
+  test("正式环境拒绝通过明文 HTTP 传输上游凭据", () => {
+    const productionBase = {
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
+      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
+    } as const;
+
+    expect(() => loadEnv({ ...productionBase, UPSTREAM_API_BASE_URL: "http://primary.example.test" }))
+      .toThrow("主上游地址必须使用无凭据的 HTTPS URL");
+    expect(() => loadEnv({
+      ...productionBase,
+      UPSTREAM_SECONDARY_API_BASE_URL: "http://secondary.example.test",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user"
+    })).toThrow("备用上游地址必须使用无凭据的 HTTPS URL");
+  });
+
+  test("正式环境备用 PID 路由必须与当前平台注册表完整一致", () => {
+    const productionBase = {
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
+    } as const;
+
+    expect(() => loadEnv({ ...productionBase, UPSTREAM_SECONDARY_PIDS: "" }))
+      .toThrow("备用后台 PID 路由必须与当前平台注册表一致");
+    expect(() => loadEnv({ ...productionBase, UPSTREAM_SECONDARY_PIDS: "FBI" }))
+      .toThrow("备用后台 PID 路由必须与当前平台注册表一致");
+  });
+
+  test("备用后台拒绝只有 Token 或地址与用户名缺一的歧义配置", () => {
+    const base = {
+      NODE_ENV: "development",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test"
+    } as const;
+    expect(() => loadEnv({ ...base, UPSTREAM_SECONDARY_X_TOKEN: "secondary-token" }))
+      .toThrow("不能脱离对应地址和用户名");
+    expect(() => loadEnv({ ...base, UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test" }))
+      .toThrow("地址和用户名必须同时配置");
+    expect(() => loadEnv({ ...base, UPSTREAM_SECONDARY_PIDS: "FBI,TJD" }))
+      .toThrow("PID 路由前必须同时配置备用后台地址和用户名");
+  });
+
   test("正式环境允许使用已确认的文件工作区，不强制引入 PostgreSQL", () => {
     const env = loadEnv({
       NODE_ENV: "production",
       UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
       UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN,
+      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
+      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
       WORKSPACE_FILE: "/opt/config-driven-bi-demo/data/workspace.json"
     });
 
     expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.BI_AUTH_DATABASE_URL).toBe("postgres://auth.example.test/ypbi");
     expect(env.WORKSPACE_FILE).toBe("/opt/config-driven-bi-demo/data/workspace.json");
   });
 
@@ -529,7 +875,13 @@ describe("生产环境配置", () => {
       NODE_ENV: "production",
       HOST: "0.0.0.0",
       UPSTREAM_API_BASE_URL: "https://primary.example.test",
-      UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN,
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
     })).toThrow("生产环境 API 必须监听 127.0.0.1:3000");
 
     expect(() => loadEnv({
@@ -537,7 +889,35 @@ describe("生产环境配置", () => {
       HOST: "127.0.0.1",
       PORT: "3001",
       UPSTREAM_API_BASE_URL: "https://primary.example.test",
-      UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN,
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
     })).toThrow("生产环境 API 必须监听 127.0.0.1:3000");
+  });
+
+  test("正式环境缺少自有账号库或 HTTPS Origin 时拒绝启动", () => {
+    expect(() => loadEnv({
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN,
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD
+    })).toThrow("BI_IDENTITY_MODE=local");
+
+    expect(() => loadEnv({
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN,
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: "http://bi.example.test"
+    })).toThrow("HTTPS Origin");
   });
 });

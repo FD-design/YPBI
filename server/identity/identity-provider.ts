@@ -10,6 +10,11 @@ export interface Principal {
   roles: readonly string[];
   permissions: readonly string[];
   pidScope: "all" | readonly string[];
+  /**
+   * Opaque account-security revision used only to invalidate secondary
+   * maintenance sessions after a password, status or role change.
+   */
+  securityVersion?: string;
 }
 
 export type IdentityResolution =
@@ -19,7 +24,7 @@ export type IdentityResolution =
 
 export interface IdentityProvider {
   /**
-   * Only return `authenticated` after the external identity policy has resolved
+   * Only return `authenticated` after the configured identity policy has resolved
    * the user and their permissions. The V2 boundary still validates this value
    * at runtime and requires the `bi:read` permission.
    */
@@ -27,11 +32,11 @@ export interface IdentityProvider {
 }
 
 /**
- * Batch A intentionally has no production identity adapter. V2 endpoints therefore
- * fail closed until the real authentication source is confirmed and injected.
+ * Safe fallback for environments without a configured identity provider. V2
+ * endpoints remain closed instead of degrading to anonymous access.
  */
 export class UnavailableIdentityProvider implements IdentityProvider {
   async resolve(): Promise<IdentityResolution> {
-    return { status: "unavailable", reason: "尚未配置正式身份来源" };
+    return { status: "unavailable", reason: "尚未配置身份来源" };
   }
 }

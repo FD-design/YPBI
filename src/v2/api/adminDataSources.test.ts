@@ -8,6 +8,7 @@ import {
 } from "./adminDataSources";
 
 const originalFetch = globalThis.fetch;
+const CSRF_TOKEN = "fake-csrf-token-for-admin-tests";
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -59,23 +60,28 @@ describe("V2 数据源维护客户端", () => {
   });
 
   test("当前测试、候选测试与保存使用三个明确请求", async () => {
-    const observed: Array<{ path: string; method?: string; body?: string }> = [];
+    const observed: Array<{ path: string; method?: string; body?: string; csrfToken: string | null }> = [];
     globalThis.fetch = (async (input, init) => {
-      observed.push({ path: input.toString(), method: init?.method, body: String(init?.body ?? "") });
+      observed.push({
+        path: input.toString(),
+        method: init?.method,
+        body: String(init?.body ?? ""),
+        csrfToken: new Headers(init?.headers).get("x-csrf-token")
+      });
       if (input.toString().endsWith("/test")) {
         return jsonResponse({ success: true, data: { site: "primary", valid: true, checkedAt: "2026-09-08T01:00:00.000Z" } });
       }
       return jsonResponse({ success: true, data: { ...statuses[0], tokenHint: "••••0002", updatedAt: "2026-09-08T01:01:00.000Z" } });
     }) as typeof fetch;
 
-    await testDataSource("primary");
-    await testDataSource("primary", "fake-candidate-token-0002");
-    await updateDataSourceToken("primary", "fake-candidate-token-0002");
+    await testDataSource("primary", CSRF_TOKEN);
+    await testDataSource("primary", CSRF_TOKEN, "fake-candidate-token-0002");
+    await updateDataSourceToken("primary", "fake-candidate-token-0002", CSRF_TOKEN);
 
     expect(observed).toEqual([
-      { path: "/api/bi/admin/data-sources/test", method: "POST", body: JSON.stringify({ site: "primary" }) },
-      { path: "/api/bi/admin/data-sources/test", method: "POST", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002" }) },
-      { path: "/api/bi/admin/data-sources/token", method: "PUT", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002" }) }
+      { path: "/api/bi/admin/data-sources/test", method: "POST", body: JSON.stringify({ site: "primary" }), csrfToken: CSRF_TOKEN },
+      { path: "/api/bi/admin/data-sources/test", method: "POST", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002" }), csrfToken: CSRF_TOKEN },
+      { path: "/api/bi/admin/data-sources/token", method: "PUT", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002" }), csrfToken: CSRF_TOKEN }
     ]);
   });
 
@@ -84,7 +90,7 @@ describe("V2 数据源维护客户端", () => {
       success: false,
       error: { code: "MAINTENANCE_LOCKED", message: "验证失败次数过多，请稍后重试" }
     }, 429)) as typeof fetch;
-    await expect(loginMaintenance("fake-password-long-enough")).rejects.toMatchObject({ kind: "locked", status: 429 });
+    await expect(loginMaintenance("fake-password-long-enough", CSRF_TOKEN)).rejects.toMatchObject({ kind: "locked", status: 429 });
 
     globalThis.fetch = (async () => jsonResponse({
       success: false,
@@ -105,6 +111,6 @@ describe("V2 数据源维护客户端", () => {
       error: { code: "UPSTREAM_RATE_LIMITED", message: "后台接口请求过于频繁" }
     }, 429)) as typeof fetch;
 
-    await expect(testDataSource("primary")).rejects.toMatchObject({ kind: "upstream", status: 429 });
+    await expect(testDataSource("primary", CSRF_TOKEN)).rejects.toMatchObject({ kind: "upstream", status: 429 });
   });
 });

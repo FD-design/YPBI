@@ -24,6 +24,7 @@ import {
   type DataSourceStatus
 } from "../api/adminDataSources";
 import { StatePanel } from "../components/StatePanel";
+import { useAuthentication } from "../app/AuthProvider";
 
 type AccessState =
   | { status: "checking" }
@@ -116,6 +117,10 @@ function SaveConfirmationDialog({
 }
 
 export function DataSourceMaintenancePage() {
+  const authentication = useAuthentication();
+  const csrfToken = authentication.state.status === "authenticated"
+    ? authentication.state.session.csrfToken
+    : "";
   const secureContext = window.location.protocol === "https:" || isLocalDevelopment();
   const [access, setAccess] = useState<AccessState>({ status: "checking" });
   const [operation, setOperation] = useState<Operation>({ kind: "idle" });
@@ -175,7 +180,7 @@ export function DataSourceMaintenancePage() {
     if (operation.kind !== "idle" || password.length < 12) return;
     setOperation({ kind: "login" });
     try {
-      await loginMaintenance(password);
+      await loginMaintenance(password, csrfToken);
       setPassword("");
       await loadStatus();
     } catch (error) {
@@ -194,7 +199,7 @@ export function DataSourceMaintenancePage() {
     setPageError(null);
     clearSensitiveState();
     try {
-      await logoutMaintenance();
+      await logoutMaintenance(csrfToken);
       setAccess({ status: "signed_out" });
     } catch (error) {
       const problem = asAdminError(error, "退出失败，服务端维护会话可能仍然有效，请重试");
@@ -217,7 +222,7 @@ export function DataSourceMaintenancePage() {
     setNotices((current) => ({ ...current, [site]: { tone: "pending", message: kind === "save" ? "正在再次验证并保存…" : "正在验证凭证探针…" } }));
     try {
       if (kind === "save") {
-        const updated = await updateDataSourceToken(site, token);
+        const updated = await updateDataSourceToken(site, token, csrfToken);
         setAccess((current) => current.status === "ready"
           ? { status: "ready", sources: current.sources.map((item) => item.site === site ? updated : item) }
           : current);
@@ -226,7 +231,7 @@ export function DataSourceMaintenancePage() {
         setConfirmingSite(null);
         focusSiteFeedback(site, "status");
       } else {
-        const result = await testDataSource(site, kind === "candidate" ? token : undefined);
+        const result = await testDataSource(site, csrfToken, kind === "candidate" ? token : undefined);
         setNotices((current) => ({
           ...current,
           [site]: {

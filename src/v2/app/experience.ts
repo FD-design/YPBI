@@ -1,8 +1,7 @@
-const V2_SEMANTIC_ROOTS = ["/dashboards", "/analysis", "/data", "/admin"] as const;
-
-export function shouldUseV2Experience(location: Pick<Location, "pathname" | "search">) {
-  if (location.pathname === "/") {
-    return new URLSearchParams(location.search).get("experience") === "next";
-  }
-  return V2_SEMANTIC_ROOTS.some((root) => location.pathname === root || location.pathname.startsWith(`${root}/`));
+export function shouldUseV2Experience(
+  location: Pick<Location, "pathname" | "search">,
+  options: { allowClassic: boolean } = { allowClassic: false }
+) {
+  const explicitlyClassic = location.pathname === "/" && new URLSearchParams(location.search).get("ui") === "v13";
+  return !(options.allowClassic && explicitlyClassic);
 }

@@ -54,6 +54,7 @@ export function routeTitle(pathname: string) {
   if (pathname === "/analysis/saved") return "已保存的分析";
   if (pathname.startsWith("/dashboards/")) return "看板中心";
   if (pathname === "/admin/data-sources") return "数据源维护";
+  if (pathname === "/login") return "登录";
   return "页面未找到";
 }
 
@@ -63,5 +64,6 @@ export function routeArea(pathname: string) {
   if (pathname.startsWith("/dashboards")) return "看板";
   if (pathname.startsWith("/analysis")) return "分析";
   if (pathname.startsWith("/admin")) return "管理";
+  if (pathname === "/login") return "账号";
   return "工作台";
 }

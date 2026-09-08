@@ -3,10 +3,10 @@ import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { shouldUseV2Experience } from "./v2/app/experience";
 
 async function bootstrap() {
-  const useV2 = shouldUseV2Experience(window.location);
-  const Application = useV2
-    ? (await import("./v2/app/ProductApp")).ProductApp
-    : (await import("./legacyApp")).LegacyApp;
+  const allowClassic = import.meta.env.MODE === "development";
+  const Application = allowClassic && !shouldUseV2Experience(window.location, { allowClassic: true })
+    ? (await import("./legacyApp")).LegacyApp
+    : (await import("./v2/app/ProductApp")).ProductApp;
   createRoot(document.getElementById("root")!).render(<AppErrorBoundary><Application /></AppErrorBoundary>);
 }
 

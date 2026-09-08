@@ -1,11 +1,12 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
 import { v2MetricQuerySchema } from "../../contracts/bi-v2";
 import type { V2ApiErrorCode, V2MetricQuery, V2MetricQuerySuccess } from "../../contracts/bi-v2";
 import type { IdentityProvider, IdentityResolution, Principal } from "../identity/identity-provider";
+import { DEFAULT_IDENTITY_TIMEOUT_MS, resolveIdentity } from "../identity/resolve-identity";
 import { UpstreamError } from "../upstream/client";
 import { listV2Platforms, v2MetricCatalog } from "./catalog";
 import { V2MetricQueryError } from "./metric-query.service";
+import { bindClientRequestAbort } from "../http/client-request-abort";
 
 export interface V2MetricQueryExecutor {
   execute(query: V2MetricQuery): Promise<V2MetricQuerySuccess>;
@@ -17,7 +18,6 @@ export interface V2BiPluginOptions {
   identityTimeoutMs?: number;
 }
 
-const IDENTITY_TIMEOUT_MS = 3_000;
 const transportStatusByCode: Readonly<Record<string, 400 | 413 | 415>> = {
   FST_ERR_CTP_INVALID_JSON_BODY: 400,
   FST_ERR_CTP_EMPTY_JSON_BODY: 400,
@@ -25,23 +25,6 @@ const transportStatusByCode: Readonly<Record<string, 400 | 413 | 415>> = {
   FST_ERR_CTP_BODY_TOO_LARGE: 413,
   FST_ERR_CTP_INVALID_MEDIA_TYPE: 415
 };
-const principalSchema = z.object({
-  subjectId: z.string().trim().min(1).max(256),
-  displayName: z.string().trim().min(1).max(256).optional(),
-  roles: z.array(z.string().trim().min(1).max(64)).max(64),
-  permissions: z.array(z.string().trim().min(1).max(128)).max(128),
-  pidScope: z.union([
-    z.literal("all"),
-    z.array(z.string().trim().min(1).max(32)).max(1_000)
-  ])
-}).strict();
-
-const identityResolutionSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("authenticated"), principal: principalSchema }).strict(),
-  z.object({ status: z.literal("unauthenticated") }).strict(),
-  z.object({ status: z.literal("unavailable"), reason: z.string().max(256).optional() }).strict()
-]);
-
 function sendV2Error(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -53,22 +36,6 @@ function sendV2Error(
     success: false,
     error: { code, message, requestId: request.id }
   });
-}
-
-async function resolveIdentity(request: FastifyRequest, identityProvider: IdentityProvider, timeoutMs: number) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const timedOut = new Promise<never>((_resolve, reject) => {
-      controller.signal.addEventListener("abort", () => reject(new Error("identity_timeout")), { once: true });
-    });
-    return await Promise.race([
-      identityProvider.resolve({ headers: request.headers, ip: request.ip, signal: controller.signal }),
-      timedOut
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function normalizedPrincipal(principal: Principal): Principal {
@@ -98,20 +65,27 @@ async function requirePrincipal(
 ): Promise<Principal | null> {
   reply.header("cache-control", "no-store");
   let rawResolution: IdentityResolution;
+  const clientAbortController = new AbortController();
+  const unbindClientAbort = bindClientRequestAbort(
+    request.raw,
+    reply.raw,
+    clientAbortController,
+    "v2_identity_request_aborted"
+  );
   try {
-    rawResolution = await resolveIdentity(request, identityProvider, identityTimeoutMs);
+    rawResolution = await resolveIdentity(
+      identityProvider,
+      { headers: request.headers, ip: request.ip, signal: clientAbortController.signal },
+      identityTimeoutMs
+    );
   } catch (error) {
     request.log.error({ requestId: request.id, outcome: "identity_provider_failed" }, "v2 identity provider failed");
     sendV2Error(request, reply, 503, "IDENTITY_PROVIDER_UNAVAILABLE", "正式身份来源当前不可用");
     return null;
+  } finally {
+    unbindClientAbort();
   }
-  const parsedResolution = identityResolutionSchema.safeParse(rawResolution);
-  if (!parsedResolution.success) {
-    request.log.error({ requestId: request.id, outcome: "invalid_identity_resolution" }, "v2 identity provider returned an invalid result");
-    sendV2Error(request, reply, 503, "IDENTITY_PROVIDER_UNAVAILABLE", "正式身份来源当前不可用");
-    return null;
-  }
-  const resolution = parsedResolution.data;
+  const resolution = rawResolution;
   if (resolution.status === "unavailable") {
     request.log.warn({ requestId: request.id, identityStatus: resolution.status }, "v2 request rejected by identity boundary");
     sendV2Error(request, reply, 503, "IDENTITY_PROVIDER_UNAVAILABLE", "正式身份来源当前不可用");
@@ -135,7 +109,7 @@ function canAccessPid(principal: Principal, pid: string) {
 }
 
 export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, options) => {
-  const identityTimeoutMs = options.identityTimeoutMs ?? IDENTITY_TIMEOUT_MS;
+  const identityTimeoutMs = options.identityTimeoutMs ?? DEFAULT_IDENTITY_TIMEOUT_MS;
   // Keep the new public error contract encapsulated to V2. Legacy routes keep
   // their pre-existing Fastify response semantics until a separate migration.
   app.setErrorHandler((error, request, reply) => {

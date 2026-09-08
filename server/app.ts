@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { isIP } from "node:net";
+import type { BiAuthApiErrorCode } from "../contracts/bi-auth";
 import { analyticsQuerySchema, MAX_METRICS_PER_QUERY } from "../contracts/analytics";
 import { cardConfigSchema } from "../contracts/card";
 import { validateAnalyticsQuery, validateCardConfig } from "./analytics/capability-validator";
@@ -8,7 +9,7 @@ import { metrics, funnelEvents } from "./analytics/registry";
 import { QueryOrchestrator, QueryValidationError } from "./analytics/query-orchestrator";
 import type { AppEnv } from "./config/env";
 import { UpstreamClient, UpstreamError } from "./upstream/client";
-import { OverviewAdapter, P_DAY_SUM_API } from "./upstream/overview.adapter";
+import { OverviewAdapter } from "./upstream/overview.adapter";
 import { EventAdapter } from "./upstream/event.adapter";
 import { SearchAdapter } from "./upstream/search.adapter";
 import { VideoAdapter } from "./upstream/video.adapter";
@@ -25,38 +26,92 @@ import { createWorkspaceStore } from "./persistence/workspace.store";
 import { SpecialAdapter } from "./upstream/special.adapter";
 import { MetadataAdapter } from "./upstream/metadata.adapter";
 import { ContentAdapter } from "./upstream/content.adapter";
-import { MaintenanceAuth } from "./security/maintenance-auth";
-import type { IdentityProvider } from "./identity/identity-provider";
+import { MaintenanceAuth, type MaintenanceSecurityContext } from "./security/maintenance-auth";
+import type { IdentityProvider, Principal } from "./identity/identity-provider";
 import { UnavailableIdentityProvider } from "./identity/identity-provider";
+import { resolveIdentity } from "./identity/resolve-identity";
+import { bindClientRequestAbort } from "./http/client-request-abort";
 import { PDaySumM016Source } from "./v2/m016-source";
 import { V2MetricQueryService } from "./v2/metric-query.service";
 import { v2BiPlugin, type V2MetricQueryExecutor } from "./v2/plugin";
+import { biAuthPlugin, createPostgresAuthModule } from "./auth";
+import {
+  LOCAL_BI_SESSION_COOKIE,
+  PRODUCTION_BI_SESSION_COOKIE,
+  readUniqueOpaqueCookie,
+  type BiSessionCookieConfiguration
+} from "./auth/cookies";
+import { SessionIdentityProvider } from "./auth/session-identity-provider";
+import type { BiAuthService } from "./auth/service";
 
 export interface BuildAppDependencies {
   identityProvider?: IdentityProvider;
+  authService?: BiAuthService;
+  authHealthCheck?: () => Promise<void>;
   v2MetricQueryService?: V2MetricQueryExecutor;
+}
+
+function rawPath(request: FastifyRequest) {
+  return request.url.split("?", 1)[0];
+}
+
+function isRouteInNamespace(request: FastifyRequest, namespace: string) {
+  const matchedRoute = request.routeOptions.url ?? "";
+  const requestPath = rawPath(request);
+  return matchedRoute === namespace
+    || matchedRoute.startsWith(`${namespace}/`)
+    || requestPath === namespace
+    || requestPath.startsWith(`${namespace}/`);
+}
+
+function requestOriginMatches(originHeader: string | string[] | undefined, expectedOrigin: string) {
+  if (typeof originHeader !== "string") return false;
+  try {
+    return new URL(originHeader).origin === expectedOrigin && originHeader === new URL(originHeader).origin;
+  } catch {
+    return false;
+  }
+}
+
+function maintenanceSecurityContext(principal: Principal): MaintenanceSecurityContext | null {
+  if (!principal.securityVersion) return null;
+  return {
+    subjectId: principal.subjectId,
+    roles: principal.roles,
+    permissions: principal.permissions,
+    securityVersion: principal.securityVersion
+  };
 }
 
 export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies = {}) {
   const app = Fastify({
-    logger: env.NODE_ENV !== "test",
+    logger: env.NODE_ENV === "test" ? false : {
+      serializers: {
+        req(request: { method?: string; url?: string; remoteAddress?: string }) {
+          return {
+            method: request.method,
+            path: request.url?.split("?", 1)[0],
+            remoteAddress: request.remoteAddress
+          };
+        }
+      }
+    },
     // The production API only accepts traffic from local Caddy/Nginx. Trusting
     // loopback (rather than every proxy or a hop count) makes request.ip and
     // request.protocol safe to use for maintenance-session security.
     trustProxy: ["127.0.0.1", "::1"]
   });
   await app.register(cors, { origin: env.NODE_ENV === "production" ? false : true });
+  const expectedPublicOrigin = env.BI_PUBLIC_ORIGIN
+    ? new URL(env.BI_PUBLIC_ORIGIN).origin
+    : undefined;
   app.addHook("onRequest", async (request, reply) => {
     // Fastify may match percent-encoded static path segments. Use the canonical
     // matched route for security decisions, while retaining the raw-prefix check
     // so unknown admin paths also receive the no-store/error boundary.
-    const matchedRoute = request.routeOptions.url ?? "";
-    const isMaintenanceRoute = matchedRoute === "/api/bi/admin"
-      || matchedRoute.startsWith("/api/bi/admin/");
-    const isMaintenanceRawPath = request.url === "/api/bi/admin"
-      || request.url.startsWith("/api/bi/admin/");
-    const isMaintenanceRequest = isMaintenanceRoute || isMaintenanceRawPath;
-    if (!isMaintenanceRequest) return;
+    const isMaintenanceRequest = isRouteInNamespace(request, "/api/bi/admin");
+    const isV2Request = isRouteInNamespace(request, "/api/bi/v2");
+    if (!isMaintenanceRequest && !isV2Request) return;
 
     reply.header("cache-control", "no-store");
     if (env.NODE_ENV !== "production") return;
@@ -69,7 +124,11 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     if (!isTrustedHttps) {
       return reply.code(426).send({
         success: false,
-        error: { code: "HTTPS_REQUIRED", message: "Token 维护仅允许通过 HTTPS 使用" }
+        error: {
+          code: "HTTPS_REQUIRED",
+          message: isMaintenanceRequest ? "数据源维护仅允许通过 HTTPS 使用" : "新版 BI 仅允许通过 HTTPS 使用",
+          ...(isV2Request ? { requestId: request.id } : {})
+        }
       });
     }
 
@@ -83,8 +142,23 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       return reply.code(503).send({
         success: false,
         error: {
-          code: "MAINTENANCE_PROXY_MISCONFIGURED",
-          message: "数据源维护代理配置不完整"
+          code: isMaintenanceRequest ? "MAINTENANCE_PROXY_MISCONFIGURED" : "AUTH_PROXY_MISCONFIGURED",
+          message: isMaintenanceRequest ? "数据源维护代理配置不完整" : "BI 访问代理配置不完整",
+          ...(isV2Request ? { requestId: request.id } : {})
+        }
+      });
+    }
+
+    if (
+      isMaintenanceRequest
+      && ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)
+      && (!expectedPublicOrigin || !requestOriginMatches(request.headers.origin, expectedPublicOrigin))
+    ) {
+      return reply.code(expectedPublicOrigin ? 403 : 503).send({
+        success: false,
+        error: {
+          code: expectedPublicOrigin ? "MAINTENANCE_ORIGIN_REJECTED" : "MAINTENANCE_PROXY_MISCONFIGURED",
+          message: expectedPublicOrigin ? "请求来源校验失败，请从 BI 页面重试" : "数据源维护代理配置不完整"
         }
       });
     }
@@ -98,24 +172,123 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const metadata = new MetadataAdapter(upstream);
   const content = new ContentAdapter(upstream);
   const maintenanceAuth = new MaintenanceAuth(env.TOKEN_MAINTENANCE_KEY);
-  const identityProvider = dependencies.identityProvider ?? new UnavailableIdentityProvider();
+  const sessionCookie: BiSessionCookieConfiguration = env.NODE_ENV === "production"
+    ? PRODUCTION_BI_SESSION_COOKIE
+    : LOCAL_BI_SESSION_COOKIE;
+  let authService = dependencies.authService;
+  let identityProvider = dependencies.identityProvider;
+  let authHealthCheck = dependencies.authHealthCheck;
+  let closeAuthModule: (() => Promise<void>) | undefined;
+  if (!authService && !identityProvider && env.BI_IDENTITY_MODE === "local") {
+    if (!env.BI_AUTH_DATABASE_URL || !env.BI_AUTH_CSRF_SECRET) {
+      throw new Error("BI_IDENTITY_MODE=local 时必须配置 BI_AUTH_DATABASE_URL 与 BI_AUTH_CSRF_SECRET");
+    }
+    const authModule = await createPostgresAuthModule(env.BI_AUTH_DATABASE_URL, {
+      csrfSecret: env.BI_AUTH_CSRF_SECRET,
+      sessionCookie
+    });
+    authService = authModule.authService;
+    identityProvider = authModule.identityProvider;
+    authHealthCheck = authModule.health;
+    closeAuthModule = authModule.close;
+  }
+  if (authService && !identityProvider) identityProvider = new SessionIdentityProvider(authService, sessionCookie);
+  identityProvider ??= new UnavailableIdentityProvider();
   const v2MetricQueryService = dependencies.v2MetricQueryService ?? new V2MetricQueryService(new PDaySumM016Source(upstream));
-  app.addHook("onClose", async () => workspaceStore.close());
+  app.addHook("onClose", async () => {
+    await workspaceStore.close();
+    await closeAuthModule?.();
+  });
   const overviewAdapter = new OverviewAdapter(upstream);
   const orchestrator = new QueryOrchestrator(overviewAdapter, new EventAdapter(upstream), new SearchAdapter(upstream), new VideoAdapter(upstream), new RealtimeAdapter(upstream), new RetentionAdapter(upstream), new AcquisitionAdapter(special, overviewAdapter), env.MAX_PLATFORM_CONCURRENCY);
 
+  const adminPrincipals = new WeakMap<FastifyRequest, Principal>();
+  app.addHook("preHandler", async (request, reply) => {
+    if (!isRouteInNamespace(request, "/api/bi/admin")) return;
+    let resolution;
+    const clientAbortController = new AbortController();
+    const unbindClientAbort = bindClientRequestAbort(
+      request.raw,
+      reply.raw,
+      clientAbortController,
+      "admin_identity_request_aborted"
+    );
+    try {
+      resolution = await resolveIdentity(identityProvider, {
+        headers: request.headers,
+        ip: request.ip,
+        signal: clientAbortController.signal
+      });
+    } catch {
+      request.log.error({ requestId: request.id, outcome: "admin_identity_failed" }, "admin identity resolution failed");
+      return reply.code(503).send({
+        success: false,
+        error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "登录服务当前不可用", requestId: request.id }
+      });
+    } finally {
+      unbindClientAbort();
+    }
+    if (resolution.status === "unavailable") {
+      return reply.code(503).send({
+        success: false,
+        error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "登录服务当前不可用", requestId: request.id }
+      });
+    }
+    if (resolution.status === "unauthenticated") {
+      return reply.code(401).send({
+        success: false,
+        error: { code: "AUTHENTICATION_REQUIRED", message: "请先登录后再进入管理中心", requestId: request.id }
+      });
+    }
+    if (
+      !resolution.principal.roles.includes("maintainer")
+      || !resolution.principal.permissions.includes("bi:data-source-maintenance:enter")
+    ) {
+      return reply.code(403).send({
+        success: false,
+        error: { code: "ADMIN_ACCESS_DENIED", message: "当前账号没有数据源维护权限", requestId: request.id }
+      });
+    }
+    if (env.NODE_ENV === "production" && ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) {
+      const rawCookie = request.headers.cookie;
+      const cookieHeader = Array.isArray(rawCookie) ? rawCookie.join(";") : rawCookie;
+      const sessionToken = readUniqueOpaqueCookie(cookieHeader, sessionCookie.name);
+      const csrfHeader = Array.isArray(request.headers["x-csrf-token"])
+        ? undefined
+        : request.headers["x-csrf-token"];
+      if (!authService || !sessionToken || !authService.csrfMatches(sessionToken, csrfHeader)) {
+        return reply.code(403).send({
+          success: false,
+          error: {
+            code: "CSRF_VALIDATION_FAILED",
+            message: "安全校验失败，请刷新页面后重试",
+            requestId: request.id
+          }
+        });
+      }
+    }
+    adminPrincipals.set(request, resolution.principal);
+  });
+
   app.get("/api/bi/health", async () => ({ success: true, data: { status: "ok", mode: env.UPSTREAM_API_BASE_URL ? "real" : "unconfigured" } }));
   const requireMaintenanceSession = (request: FastifyRequest, reply: FastifyReply) => {
+    const principal = adminPrincipals.get(request);
+    if (!principal) return reply.code(503).send({ success: false, error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "登录服务当前不可用", requestId: request.id } });
+    const securityContext = maintenanceSecurityContext(principal);
+    if (!securityContext) return reply.code(503).send({ success: false, error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "账号安全状态当前不可用", requestId: request.id } });
     if (!maintenanceAuth.enabled()) return reply.code(503).send({ success: false, error: { code: "MAINTENANCE_DISABLED", message: "数据源维护功能尚未启用" } });
-    if (!maintenanceAuth.authenticate(request.ip, request.headers.cookie)) return reply.code(401).send({ success: false, error: { code: "MAINTENANCE_LOGIN_REQUIRED", message: "维护登录已失效，请重新登录" } });
+    if (!maintenanceAuth.authenticate(request.ip, securityContext, request.headers.cookie)) return reply.code(401).send({ success: false, error: { code: "MAINTENANCE_LOGIN_REQUIRED", message: "维护登录已失效，请重新登录" } });
     return null;
   };
   const credentialSchema = z.object({ site: z.enum(["primary", "secondary"]), token: z.string().trim().min(16).max(4096).optional() });
   app.post("/api/bi/admin/auth/login", async (request, reply) => {
+    const principal = adminPrincipals.get(request)!;
+    const securityContext = maintenanceSecurityContext(principal);
+    if (!securityContext) return reply.code(503).send({ success: false, error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "账号安全状态当前不可用", requestId: request.id } });
     const parsed = z.object({ password: z.string().min(12).max(256) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_MAINTENANCE_PASSWORD", message: "维护密码格式不合法" } });
     try {
-      const session = maintenanceAuth.login(request.ip, parsed.data.password);
+      const session = maintenanceAuth.login(request.ip, securityContext, parsed.data.password);
       reply.header("set-cookie", maintenanceAuth.sessionCookie(session.token));
       reply.header("cache-control", "no-store");
       return { success: true, data: { expiresAt: new Date(session.expiresAt).toISOString() } };
@@ -153,30 +326,33 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     catch (error) { if (error instanceof UpstreamError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } }); throw error; }
   });
   app.get("/api/bi/ready", async (_request, reply) => {
-    const dependencies = { workspace: false, upstream: false };
+    const readiness = {
+      workspace: false,
+      upstream: false,
+      upstreamSites: { primary: false, secondary: false },
+      identity: false
+    };
     try {
       await workspaceStore.get();
-      dependencies.workspace = true;
+      readiness.workspace = true;
     } catch {
-      dependencies.workspace = false;
+      readiness.workspace = false;
     }
+    const [primaryUpstream, secondaryUpstream] = await Promise.allSettled([
+      upstream.verifyCredential("primary"),
+      upstream.verifyCredential("secondary")
+    ]);
+    readiness.upstreamSites.primary = primaryUpstream.status === "fulfilled";
+    readiness.upstreamSites.secondary = secondaryUpstream.status === "fulfilled";
+    readiness.upstream = readiness.upstreamSites.primary && readiness.upstreamSites.secondary;
     try {
-      const end = new Date();
-      const start = new Date(end);
-      start.setDate(end.getDate() - 1);
-      await upstream.get(P_DAY_SUM_API, {
-        page: "1",
-        count: "1",
-        pid: "PH",
-        sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`,
-        sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59`
-      });
-      dependencies.upstream = true;
+      if (authHealthCheck) await authHealthCheck();
+      readiness.identity = Boolean(authService || dependencies.identityProvider);
     } catch {
-      dependencies.upstream = false;
+      readiness.identity = false;
     }
-    const ready = dependencies.workspace && dependencies.upstream;
-    return reply.code(ready ? 200 : 503).send({ success: ready, data: { status: ready ? "ready" : "degraded", dependencies } });
+    const ready = readiness.workspace && readiness.upstream && readiness.identity;
+    return reply.code(ready ? 200 : 503).send({ success: ready, data: { status: ready ? "ready" : "degraded", dependencies: readiness } });
   });
   app.get("/api/bi/capabilities", async () => ({
     success: true,
@@ -187,6 +363,12 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const workspaceSchema = z.object({ schemaVersion: z.literal(1), templates: z.array(z.json()).max(500), cardAssets: z.array(z.json()).max(2000) });
   app.get("/api/bi/workspace", async () => ({ success: true, data: await workspaceStore.get() }));
   app.put("/api/bi/workspace", async (request, reply) => {
+    if (env.NODE_ENV === "production") {
+      return reply.code(410).send({
+        success: false,
+        error: { code: "LEGACY_WORKSPACE_WRITE_DISABLED", message: "遗留工作区写入已冻结" }
+      });
+    }
     const parsed = workspaceSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_WORKSPACE", message: "看板工作区配置不合法", details: parsed.error.issues } });
     return { success: true, data: await workspaceStore.put(parsed.data) };
@@ -282,6 +464,36 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     app.log.error(error);
     reply.code(500).send({ success: false, error: { code: "INTERNAL_ERROR", message: "BI 服务处理失败" } });
   });
+
+  if (authService) {
+    await app.register(biAuthPlugin, {
+      prefix: "/api/bi/v2/auth",
+      authService,
+      sessionCookie,
+      expectedOrigin: expectedPublicOrigin,
+      onSecurityContextChanged: async (subjectId) => {
+        maintenanceAuth.revokeSubject(subjectId);
+      }
+    });
+  } else {
+    await app.register(async (authApp) => {
+      authApp.addHook("onRequest", async (_request, reply) => {
+        reply.header("cache-control", "no-store");
+      });
+      const unavailable = (request: FastifyRequest, reply: FastifyReply) => reply.code(503).send({
+        success: false,
+        error: {
+          code: "AUTH_SERVICE_UNAVAILABLE" satisfies BiAuthApiErrorCode,
+          message: "登录服务尚未配置",
+          requestId: request.id
+        }
+      });
+      authApp.get("/session", unavailable);
+      authApp.post("/login", unavailable);
+      authApp.post("/logout", unavailable);
+      authApp.put("/password", unavailable);
+    }, { prefix: "/api/bi/v2/auth" });
+  }
 
   await app.register(v2BiPlugin, {
     prefix: "/api/bi/v2",
