@@ -1,7 +1,7 @@
 import { ChevronRight, Menu, PanelsTopLeft, RotateCcw, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useBodyScrollLock } from "../../components/layout/useBodyScrollLock";
-import { activeNavigationId, PRODUCT_NAVIGATION, routeArea, routeTitle } from "./navigation";
+import { activeNavigationId, normalizeProductPath, PRODUCT_NAVIGATION, routeArea, routeTitle } from "./navigation";
 import { ProductLink, useBrowserLocation } from "./router";
 
 function V2Mark() {
@@ -12,11 +12,13 @@ function V2Mark() {
 
 export function ProductShell({ children }: { children: ReactNode }) {
   const location = useBrowserLocation();
-  const activeId = activeNavigationId(location.pathname);
+  const pathname = normalizeProductPath(location.pathname);
+  const activeId = activeNavigationId(pathname);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [mobileNavigation, setMobileNavigation] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   const navigationRef = useRef<HTMLElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const classicHref = pathname === "/admin/data-sources" ? "/?workspace=dataSources&ui=v13" : "/?workspace=templates&ui=v13";
   useBodyScrollLock(navigationOpen);
 
   useEffect(() => {
@@ -73,10 +75,10 @@ export function ProductShell({ children }: { children: ReactNode }) {
         <ProductLink className="v2-brand" href="/data/metrics" aria-label="YPBI 指标中心"><V2Mark /><span>YPBI</span></ProductLink>
       </div>
       <nav className="v2-breadcrumb" aria-label="当前位置">
-        <span>{routeArea(location.pathname)}</span><ChevronRight aria-hidden="true" /><b>{routeTitle(location.pathname)}</b>
+        <span>{routeArea(pathname)}</span><ChevronRight aria-hidden="true" /><b>{routeTitle(pathname)}</b>
       </nav>
       <div className="v2-topbar-actions">
-        <a className="v2-classic-link" href="/?workspace=templates&ui=v13" aria-label="返回经典版"><RotateCcw aria-hidden="true" /><span>返回经典版</span></a>
+        <a className="v2-classic-link" href={classicHref} aria-label="返回经典版"><RotateCcw aria-hidden="true" /><span>返回经典版</span></a>
       </div>
     </header>
 
@@ -105,7 +107,7 @@ export function ProductShell({ children }: { children: ReactNode }) {
           })}
         </section>)}
       </nav>
-      <div className="v2-sidebar-note"><PanelsTopLeft aria-hidden="true" /><span><b>首批只读切片</b><small>当前仅开放指标目录与 M016 分析</small></span></div>
+      <div className="v2-sidebar-note"><PanelsTopLeft aria-hidden="true" /><span><b>渐进迁移中</b><small>已开放指标只读链路与受保护的数据源维护</small></span></div>
     </aside>
 
     <main id="v2-main-content" className="v2-main" tabIndex={-1}>{children}</main>

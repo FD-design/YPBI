@@ -95,6 +95,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   });
   app.post("/api/bi/admin/data-sources/test", async (request, reply) => {
     const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    reply.header("cache-control", "no-store");
     const parsed = credentialSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点或 Token 格式不合法" } });
     try { return { success: true, data: await upstream.verifyCredential(parsed.data.site, parsed.data.token) }; }
@@ -102,6 +103,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   });
   app.put("/api/bi/admin/data-sources/token", async (request, reply) => {
     const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    reply.header("cache-control", "no-store");
     const parsed = credentialSchema.extend({ token: z.string().trim().min(16).max(4096) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点或 Token 格式不合法" } });
     try { return { success: true, data: await upstream.updateCredential(parsed.data.site, parsed.data.token) }; }

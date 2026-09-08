@@ -3,7 +3,7 @@ import type { AppEnv } from "../config/env";
 import { UpstreamClient, UpstreamError } from "./client";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { unlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, unlink } from "node:fs/promises";
 
 const env: AppEnv = {
   NODE_ENV: "test",
@@ -88,5 +88,84 @@ describe("UpstreamClient business errors", () => {
     expect(status.tokenHint).toBe("••••1234");
     expect(JSON.stringify(status)).not.toContain("new-primary-token");
     await unlink(file).catch(() => undefined);
+  });
+
+  test("并发更新两个站点时串行合并凭证且不遗留临时文件", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bi-upstream-credentials-concurrent-"));
+    const file = join(directory, "credentials.json");
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async () =>
+      new Response(JSON.stringify({ code: 200, msg: {} }), { status: 200, headers: { "content-type": "application/json" } })
+    );
+
+    try {
+      await Promise.all([
+        client.updateCredential("primary", "concurrent-primary-token"),
+        client.updateCredential("secondary", "concurrent-secondary-token")
+      ]);
+
+      const persisted = JSON.parse(await readFile(file, "utf8")) as {
+        primary?: { token: string; updatedAt: string };
+        secondary?: { token: string; updatedAt: string };
+      };
+      expect(persisted.primary?.token).toBe("concurrent-primary-token");
+      expect(persisted.secondary?.token).toBe("concurrent-secondary-token");
+      expect(persisted.primary?.updatedAt).toBeString();
+      expect(persisted.secondary?.updatedAt).toBeString();
+      expect((await readdir(directory)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("候选凭证验证失败时保留原凭证且不创建临时文件", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bi-upstream-credentials-rejected-"));
+    const file = join(directory, "credentials.json");
+    const requestTokens: string[] = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_input, init) => {
+      const token = String((init?.headers as Record<string, string>)["x-token"]);
+      requestTokens.push(token);
+      if (token === "rejected-primary-token") {
+        return new Response(JSON.stringify({ code: 2002, err: "请重新登陆" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ code: 200, msg: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    try {
+      await client.updateCredential("primary", "accepted-primary-token");
+      const persistedBeforeFailure = await readFile(file, "utf8");
+
+      await expect(client.updateCredential("primary", "rejected-primary-token")).rejects.toMatchObject({
+        code: "UPSTREAM_AUTH_FAILED",
+        statusCode: 401
+      });
+      await client.get("/api/test", { pid: "PH" });
+
+      expect(await readFile(file, "utf8")).toBe(persistedBeforeFailure);
+      expect(requestTokens.at(-1)).toBe("accepted-primary-token");
+      expect((await readdir(directory)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("持久化失败时保留原活动凭证并清理已写入的临时文件", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bi-upstream-credentials-write-failure-"));
+    const file = join(directory, "credentials.json");
+    await mkdir(file);
+    const requestTokens: string[] = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_input, init) => {
+      requestTokens.push(String((init?.headers as Record<string, string>)["x-token"]));
+      return new Response(JSON.stringify({ code: 200, msg: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    try {
+      await expect(client.updateCredential("primary", "unpersisted-primary-token")).rejects.toBeInstanceOf(Error);
+      await client.get("/api/test", { pid: "PH" });
+
+      expect(requestTokens).toEqual(["unpersisted-primary-token", "test-token"]);
+      expect((await readdir(directory)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

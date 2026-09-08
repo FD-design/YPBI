@@ -59,7 +59,7 @@
 - 2026-07-21 使用 `pDaySum` 实测确认第二后台负责 `FBI、BZMH、TJS、BPS、HQW、TJD、MMV、AF、TFKJ、JRTT、YQ`；其余平台走主后台。`PH` 两侧均有数据，固定走主后台。
 - 两个后台均通过 `x-token` 和 `name` 请求头认证，Token 与用户名必须来自同一登录会话。
 - 前端“数据源维护”可只更新站1/站2 Token；地址、用户名和 PID 路由仍由 `.env.local` 管理，避免普通维护人员误改路由。
-- 后端 `/api/bi/admin/data-sources/test` 已支持传入候选 Token 进行非保存验证；当前经典版 UI 只暴露“测试当前连接”和“验证并保存”，目标 V1 页面需补“仅验证新 Token”入口。
+- 后端 `/api/bi/admin/data-sources/test` 支持传入候选 Token 进行非保存验证；经典版 UI 仍只暴露“测试当前连接”和“验证并保存”，V2 `/admin/data-sources` 已补“仅验证新 Token”入口，待生产安全门禁。
 - 更新后的 Token 保存到 root-only 运行时凭证文件，优先级高于 `.env.local` 初始 Token；接口永不回传 Token 原文。
 - Token 是不透明字符串，无法从本地解析过期时间。
 - 上游 HTTP 401/403 及业务码 `2002` 会映射为认证失败或 IP 白名单限制。
@@ -73,7 +73,7 @@
 2. `channel.byType` → `/api/admin/statistics/channel/channelStatByType`。参数包含 `pid`、`channel`、`cooperationType`、日期和分页；合作类型为 `CPC`、`CPA`、`CPT`、`CBD`。2026-07-21 生产调用成功并返回 20 行。
 3. `overview.byRole` → `/api/admin/home/getAllByRole`。GET 参数为 `page`、`count`、`startDate`、`endDate`、`pid`。2026-07-21 使用匹配后台凭证和 IPv4 生产调用成功并返回 2 行，原 HTTP 500 已消失。
 
-2026-07-21 已从浏览器 HAR 确认两组有效凭证，通过 VPS IPv4 验证 `pDaySum` 的 20 平台后台归属，并完成以上三个接口的生产复验。接口目录中的 30 个接口当前均可调用。
+2026-07-21 曾从浏览器 HAR 确认两组当时有效的凭证，通过 VPS IPv4 验证 `pDaySum` 的 20 平台后台归属，并完成以上三个接口及目录 30 个接口的生产复验。这是带日期的历史证据，不代表当前 Token、全部接口或数据结果仍健康；当前状态须由逐站探针和正式验数重新确认。
 
 ## pDaySum 扩展字段（2026-07-22）
 

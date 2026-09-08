@@ -2,11 +2,12 @@ import "../../theme/tokens.css";
 import "../v2.css";
 import { useEffect } from "react";
 import { ProductShell } from "./ProductShell";
-import { routeTitle } from "./navigation";
+import { normalizeProductPath, routeTitle } from "./navigation";
 import { useBrowserLocation } from "./router";
 import { MetricCatalogPage } from "../pages/MetricCatalogPage";
 import { MetricAnalysisPage } from "../pages/MetricAnalysisPage";
 import { NotFoundPage, UnavailablePage } from "../pages/UnavailablePage";
+import { DataSourceMaintenancePage } from "../pages/DataSourceMaintenancePage";
 
 const RESERVED_ROUTES: Record<string, { title: string; description: string }> = {
   "/dashboards": { title: "看板中心", description: "公共看板与个人看板将在真实查询、权限和保存契约完成后接入。" },
@@ -20,16 +21,12 @@ const RESERVED_ROUTES: Record<string, { title: string; description: string }> = 
   "/data": { title: "数据中心", description: "首批开放指标目录；事件目录将在权威契约完成后接入。" },
   "/data/events": { title: "事件中心", description: "事件中心将在权威事件目录接口完成后接入。" },
   "/admin": { title: "管理中心", description: "管理能力将在权限模型和可审计写入流程完成后接入。" },
-  "/admin/data-sources": { title: "数据源维护", description: "数据源维护涉及写入和高权限操作，当前只读版本不提供。" }
 };
 
-function normalizedPath(pathname: string) {
-  return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
-}
-
 function routeContent(pathname: string) {
-  const path = normalizedPath(pathname);
+  const path = normalizeProductPath(pathname);
   if (path === "/" || path === "/data/metrics") return <MetricCatalogPage />;
+  if (path === "/admin/data-sources") return <DataSourceMaintenancePage />;
   const metricMatch = path.match(/^\/analysis\/metrics\/([^/]+)$/);
   if (metricMatch) {
     let metricId = metricMatch[1];
@@ -44,7 +41,7 @@ function routeContent(pathname: string) {
 export function ProductApp() {
   const location = useBrowserLocation();
   useEffect(() => {
-    document.title = `${routeTitle(normalizedPath(location.pathname))} · YPBI`;
+    document.title = `${routeTitle(location.pathname)} · YPBI`;
   }, [location.pathname]);
   return <ProductShell>{routeContent(location.pathname)}</ProductShell>;
 }

@@ -30,7 +30,12 @@ export const PRODUCT_NAVIGATION: ProductNavigationGroup[] = [
   }
 ];
 
+export function normalizeProductPath(pathname: string) {
+  return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+}
+
 export function activeNavigationId(pathname: string): ProductNavigationItem["id"] | null {
+  pathname = normalizeProductPath(pathname);
   if (pathname === "/" || pathname.startsWith("/data/")) return "data";
   if (pathname.startsWith("/dashboards/")) return "dashboards";
   if (pathname.startsWith("/analysis/")) return "analysis";
@@ -39,6 +44,7 @@ export function activeNavigationId(pathname: string): ProductNavigationItem["id"
 }
 
 export function routeTitle(pathname: string) {
+  pathname = normalizeProductPath(pathname);
   if (pathname === "/" || pathname === "/data/metrics") return "指标中心";
   if (pathname === "/data/events") return "事件中心";
   if (pathname.startsWith("/analysis/metrics/")) return "指标分析";
@@ -52,6 +58,7 @@ export function routeTitle(pathname: string) {
 }
 
 export function routeArea(pathname: string) {
+  pathname = normalizeProductPath(pathname);
   if (pathname === "/" || pathname.startsWith("/data")) return "数据";
   if (pathname.startsWith("/dashboards")) return "看板";
   if (pathname.startsWith("/analysis")) return "分析";

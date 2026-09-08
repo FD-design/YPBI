@@ -1,7 +1,8 @@
 import type { AppEnv } from "../config/env";
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 export type CredentialSite = "primary" | "secondary";
 interface PersistedCredentials { primary?: { token: string; updatedAt: string }; secondary?: { token: string; updatedAt: string } }
@@ -16,6 +17,7 @@ export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
   private readonly responseCache = new Map<string, { expiresAt: number; value: unknown }>();
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  private credentialUpdateQueue: Promise<void> = Promise.resolve();
   private credentials: PersistedCredentials = {};
 
   constructor(
@@ -51,15 +53,28 @@ export class UpstreamClient {
     return { site, valid: true, checkedAt: new Date().toISOString() };
   }
 
-  async updateCredential(site: CredentialSite, token: string) {
+  updateCredential(site: CredentialSite, token: string) {
+    const operation = this.credentialUpdateQueue.then(() => this.persistCredential(site, token));
+    this.credentialUpdateQueue = operation.then(
+      () => undefined,
+      () => undefined
+    );
+    return operation;
+  }
+
+  private async persistCredential(site: CredentialSite, token: string) {
     await this.verifyCredential(site, token);
     const next: PersistedCredentials = { ...this.credentials, [site]: { token, updatedAt: new Date().toISOString() } };
     const file = this.env.UPSTREAM_CREDENTIALS_FILE;
     await mkdir(dirname(file), { recursive: true });
-    const temporary = `${file}.tmp`;
-    await writeFile(temporary, JSON.stringify(next), { encoding: "utf8", mode: 0o600 });
-    await chmod(temporary, 0o600);
-    await rename(temporary, file);
+    const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify(next), { encoding: "utf8", mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, file);
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+    }
     this.credentials = next;
     this.responseCache.clear();
     this.inFlight.clear();
