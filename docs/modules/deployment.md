@@ -52,8 +52,9 @@
 
 ## 前端维护 Token
 
-- 一级导航“数据源维护”提供站1和站2两个 Token 更新栏。
-- 页面先校验 `TOKEN_MAINTENANCE_KEY`；维护密码只保存在当前标签页 `sessionStorage`，退出或关闭标签页后清除。
+- 上游暂不支持 Token 自动申请或刷新；V1 由授权维护者在失效或轮换时人工更新，普通查询无需重复输入。
+- 一级导航“数据源维护”提供站1和站2两个 Token 更新栏、当前连接测试和验证并保存；服务端已支持候选 Token 非保存验证，当前经典版 UI 尚待补对应入口。
+- 页面先校验 `TOKEN_MAINTENANCE_KEY`；验证成功后由服务端签发 30 分钟维护会话 Cookie，使用 `HttpOnly`、`Secure`、`SameSite=Strict` 且限定 `/api/bi/admin` 路径，浏览器脚本与存储不保存维护密码或会话值。
 - 运行时 Token 写入 `UPSTREAM_CREDENTIALS_FILE`，生产路径为 `/opt/config-driven-bi-demo/data/upstream-credentials.json`，权限 `0600`，该文件不参与代码部署。
 - 维护密码的 VPS 本机备份为 `/root/bi-maintenance-password.txt`，权限 `0600`；只通过受控渠道交给维护人员。
 - 站1使用 `PH`、站2使用 `FBI` 调用 `pDaySum` 验证；成功后才覆盖旧 Token。

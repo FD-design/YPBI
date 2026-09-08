@@ -32,7 +32,7 @@
 | 平台注册表 | 20 个 HX 平台与 PID 映射 | `server/platforms/registry.ts` | [数据与平台](./modules/data-platform.md) | 可用 | 2026-07-15：正式平台表确认 |
 | 工作区持久化 | 模板和卡片资产保存到 PostgreSQL；无数据库时使用磁盘文件并保留上一版本备份 | `server/persistence` | [后端 API](./modules/backend-api.md) | 可用 | 2026-07-23：修复服务重启后模板丢失 |
 | 部署与运行 | systemd 管理 API/Web，Nginx 普通入口、Caddy HTTPS 管理入口、安全响应头与访问统计 | `deploy`、`package.json` | [部署运维](./modules/deployment.md) | VPS 运行中 | 2026-07-23：配置页安全登录与HTTP自动跳转 |
-| 产品需求治理 | 用一份总 PRD 维护产品架构、看板、指标速览、分析、数据中心和全局规则；用一份调整方案维护当前实现差异、真实 API 能力、架构风险与迁移事项 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 1.64、调整方案 1.62；V1 产品目标已确认，Product Shell / V2 / M016 首批本地代码与浏览器回归完成。正式身份、PID 范围、M016 验数、Bun 测试与生产门禁未完成；最终分类映射继续按数据准入核对 | 2026-09-08：记录首批完成结果与剩余门禁 |
+| 产品需求治理 | 用一份总 PRD 维护产品架构、看板、指标速览、分析、数据中心和全局规则；用一份调整方案维护当前实现差异、真实 API 能力、架构风险与迁移事项 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 1.65、调整方案 1.63；V1 产品目标及人工 Token 维护边界已确认，Product Shell / V2 / M016 首批本地代码与浏览器回归完成。正式身份、PID 范围、M016 验数、Bun 测试与生产门禁未完成；最终分类映射继续按数据准入核对 | 2026-09-08：确认人工 Token 维护并记录首批剩余门禁 |
 | 文档治理与版本管理 | 长期工程规则覆盖权威源、影响面、模块边界、高风险确认、迁移可靠性、可观测性、分级验证与交付；UI 任务额外读取已确认问题清单 | `AGENTS.md`、`.gitignore`、`docs` | 本文件、[现有平台调整方案](./requirements/BI-现有平台调整方案.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md)、[部署运维](./modules/deployment.md) | 强制执行；不为单个功能重复建文档 | 2026-09-08：长期工程规则与架构风险纳入完成门槛 |
 
 ## 当前代码分析模型（现状，不代表目标产品分类）

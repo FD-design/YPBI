@@ -52,12 +52,14 @@
 
 ## Token 与请求安全
 
+- 上游当前不提供 Token 自动申请、续期或刷新能力；V1 使用受保护的人工轮换流程。维护者只在首次接入、失效或主动轮换时更新，普通 BI 查询由服务端自动使用已生效凭据。
 - 主后台凭证从 `.env.local` 的 `UPSTREAM_API_BASE_URL`、`UPSTREAM_X_TOKEN`、`UPSTREAM_USER_NAME` 读取。
 - 第二后台凭证从 `UPSTREAM_SECONDARY_API_BASE_URL`、`UPSTREAM_SECONDARY_X_TOKEN`、`UPSTREAM_SECONDARY_USER_NAME` 读取，三项必须成组配置。
 - `UPSTREAM_SECONDARY_PIDS` 保存第二后台的平台 PID 白名单。客户端按请求中的 `pid` 自动选择后台、Token 和匹配用户名。
 - 2026-07-21 使用 `pDaySum` 实测确认第二后台负责 `FBI、BZMH、TJS、BPS、HQW、TJD、MMV、AF、TFKJ、JRTT、YQ`；其余平台走主后台。`PH` 两侧均有数据，固定走主后台。
 - 两个后台均通过 `x-token` 和 `name` 请求头认证，Token 与用户名必须来自同一登录会话。
 - 前端“数据源维护”可只更新站1/站2 Token；地址、用户名和 PID 路由仍由 `.env.local` 管理，避免普通维护人员误改路由。
+- 后端 `/api/bi/admin/data-sources/test` 已支持传入候选 Token 进行非保存验证；当前经典版 UI 只暴露“测试当前连接”和“验证并保存”，目标 V1 页面需补“仅验证新 Token”入口。
 - 更新后的 Token 保存到 root-only 运行时凭证文件，优先级高于 `.env.local` 初始 Token；接口永不回传 Token 原文。
 - Token 是不透明字符串，无法从本地解析过期时间。
 - 上游 HTTP 401/403 及业务码 `2002` 会映射为认证失败或 IP 白名单限制。
