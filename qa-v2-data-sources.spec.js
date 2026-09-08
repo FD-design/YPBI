@@ -58,6 +58,9 @@ async function installMaintenanceFixtures(page, options = {}) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: sourceStatuses() }) });
     }
     if (url.pathname.endsWith("/data-sources/test")) {
+      if (options.proxyMisconfiguredOnAction) {
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ success: false, error: { code: "MAINTENANCE_PROXY_MISCONFIGURED", message: "数据源维护代理配置不完整" } }) });
+      }
       if (options.disableOnAction) {
         return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ success: false, error: { code: "MAINTENANCE_DISABLED", message: "数据源维护功能尚未启用" } }) });
       }
@@ -224,6 +227,19 @@ test("操作中维护能力被关闭时清空候选值并切换全局不可用�
 
   await expect(page.getByRole("heading", { name: "数据源维护尚未启用" })).toBeVisible();
   await expect(page.getByLabel("候选 Token")).toHaveCount(0);
+});
+
+test("操作中代理配置异常时清空候选值并切换全局故障状态", async ({ page }) => {
+  await installMaintenanceFixtures(page, { authorized: true, proxyMisconfiguredOnAction: true });
+  await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
+  await page.getByLabel("候选 Token").nth(0).fill("fake-primary-candidate-0001");
+  await page.getByLabel("候选 Token").nth(1).fill("fake-secondary-candidate-0002");
+  await page.getByRole("button", { name: "测试当前连接" }).first().click();
+
+  await expect(page.getByRole("heading", { name: "维护入口配置异常" })).toBeVisible();
+  await expect(page.getByText("错误代码：MAINTENANCE_PROXY_MISCONFIGURED")).toBeVisible();
+  await expect(page.getByLabel("候选 Token")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "站1", exact: true })).toHaveCount(0);
 });
 
 test("上游 429 只作为站点探针失败，不误判为维护登录锁定", async ({ page }) => {

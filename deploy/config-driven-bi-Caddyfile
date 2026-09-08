@@ -1,0 +1,25 @@
+187.77.129.207.nip.io {
+    log
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'self'"
+    }
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:3000 {
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+            header_down Cache-Control "no-store"
+        }
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:5179 {
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+        }
+    }
+}

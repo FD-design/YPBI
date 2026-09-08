@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { isIP } from "node:net";
 import { analyticsQuerySchema, MAX_METRICS_PER_QUERY } from "../contracts/analytics";
 import { cardConfigSchema } from "../contracts/card";
 import { validateAnalyticsQuery, validateCardConfig } from "./analytics/capability-validator";
@@ -12,8 +13,8 @@ import { EventAdapter } from "./upstream/event.adapter";
 import { SearchAdapter } from "./upstream/search.adapter";
 import { VideoAdapter } from "./upstream/video.adapter";
 import { RealtimeAdapter } from "./upstream/realtime.adapter";
-  import { RetentionAdapter } from "./upstream/retention.adapter";
-  import { AcquisitionAdapter } from "./upstream/acquisition.adapter";
+import { RetentionAdapter } from "./upstream/retention.adapter";
+import { AcquisitionAdapter } from "./upstream/acquisition.adapter";
 import { DetailAdapter, CIRCLE_LIST_API, USER_DAILY_API } from "./upstream/detail.adapter";
 import { ChannelAdapter, CHANNEL_AB_API, CHANNEL_DETAIL_API } from "./upstream/channel.adapter";
 import { z } from "zod";
@@ -37,8 +38,57 @@ export interface BuildAppDependencies {
 }
 
 export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies = {}) {
-  const app = Fastify({ logger: env.NODE_ENV !== "test" });
+  const app = Fastify({
+    logger: env.NODE_ENV !== "test",
+    // The production API only accepts traffic from local Caddy/Nginx. Trusting
+    // loopback (rather than every proxy or a hop count) makes request.ip and
+    // request.protocol safe to use for maintenance-session security.
+    trustProxy: ["127.0.0.1", "::1"]
+  });
   await app.register(cors, { origin: env.NODE_ENV === "production" ? false : true });
+  app.addHook("onRequest", async (request, reply) => {
+    // Fastify may match percent-encoded static path segments. Use the canonical
+    // matched route for security decisions, while retaining the raw-prefix check
+    // so unknown admin paths also receive the no-store/error boundary.
+    const matchedRoute = request.routeOptions.url ?? "";
+    const isMaintenanceRoute = matchedRoute === "/api/bi/admin"
+      || matchedRoute.startsWith("/api/bi/admin/");
+    const isMaintenanceRawPath = request.url === "/api/bi/admin"
+      || request.url.startsWith("/api/bi/admin/");
+    const isMaintenanceRequest = isMaintenanceRoute || isMaintenanceRawPath;
+    if (!isMaintenanceRequest) return;
+
+    reply.header("cache-control", "no-store");
+    if (env.NODE_ENV !== "production") return;
+
+    const forwardedProtocol = request.headers["x-forwarded-proto"];
+    const isTrustedHttps = typeof forwardedProtocol === "string"
+      && forwardedProtocol.trim().toLowerCase() === "https"
+      && request.protocol.toLowerCase() === "https";
+
+    if (!isTrustedHttps) {
+      return reply.code(426).send({
+        success: false,
+        error: { code: "HTTPS_REQUIRED", message: "Token 维护仅允许通过 HTTPS 使用" }
+      });
+    }
+
+    const forwardedFor = request.headers["x-forwarded-for"];
+    const clientIp = typeof forwardedFor === "string" && !forwardedFor.includes(",")
+      ? forwardedFor.trim()
+      : "";
+    const hasTrustedClientIp = isIP(clientIp) !== 0 && request.ip === clientIp;
+
+    if (!hasTrustedClientIp) {
+      return reply.code(503).send({
+        success: false,
+        error: {
+          code: "MAINTENANCE_PROXY_MISCONFIGURED",
+          message: "数据源维护代理配置不完整"
+        }
+      });
+    }
+  });
   const upstream = new UpstreamClient(env);
   const sources = new SourceService(upstream);
   const details = new DetailAdapter(upstream);
@@ -55,20 +105,13 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const orchestrator = new QueryOrchestrator(overviewAdapter, new EventAdapter(upstream), new SearchAdapter(upstream), new VideoAdapter(upstream), new RealtimeAdapter(upstream), new RetentionAdapter(upstream), new AcquisitionAdapter(special, overviewAdapter), env.MAX_PLATFORM_CONCURRENCY);
 
   app.get("/api/bi/health", async () => ({ success: true, data: { status: "ok", mode: env.UPSTREAM_API_BASE_URL ? "real" : "unconfigured" } }));
-  const requireSecureTransport = (request: FastifyRequest, reply: FastifyReply) => {
-    const forwardedProtocol = request.headers["x-forwarded-proto"];
-    if (env.NODE_ENV !== "test" && forwardedProtocol && forwardedProtocol !== "https") return reply.code(426).send({ success: false, error: { code: "HTTPS_REQUIRED", message: "Token 维护仅允许通过 HTTPS 使用" } });
-    return null;
-  };
   const requireMaintenanceSession = (request: FastifyRequest, reply: FastifyReply) => {
-    const insecure = requireSecureTransport(request, reply); if (insecure) return insecure;
     if (!maintenanceAuth.enabled()) return reply.code(503).send({ success: false, error: { code: "MAINTENANCE_DISABLED", message: "数据源维护功能尚未启用" } });
     if (!maintenanceAuth.authenticate(request.ip, request.headers.cookie)) return reply.code(401).send({ success: false, error: { code: "MAINTENANCE_LOGIN_REQUIRED", message: "维护登录已失效，请重新登录" } });
     return null;
   };
   const credentialSchema = z.object({ site: z.enum(["primary", "secondary"]), token: z.string().trim().min(16).max(4096).optional() });
   app.post("/api/bi/admin/auth/login", async (request, reply) => {
-    const insecure = requireSecureTransport(request, reply); if (insecure) return insecure;
     const parsed = z.object({ password: z.string().min(12).max(256) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_MAINTENANCE_PASSWORD", message: "维护密码格式不合法" } });
     try {

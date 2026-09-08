@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export type CredentialSite = "primary" | "secondary";
-export type AdminFailureKind = "login_required" | "disabled" | "locked" | "insecure" | "validation" | "upstream" | "error";
+export type AdminFailureKind = "login_required" | "disabled" | "locked" | "insecure" | "proxy_misconfigured" | "validation" | "upstream" | "error";
 
 const credentialSiteSchema = z.enum(["primary", "secondary"]);
 const tokenHintSchema = z.string().max(8).refine(
@@ -85,6 +85,7 @@ export class AdminRequestError extends Error {
 function failureKind(status: number, code: string): AdminFailureKind {
   if (status === 401 && code === "MAINTENANCE_LOGIN_REQUIRED") return "login_required";
   if (status === 503 && code === "MAINTENANCE_DISABLED") return "disabled";
+  if (status === 503 && code === "MAINTENANCE_PROXY_MISCONFIGURED") return "proxy_misconfigured";
   if (code === "MAINTENANCE_LOCKED") return "locked";
   if (status === 426 || code === "HTTPS_REQUIRED") return "insecure";
   if (status === 400 || code === "INVALID_CREDENTIAL_INPUT" || code === "INVALID_MAINTENANCE_PASSWORD") return "validation";

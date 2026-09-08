@@ -11,8 +11,8 @@ const envSchema = z.object({
   UPSTREAM_SECONDARY_X_TOKEN: z.string().min(1).optional(),
   UPSTREAM_SECONDARY_USER_NAME: z.string().min(1).optional(),
   UPSTREAM_SECONDARY_PIDS: z.string().default(""),
-    UPSTREAM_CREDENTIALS_FILE: z.string().default("./data/upstream-credentials.json"),
-    WORKSPACE_FILE: z.string().default("./data/workspace.json"),
+  UPSTREAM_CREDENTIALS_FILE: z.string().default("./data/upstream-credentials.json"),
+  WORKSPACE_FILE: z.string().default("./data/workspace.json"),
   TOKEN_MAINTENANCE_KEY: z.string().min(12).optional(),
   DATABASE_URL: z.string().min(1).optional(),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
@@ -29,7 +29,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   if (parsed.data.NODE_ENV === "production") {
     if (!parsed.data.UPSTREAM_API_BASE_URL) throw new Error("生产环境缺少 UPSTREAM_API_BASE_URL");
     if (!parsed.data.UPSTREAM_X_TOKEN) throw new Error("生产环境缺少 UPSTREAM_X_TOKEN");
-    if (!parsed.data.DATABASE_URL) throw new Error("生产环境缺少 DATABASE_URL");
+    if (parsed.data.HOST !== "127.0.0.1" || parsed.data.PORT !== 3000) {
+      throw new Error("生产环境 API 必须监听 127.0.0.1:3000，与反向代理契约一致");
+    }
   }
   const secondaryValues = [
     parsed.data.UPSTREAM_SECONDARY_API_BASE_URL,

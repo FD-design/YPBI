@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/config-driven-bi-demo
 EnvironmentFile=/opt/config-driven-bi-demo/.env.local
-ExecStart=/root/.bun/bin/bun server/index.ts
+ExecStart=/usr/bin/env NODE_ENV=production /root/.bun/bin/bun server/index.ts
 Restart=always
 RestartSec=3
 User=root

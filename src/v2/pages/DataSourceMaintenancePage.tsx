@@ -143,7 +143,7 @@ export function DataSourceMaintenancePage() {
   const handleAccessError = (error: unknown) => {
     const problem = asAdminError(error, "暂时无法连接数据源维护服务");
     setPageError(null);
-    if (["login_required", "disabled", "insecure"].includes(problem.kind)) clearSensitiveState();
+    if (["login_required", "disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) clearSensitiveState();
     if (problem.kind === "login_required") setAccess({ status: "signed_out" });
     else if (problem.kind === "disabled") setAccess({ status: "disabled", error: problem });
     else setAccess({ status: "failure", error: problem });
@@ -180,7 +180,7 @@ export function DataSourceMaintenancePage() {
       await loadStatus();
     } catch (error) {
       const problem = asAdminError(error, "维护登录失败");
-      if (problem.kind === "disabled" || problem.kind === "insecure") handleAccessError(problem);
+      if (["disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) handleAccessError(problem);
       else setAccess({ status: "signed_out", error: problem });
     } finally {
       setPassword("");
@@ -197,7 +197,9 @@ export function DataSourceMaintenancePage() {
       await logoutMaintenance();
       setAccess({ status: "signed_out" });
     } catch (error) {
-      setPageError(asAdminError(error, "退出失败，服务端维护会话可能仍然有效，请重试"));
+      const problem = asAdminError(error, "退出失败，服务端维护会话可能仍然有效，请重试");
+      if (["disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) handleAccessError(problem);
+      else setPageError(problem);
     } finally {
       setOperation({ kind: "idle" });
     }
@@ -237,7 +239,7 @@ export function DataSourceMaintenancePage() {
       }
     } catch (error) {
       const problem = asAdminError(error, kind === "save" ? "更新失败" : "凭证探针失败");
-      if (["login_required", "disabled", "insecure"].includes(problem.kind)) {
+      if (["login_required", "disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) {
         clearSensitiveState();
         setPageError(null);
         if (problem.kind === "login_required") setAccess({ status: "signed_out", error: problem });
@@ -270,10 +272,15 @@ export function DataSourceMaintenancePage() {
 
   if (access.status === "failure") {
     const insecure = access.error.kind === "insecure";
+    const proxyMisconfigured = access.error.kind === "proxy_misconfigured";
     return <div className="v2-page" data-page="data-source-maintenance"><StatePanel
       kind="error"
-      title={insecure ? "需要安全连接" : "暂时无法打开维护页面"}
-      description={insecure ? "请改用本站的 HTTPS 地址后重试；Token 不允许通过普通 HTTP 传输。" : access.error.message}
+      title={insecure ? "需要安全连接" : proxyMisconfigured ? "维护入口配置异常" : "暂时无法打开维护页面"}
+      description={insecure
+        ? "请改用本站的 HTTPS 地址后重试；Token 不允许通过普通 HTTP 传输。"
+        : proxyMisconfigured
+          ? "服务器未正确转发客户端来源信息，请联系运维检查反向代理后重试。"
+          : access.error.message}
       code={access.error.code}
       requestId={access.error.requestId}
       action={insecure ? undefined : { label: "重新检查", onClick: () => { setAccess({ status: "checking" }); loadStatus().catch(handleAccessError); } }}

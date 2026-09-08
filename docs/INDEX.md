@@ -24,15 +24,15 @@
 
 | 模块 | 当前功能 | 主要代码 | 详细文档 | 当前状态 | 最后修改 |
 |---|---|---|---|---|---|
-| 看板与前端工作区 | 经典版 UI v1.5 继续作为回退；独立 Product Shell 已开放指标中心、M016 单 PID 日趋势和受保护的数据源维护，其余目标路径只显示未开放状态 | `src/main.tsx`、`src/legacyApp.tsx`、`src/v2`、`src/theme`、`src/components` | [前端模块](./modules/frontend.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md) | 本地代码完成；V2 系统 Chrome 15/15，通过后仍待真实身份、M016 验数、HTTPS / 可信代理与生产门禁 | 2026-09-08：完成 V2 数据源维护纵向切片与回归 |
+| 看板与前端工作区 | 经典版 UI v1.5 继续作为回退；独立 Product Shell 已开放指标中心、M016 单 PID 日趋势和受保护的数据源维护，其余目标路径只显示未开放状态 | `src/main.tsx`、`src/legacyApp.tsx`、`src/v2`、`src/theme`、`src/components` | [前端模块](./modules/frontend.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md) | 本地代码完成；V2 系统 Chrome 16/16，仍待真实身份、M016 验数和生产部署验证 | 2026-09-08：完成 V2 数据源维护与代理误配回归 |
 | 卡片与模板配置 | 分析卡片创建与管理；独立模板编辑模式；卡片级平台范围；最多 16 项指标；完整预览、保存、发布、排序和宽度调整 | `src/main.tsx`、`contracts/card.ts` | [前端模块](./modules/frontend.md) | 可用 | 2026-07-27：补充卡片编辑返回入口 |
 | 分析引擎 | V2 以独立 M016 source / query service 保留真实 0、无记录、空值、部分数据与未知水位；旧聚合、阶段量、固定 PID 和高级图表仅作迁移事实 | `server/v2`、`src/v2`、`src/analytics`、`server/analytics` | [分析模块](./modules/analytics.md) | V2 的 M016 单 PID 日序列本地代码完成但待真实验数；遗留分析不代表目标 V1 准入 | 2026-09-08：完成 V2 M016 本地切片与状态回归 |
-| BI 后端 API | 新增只读 `/api/bi/v2` 路由命名空间、指标 / 平台目录和 M016 查询，默认 IdentityProvider 失败关闭；查询日志已移除 PID 与原始错误对象；旧查询、维护和 workspace API 保留迁移事实 | `server/app.ts`、`contracts/bi-v2.ts`、`server/identity`、`server/v2` | [后端 API](./modules/backend-api.md) | V2 身份源、网关 / 功能开关隔离证据、权限正反用例、生产日志核验、M016 验数和生产门禁未完成；遗留 `/ready` 不证明 V2 就绪 | 2026-09-08：注册 V2 只读纵向切片 |
+| BI 后端 API | 新增只读 `/api/bi/v2` 路由命名空间、指标 / 平台目录和 M016 查询，默认 IdentityProvider 失败关闭；production 固定监听 `127.0.0.1:3000`，管理 API 对 HTTPS 与真实客户端 IP 失败关闭；旧查询和 workspace API 保留迁移事实 | `server/app.ts`、`contracts/bi-v2.ts`、`server/identity`、`server/v2` | [后端 API](./modules/backend-api.md) | 代理安全本地运行检查 14/14；V2 身份源、权限正反用例、生产日志核验、M016 验数、Bun 套件和生产黑盒未完成；遗留 `/ready` 不证明 V2 就绪 | 2026-09-08：收紧管理 API 可信代理、监听与 HTTPS 边界 |
 | 上游接口接入 | 30 个后台接口登记、双后台按 PID 路由、Token 安全热更新、Adapter 归一化、超时与错误映射 | `server/upstream` | [数据与平台](./modules/data-platform.md) | 2026-07-21 曾完成 30 接口复验；不代表当前凭证或全量数据健康，待逐站重新验证 | 2026-09-08：补并发凭证写入安全与当前状态边界 |
 | 平台注册表 | 20 个 HX 平台与 PID 映射 | `server/platforms/registry.ts` | [数据与平台](./modules/data-platform.md) | 可用 | 2026-07-15：正式平台表确认 |
 | 工作区持久化 | 模板和卡片资产保存到 PostgreSQL；无数据库时使用磁盘文件并保留上一版本备份 | `server/persistence` | [后端 API](./modules/backend-api.md) | 可用 | 2026-07-23：修复服务重启后模板丢失 |
-| 部署与运行 | systemd 管理 API/Web，Nginx 普通入口、Caddy HTTPS 管理入口、安全响应头与访问统计 | `deploy`、`package.json` | [部署运维](./modules/deployment.md) | VPS 运行中 | 2026-07-23：配置页安全登录与HTTP自动跳转 |
-| 产品需求治理 | 用一份总 PRD 维护产品架构、看板、指标速览、分析、数据中心和全局规则；用一份调整方案维护当前实现差异、真实 API 能力、架构风险与迁移事项 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 1.65、调整方案 1.65；人工 Token 维护目标已落为本地 V2 页面并复用现有安全接口。正式身份、PID 范围、M016 验数、动态路由状态、Bun 测试与生产门禁未完成；最终分类映射继续按数据准入核对 | 2026-09-08：完成数据源维护本地切片并记录生产门禁 |
+| 部署与运行 | systemd 管理 API/Web，Nginx 普通入口、Caddy HTTPS 管理入口、安全响应头与访问统计；仓库已固定两入口分别直连本机服务的目标配置 | `deploy`、`package.json` | [部署运维](./modules/deployment.md) | 当前 VPS 仍运行旧发布；新版 Caddy/Nginx/systemd 配置待对照、校验和部署 | 2026-09-08：版本化可信代理与 production 启动配置 |
+| 产品需求治理 | 用一份总 PRD 维护产品架构、看板、指标速览、分析、数据中心和全局规则；用一份调整方案维护当前实现差异、真实 API 能力、架构风险与迁移事项 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 1.65、调整方案 1.66；人工 Token 维护、可信代理与 HTTPS 门禁已落为本地实现。正式身份、PID 范围、M016 验数、动态路由状态、Bun 测试与生产部署验证未完成；最终分类映射继续按数据准入核对 | 2026-09-08：完成管理入口安全契约本地收口 |
 | 文档治理与版本管理 | 长期工程规则覆盖权威源、影响面、模块边界、高风险确认、迁移可靠性、可观测性、分级验证与交付；UI 任务额外读取已确认问题清单 | `AGENTS.md`、`.gitignore`、`docs` | 本文件、[现有平台调整方案](./requirements/BI-现有平台调整方案.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md)、[部署运维](./modules/deployment.md) | 强制执行；不为单个功能重复建文档 | 2026-09-08：长期工程规则与架构风险纳入完成门槛 |
 
 ## 当前代码分析模型（现状，不代表目标产品分类）
@@ -63,7 +63,7 @@
 ## 上线前风险
 
 - `/api/bi/workspace` 的读写尚未接入身份、对象归属、服务端权限和 `revision` 并发条件，公网访问者理论上可以读取或覆盖同一份工作区配置。
-- 普通 BI 的 `:5178` 入口仍为 HTTP；数据源维护已有独立 HTTPS 入口。V2 正式开放前仍须核对 HTTPS 强制和可信代理拓扑。
+- 普通 BI 的 `:5178` 入口仍为 HTTP；数据源维护已有独立 HTTPS 入口。可信代理、缺头失败关闭和目标代理配置已在本地收口，但正式开放前仍须部署并在真实拓扑完成黑盒验证。
 - `src/legacyApp.tsx` 和 `src/styles.css` 体积较大；目标功能已从轻量 `src/main.tsx` 分流到 `src/v2`，后续只随迁移切片继续拆分旧实现。
 - 已建立工作区 Shell 的 Playwright E2E；真实 API 成功态、权限矩阵和生产浏览器回归仍需在部署环境持续补齐。
 

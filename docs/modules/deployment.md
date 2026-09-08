@@ -12,24 +12,25 @@
 - VPS：`187.77.129.207`
 - 项目目录：`/opt/config-driven-bi-demo`
 - Web：`http://187.77.129.207:5178`
-- HTTPS 管理入口：`https://187.77.129.207.nip.io`；Caddy 仅监听 443 并自动续签证书，反向代理现有 API 和 Web 服务。
+- HTTPS 管理入口：`https://187.77.129.207.nip.io`；Caddy 在 443 终止 TLS 并自动续签证书，域名 HTTP 入口如启用只用于自动跳转 HTTPS；`/api/*` 直连 `127.0.0.1:3000`，其余页面直连 `127.0.0.1:5179`。仓库目标配置为 `deploy/config-driven-bi-Caddyfile`。
 - 公网 `5178` 由 Nginx 接入并记录真实访问 IP，再转发至仅监听本机 `127.0.0.1:5179` 的 Vite preview。
-- API 与 Web 同源；Nginx 将 `/api/` 直接转发至 `127.0.0.1:3000`，不再绕经 Vite。
+- API 与 Web 同源；Nginx 将 `/api/` 直接转发至 `127.0.0.1:3000`，不再绕经 Vite。Caddy 不得转发到 Nginx `:5178`，否则内层 HTTP 会把 HTTPS 协议覆盖为 `http`，管理接口将正确失败关闭。
 
 ## systemd 服务
 
 | 服务 | 功能 |
 |---|---|
-| `config-driven-bi-api` | Bun 运行 Fastify API |
+| `config-driven-bi-api` | 以 `NODE_ENV=production` 运行 Bun/Fastify API；模板通过命令行环境覆盖 `.env.local` 中可能残留的开发值 |
 | `config-driven-bi-web` | Vite preview 托管生产 `dist` |
 
 ## 访问统计
 
 - Nginx 访问日志：`/var/log/nginx/config-driven-bi-access.log`
 - Nginx 错误日志：`/var/log/nginx/config-driven-bi-error.log`
+- Caddy HTTPS 访问日志：目标配置启用结构化 access log，由 `journalctl -u caddy` 查看；不得假设它会写入 Nginx 日志。
 - 汇总命令：`/opt/config-driven-bi-demo/deploy/visitor-stats.sh`
 - 统计口径：根页面 `GET /` 请求数作为页面打开次数；去重来源 IP 作为访问人数的近似值。
-- 日志按日轮转并保留 30 天；统计只能从 Nginx 接入启用后开始，历史访问人数无法从原 Vite 日志补回。
+- 当前汇总脚本只统计 Nginx `:5178` 入口，不包含 Caddy HTTPS 入口；Nginx 文件日志按日轮转并保留 30 天。跨入口统一访问统计属于后续运维治理，不得把当前脚本结果解释成全站人数。
 - IP 去重不等于精确用户数：同一网络下多人可能共用 IP，同一用户切换网络也可能产生多个 IP。
 
 ## 环境变量
@@ -42,13 +43,21 @@
 - `UPSTREAM_SECONDARY_USER_NAME`
 - `UPSTREAM_SECONDARY_PIDS`
 - `UPSTREAM_CREDENTIALS_FILE`
-- `WORKSPACE_FILE`：无 PostgreSQL 时的工作区持久化文件，生产默认 `/opt/config-driven-bi-demo/data/workspace.json`
+- `WORKSPACE_FILE`：无 PostgreSQL 时的工作区持久化文件，生产默认 `/opt/config-driven-bi-demo/data/workspace.json`；文件 Store 是当前已确认的生产兼容模式，不强制为了 production 引入 PostgreSQL
 - `TOKEN_MAINTENANCE_KEY`
 - `DATABASE_URL`
 - `REQUEST_TIMEOUT_MS`
 - `MAX_PLATFORM_CONCURRENCY`
 
 不得在文档、提交、截图或日志中写入实际密钥值。
+
+## 反向代理安全契约
+
+- API 的 production 监听地址固定为 `127.0.0.1:3000`，与两个目标代理 upstream 一致；地址或端口不一致时服务端拒绝启动。Caddy HTTPS 与 Nginx 遗留 HTTP 分别直连本机 API / Web，不形成双层代理。
+- Fastify 只信任 `127.0.0.1`、`::1` 代理。不得改为 `trustProxy: true`、信任所有内网地址或按固定跳数信任。
+- Caddy 对上游覆盖单一 `X-Forwarded-For={remote_host}` 和 `X-Forwarded-Proto=https`；Nginx 覆盖单一 `X-Forwarded-For=$remote_addr` 和 `X-Forwarded-Proto=$scheme`，不继承公网请求自带的伪造转发链。
+- 生产 `/api/bi/admin/*` 对缺失协议头、非 `https`、复合协议值及非可信来源伪造均返回 `426`；对缺失、无效或复合 `X-Forwarded-For` 返回 `503 MAINTENANCE_PROXY_MISCONFIGURED`，避免错误代理配置把全部维护者合并成同一个本机 IP。开发和测试环境保留本机 HTTP 调试。
+- 启用真实来源 IP 后，维护会话仍绑定用户 IP；网络出口变化会要求重新登录，这是安全取舍，不做前端绕过。
 
 ## 前端维护 Token
 
@@ -71,11 +80,13 @@
 2. `bun run typecheck`
 3. `bun run build`
 4. 涉及响应式关键流程时运行 `bun run test:e2e`
-5. 部署时保留 VPS 上的 `.env.local`
-6. 重启两个 systemd 服务和 Nginx
-7. 检查服务状态为 `active`
-8. 使用公网地址验证核心页面、API、访问日志和失败请求
-9. 更新模块文档、索引和时间线
+5. 部署时保留 VPS 上的 `.env.local`、凭证文件和工作区文件；确认 production 的 `HOST=127.0.0.1`、`PORT=3000`
+6. 先只读执行 `systemctl cat caddy`、`systemctl cat config-driven-bi-api`、`systemctl cat config-driven-bi-web` 和 `nginx -T`，确定各服务实际读取的配置路径；备份实际配置与数据，不根据文件名猜测安装位置
+7. 先对仓库候选执行 `caddy validate --config /opt/config-driven-bi-demo/deploy/config-driven-bi-Caddyfile --adapter caddyfile`；再把 Caddy、Nginx 和 systemd 候选安装到第 6 步确认的实际路径，并对安装后的 Caddyfile 再次 `caddy validate`、对安装后的 Nginx 配置执行 `nginx -t`
+8. 执行 `systemctl daemon-reload`，先重启 API/Web，再 reload Caddy/Nginx；检查服务均为 `active`。任一检查失败，恢复第 6 步备份并再次校验，不降级安全门禁
+9. 黑盒验证 HTTPS 管理请求正常；`http://<IP>:5178` 的管理 API 返回 426，域名 HTTP 如开放则只重定向 HTTPS；后端直连的缺协议头、缺客户端 IP、编码路径和伪造头均拒绝；同一来源会话有效、不同来源会话拒绝且登录锁定互不误伤
+10. 使用可轮换测试凭证验证候选仅检测、失败保旧和成功生效；不得用生产 Token 写入测试或日志
+11. 验证核心页面、普通 API、Caddy/Nginx 两类访问日志和回退入口后，更新模块文档、索引和时间线
 
 ## 当前性能
 
@@ -94,8 +105,8 @@
 
 ## 公网入口保护
 
-- `/api/` 按来源 IP 限制为每秒 10 个请求，突发上限 30。
-- API 响应设置 `Cache-Control: no-store`。
+- Nginx 的 HTTP `:5178` 入口对 `/api/` 按来源 IP 限制为每秒 10 个请求，突发上限 30；Caddy HTTPS 入口不继承该 Nginx 限流。数据源登录另有服务端连续失败锁定，其他 HTTPS API 的统一限流后续随正式身份/网关建设补齐。
+- Nginx 和目标 Caddy 配置均将 API 响应覆盖为 `Cache-Control: no-store`；管理命名空间还由 Fastify 自身设置同一响应头。
 - 页面和 API 均设置 CSP、`X-Content-Type-Options: nosniff`、`X-Frame-Options: SAMEORIGIN` 和 Referrer Policy。
 - 生产就绪检查使用 `/api/bi/ready`，同时验证工作区存储和上游读取。
 
@@ -103,8 +114,10 @@
 
 - 已为数据源维护建立 HTTPS 管理入口；原 IP:5178 普通访问尚未强制跳转 HTTPS。
 - 原 IP:5178 地址仍为 HTTP，只用于普通看板访问；Token 维护接口会返回 `426 HTTPS_REQUIRED`。维护人员必须使用 HTTPS 管理入口。
+- 仓库已固定可信 loopback 代理、生产 HTTPS 失败关闭、production 启动方式和 Caddy/Nginx 目标配置，但本批尚未部署；上线前仍须将 VPS 实际 Caddyfile 与仓库模板逐项对照并完成上述黑盒矩阵。
+- 本次代理收紧不迁移 Token 或工作区数据；API 重启会清除最长 30 分钟的内存维护会话，维护者重新登录即可。若上线后 HTTPS 被误判，应优先恢复 Caddy 直连和转发头，不得以恢复“缺头放行”作为长期回滚。
 - 工作区 PUT 接口尚未接入认证，正式开放前必须增加登录校验或至少限制可信网络。
-- 尚未建立持续执行的浏览器 E2E 测试套件。
+- 已建立本地浏览器 E2E，但尚未接入 CI 或生产发布流水线自动执行。
 
 ## 2026-07-22 Token 运维记录
 
