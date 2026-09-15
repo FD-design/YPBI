@@ -1,0 +1,10 @@
+.review-tools { display:grid; gap:16px; min-width:0; font-size:var(--font-size-body); }
+.review-tools :is(.topic-preview__notice,.dashboard-workbench__preview-note,.core-review__gate,.personal-preview-notice,.catalog-preview-notice) { display:flex; flex-direction:column; align-items:stretch; gap:16px; padding:0; margin:0; background:transparent; border:0; }
+.review-tools :is(.core-review__gate-actions,.topic-preview__controls,.acquisition-preview__modes,[role="group"]) { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.review-tools .core-review__gate-copy { display:grid; gap:8px; }
+.review-tools a { color:var(--color-brand-700); text-decoration:none; }
+.review-tools__gallery { display:inline-flex; align-items:center; gap:8px; justify-self:start; }
+.review-tools .core-review__gate-actions a { display:inline-flex; gap:8px; align-items:center; }
+.review-tools svg { width:16px; height:16px; }
+.review-tools .core-review__gate-actions button { padding:8px 12px; border:1px solid var(--color-border); border-radius:var(--radius-control); background:var(--color-surface); color:var(--color-text-1); font:inherit; }
+.review-tools .core-review__gate-actions button.is-active { color:var(--color-brand-700); background:var(--color-brand-050); border-color:var(--color-brand-600); }

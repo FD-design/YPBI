@@ -1,0 +1,23 @@
+.watching-diagnosis { padding:0 16px 16px; }
+.watching-diagnosis__bar { display:flex; height:12px; border-radius:var(--radius-control); overflow:hidden; margin:4px 0 16px; background:var(--color-surface-subtle); }
+.watching-diagnosis__segment.is-0, .watching-diagnosis__outcome.is-0 i { background:var(--color-text-3); }
+.watching-diagnosis__segment.is-1, .watching-diagnosis__outcome.is-1 i { background:var(--chart-series-3); }
+.watching-diagnosis__segment.is-2, .watching-diagnosis__outcome.is-2 i { background:var(--color-brand-600); }
+.watching-diagnosis__outcomes { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.watching-diagnosis__outcome { display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:12px; min-width:0; border:1px solid var(--color-border); background:var(--color-surface); color:var(--color-text-2); border-radius:var(--radius-control); cursor:pointer; font-size:13px; text-align:left; }
+.watching-diagnosis__outcome:hover { background:var(--color-surface-subtle); }
+.watching-diagnosis__outcome[aria-pressed="true"] { border-color:var(--color-brand-600); background:var(--color-brand-050); }
+.watching-diagnosis__outcome:focus-visible { outline:2px solid var(--color-brand-600); outline-offset:2px; }
+.watching-diagnosis__outcome > span:first-child { color:var(--color-text-1); font-size:14px; }
+.watching-diagnosis__outcome i { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; }
+.watching-diagnosis__outcome strong { font-size:24px; line-height:1.2; color:var(--color-text-1); }
+.watching-diagnosis__outcome small { font-size:12px; font-weight:400; }
+.watching-diagnosis__outcome strong small { margin-left:4px; }
+.watching-diagnosis__next { margin-top:16px; padding:12px 16px; background:var(--color-surface-subtle); border-radius:var(--radius-control); font-size:13px; color:var(--color-text-2); line-height:1.6; }
+.watching-diagnosis__next strong { color:var(--color-text-1); font-size:14px; }
+.watching-diagnosis__next p { margin:4px 0; }
+.watching-diagnosis__next nav { display:flex; flex-wrap:wrap; gap:8px 16px; margin:8px 0; }
+.watching-diagnosis__next a { color:var(--color-brand-600); }
+.watching-diagnosis__next small { font-size:12px; }
+.watching-diagnosis__empty { padding:24px 16px; background:var(--color-surface-subtle); font-size:13px; color:var(--color-text-2); }
+@media(max-width:600px) { .watching-diagnosis__outcomes { grid-template-columns:1fr; } .watching-diagnosis { padding:0 12px 12px; } }

@@ -1,0 +1,4 @@
+.data-origin-badge { display:inline-flex; align-items:center; flex:none; vertical-align:middle; min-height:20px; margin-left:6px; padding:1px 6px; border:1px solid var(--color-warning-border, #f0d5a0); border-radius:4px; color:var(--color-warning); background:var(--color-warning-bg); font-size:var(--font-size-caption); font-weight:var(--font-weight-regular); line-height:1.4; white-space:nowrap; }
+.dashboard-panel__title-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.data-origin-badge--pending { color:#2455bd; background:#edf4ff; border-color:#bfd5fb; }
+.data-origin-badge--demo { color:#975300; background:#fff7e8; border-color:#f0d5a0; }

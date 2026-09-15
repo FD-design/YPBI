@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "metric-release-admission/v1",
+  "snapshot": {
+    "path": "server/v2/generated/metric-definitions.json",
+    "contentSha256": "647e7b924fdee91e3b89a06a36b22b91825996cac5f21d2926e81a60d214b1ee"
+  },
+  "registry": {
+    "path": "server/v2/config/metric-mapping-registry.v1.json",
+    "contentSha256": "fbcf4f7e830a871bd1cc1360d69f0d2af326e1b9c97824a29fb51680c015e5d9"
+  },
+  "platformCatalog": {
+    "path": "server/platforms/platform-catalog.v1.json",
+    "contentSha256": "d7a00b2f9da75091aadace7c5e439b744c30072f7602ed55a32b3fa8a4581dc1"
+  },
+  "validationArtifacts": []
+}

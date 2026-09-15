@@ -1,0 +1,6390 @@
+{
+  "snapshot": {
+    "schemaVersion": "metric-catalog/v1",
+    "authorityDocument": "全站指标体系.md",
+    "authorityVersion": "v0.24-draft",
+    "mappingRegistryVersion": "2026-09-08.1",
+    "authorityStatus": "开发现状对照版，供产品与开发核对；建议定义尚未替换现有后台口径",
+    "sourceUpdatedOn": "2026-09-11",
+    "sourceSha256": "f13c63a42a68b873145d13fa0ee7aa3a61a8fb4be361f2ba67257ecd8c95180c",
+    "counts": {
+      "standard": 98,
+      "periodDerived": 3,
+      "total": 101
+    },
+    "contentSha256": "64740da20021dbac8e5b1d3ec5f5f1ac928859e8c593cd46c5715b391d6ce794"
+  },
+  "categories": [
+    {
+      "name": "用户生命周期",
+      "order": 0,
+      "children": [
+        {
+          "name": "落地页与下载意向",
+          "order": 0
+        },
+        {
+          "name": "获客转化",
+          "order": 1
+        },
+        {
+          "name": "新增规模与质量",
+          "order": 2
+        },
+        {
+          "name": "首次激活",
+          "order": 3
+        },
+        {
+          "name": "活跃规模",
+          "order": 4
+        },
+        {
+          "name": "留存与再激活",
+          "order": 5
+        }
+      ]
+    },
+    {
+      "name": "内容消费与互动",
+      "order": 1,
+      "children": [
+        {
+          "name": "观影规模与转化",
+          "order": 0
+        },
+        {
+          "name": "播放链路与质量",
+          "order": 1
+        },
+        {
+          "name": "有效观影与留存",
+          "order": 2
+        },
+        {
+          "name": "内容发现与搜索",
+          "order": 3
+        },
+        {
+          "name": "内容互动与社区",
+          "order": 4
+        }
+      ]
+    },
+    {
+      "name": "商业变现",
+      "order": 2,
+      "children": [
+        {
+          "name": "广告交付与转化",
+          "order": 0
+        },
+        {
+          "name": "付费规模与复购",
+          "order": 1
+        },
+        {
+          "name": "付费转化与用户价值",
+          "order": 2
+        },
+        {
+          "name": "会员引导与付费墙",
+          "order": 3
+        },
+        {
+          "name": "支付链路与到账质量",
+          "order": 4
+        }
+      ]
+    },
+    {
+      "name": "运营玩法",
+      "order": 3,
+      "children": [
+        {
+          "name": "签到、任务与福利",
+          "order": 0
+        },
+        {
+          "name": "分享邀请",
+          "order": 1
+        }
+      ]
+    },
+    {
+      "name": "产品体验",
+      "order": 4,
+      "children": [
+        {
+          "name": "启动体验",
+          "order": 0
+        },
+        {
+          "name": "全局导航",
+          "order": 1
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "id": "M001",
+      "kind": "standard",
+      "code": "landing_page_pv",
+      "name": "落地页访问次数",
+      "order": 0,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "落地页与下载意向",
+        "primaryOrder": 0,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "落地页产生的有效页面浏览次数，刷新和重新进入均重新计数",
+        "developmentFormula": "有效落地页访问记录数",
+        "registeredFormula": "有效落地页访问记录数",
+        "deduplication": "重复上报不重复计算；同一用户的多次真实访问分别计数",
+        "windowAndGrain": "业务日、渠道、下载目标、PID",
+        "dataSource": "现有落地页服务或后台访问日志",
+        "exclusions": "机器人、预览、内部流量、重复发送",
+        "knownIssues": "当前正式埋点未登记外部落地页浏览事件，不能用站内 page_view 自动替代",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M002",
+      "kind": "standard",
+      "code": "landing_page_ip_uv",
+      "name": "落地页访问IP数（去重）",
+      "order": 1,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "落地页与下载意向",
+        "primaryOrder": 0,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "统计周期内访问落地页的去重 IP 数量，作为访客规模的历史代理",
+        "developmentFormula": "统计周期内访问落地页的不同 IP 数",
+        "registeredFormula": "统计周期内访问落地页的不同 IP 数",
+        "deduplication": "同一 IP 每个业务日只计一次",
+        "windowAndGrain": "业务日、渠道、下载目标、PID",
+        "dataSource": "现有落地页服务",
+        "exclusions": "无 IP、非人工流量",
+        "knownIssues": "共享网络会合并多人，换 IP 会拆分同一人；新埋点明确不采集 ip_hash",
+        "recommendedDefinition": "作为历史“访客数”代理使用，不解释为真实去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M003",
+      "kind": "standard",
+      "code": "landing_download_click_count",
+      "name": "落地页下载点击次数",
+      "order": 2,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "落地页与下载意向",
+        "primaryOrder": 0,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "用户点击落地页下载按钮的总次数",
+        "developmentFormula": "下载按钮点击记录数",
+        "registeredFormula": "下载按钮点击记录数",
+        "deduplication": "每次真实点击都计一次；重复日志不重复计算",
+        "windowAndGrain": "业务日、渠道、下载目标（Android / iOS / App Store）、PID",
+        "dataSource": "现有落地页日志；未来 landing_page_action_click 的下载目标字段",
+        "exclusions": "自动跳转、脚本唤起、预加载、非下载区域点击",
+        "knownIssues": "点击只代表下载意图，不代表下载或安装完成",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M095",
+      "kind": "standard",
+      "code": "landing_download_ip_uv",
+      "name": "落地页下载IP数（去重）",
+      "order": 3,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "落地页与下载意向",
+        "primaryOrder": 0,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台按统计日、下载目标分别对发生下载点击的 IP 去重后相加；同一 IP 跨目标或跨天可能重复。",
+        "developmentFormula": "各下载目标的下载点击 IP 按业务日去重后相加",
+        "registeredFormula": "各下载目标的下载点击 IP 按业务日去重后相加",
+        "deduplication": "同一 IP、同一下载目标每天只计一次；跨目标或跨天分别计数",
+        "windowAndGrain": "业务日、渠道、下载目标、PID",
+        "dataSource": "现有落地页下载日志",
+        "exclusions": "无 IP、机器人、脚本触发、预览与内部流量",
+        "knownIssues": "IP 只能作为下载意图的历史代理；共享网络会合并多人，换 IP 或跨下载目标会拆分同一人",
+        "recommendedDefinition": "作为历史去重下载意图代理使用，不命名为下载用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M005",
+      "kind": "standard",
+      "code": "landing_visit_download_rate",
+      "name": "访问-下载点击转化率",
+      "order": 4,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "获客转化",
+        "primaryOrder": 0,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "落地页访问次数中产生下载点击的次数比例，现有口径不做 IP 或用户去重",
+        "developmentFormula": "落地页下载点击次数 ÷ 落地页访问次数",
+        "registeredFormula": "落地页下载点击次数 ÷ 落地页访问次数",
+        "deduplication": "访问与下载点击分别按真实业务事实计数，只去除重复日志",
+        "windowAndGrain": "同一业务日、渠道、下载目标、PID",
+        "dataSource": "现有落地页访问与下载日志",
+        "exclusions": "非人工流量、测试流量、重复日志",
+        "knownIssues": "同一次访问可能点击多次，结果可能超过 100%；不能解释为去重访客转化",
+        "recommendedDefinition": "保留现有次数口径，并与去重版转化率分开呈现",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M099",
+      "kind": "standard",
+      "code": "landing_visit_download_ip_rate",
+      "name": "访问-下载点击转化率（去重）",
+      "order": 5,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "获客转化",
+        "primaryOrder": 0,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台具备落地页访问 IP 与下载点击 IP 统计，但去重转化率尚未作为独立统一指标登记。",
+        "developmentFormula": "落地页下载IP数（去重） ÷ 落地页访问IP数（去重）",
+        "registeredFormula": "落地页下载IP数（去重） ÷ 落地页访问IP数（去重）",
+        "deduplication": "同一 IP、同一下载目标在每个业务日的访问和下载点击分别只计一次",
+        "windowAndGrain": "同一业务日、渠道、下载目标、PID",
+        "dataSource": "M095 落地页下载IP数（去重）、M002 落地页访问IP数（去重）",
+        "exclusions": "无 IP、机器人、脚本触发、预览、内部与测试流量",
+        "knownIssues": "IP 是访客代理，同一人换 IP 或多人共享 IP 均会影响结果；跨天结果不能直接当作区间用户转化",
+        "recommendedDefinition": "同一范围内，按 IP 去重后的落地页访客中产生下载点击意图的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M006",
+      "kind": "standard",
+      "code": "landing_download_register_rate",
+      "name": "下载点击-注册转化率",
+      "order": 6,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "获客转化",
+        "primaryOrder": 0,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "下载访问后形成注册的转化趋势",
+        "developmentFormula": "注册用户数区间排重 ÷ 总下载IP·天合计",
+        "registeredFormula": "注册用户数区间排重 ÷ 总下载IP·天合计",
+        "deduplication": "注册用户在整个统计周期只计一次；下载点击 IP 按天去重",
+        "windowAndGrain": "查询区间、渠道",
+        "dataSource": "注册事实与落地页下载日志",
+        "exclusions": "测试账号、机器人",
+        "knownIssues": "分子分母主体和去重窗口不一致，只能看趋势，不能作为精确漏斗",
+        "recommendedDefinition": "保留现有趋势指标；精准漏斗需新的合规跨端归因键后另立口径",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M007",
+      "kind": "standard",
+      "code": "landing_visit_register_rate",
+      "name": "访问-注册转化率",
+      "order": 7,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "获客转化",
+        "primaryOrder": 0,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "获客与渠道",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "落地页访问后形成注册的转化趋势",
+        "developmentFormula": "注册用户数区间排重 ÷ 落地页访问IP·天合计",
+        "registeredFormula": "注册用户数区间排重 ÷ 落地页访问IP·天合计",
+        "deduplication": "注册用户在整个统计周期只计一次；落地页访问 IP 按天去重",
+        "windowAndGrain": "查询区间、渠道",
+        "dataSource": "注册事实与落地页访问日志",
+        "exclusions": "测试账号、非human",
+        "knownIssues": "去重口径不对称且没有用户级归因，只能看趋势",
+        "recommendedDefinition": "保留现有趋势指标并增加“不可用于精确归因”标签",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M008",
+      "kind": "standard",
+      "code": "new_user_count",
+      "name": "新增用户数",
+      "order": 8,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "新增规模与质量",
+        "primaryOrder": 0,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "新增与注册",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "页面一、页面二按当天新建账号的 uid 去重；渠道统计页按注册事件数；Android / iOS 分端还存在“登录人数减老用户登录人数”和“按 UA 统计注册事件”两种实现。",
+        "developmentFormula": "页面一、二：当天新建账号按账号去重；渠道统计：注册记录数；Android / iOS：端登录人数－端老用户登录人数，或按终端类型统计注册记录数。",
+        "registeredFormula": "当日新建账号按 uid 去重",
+        "deduplication": "同一账号在注册当天只计一次",
+        "windowAndGrain": "业务日、渠道、PID；按 Android / iOS / App Store 下载目标与自然新增 / 内部导量获客类型查看",
+        "dataSource": "账号注册事实与获客归因结果",
+        "exclusions": "测试账号、机器人、重复回调",
+        "knownIssues": "部分后台页面使用注册事件数或登录差值代替新增，不能与本指标混用；App Store 是下载目标或获客归因，不是平台枚举",
+        "recommendedDefinition": "统一将“新增用户数”限定为账号注册事实去重人数，其他口径改用独立名称",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M011",
+      "kind": "standard",
+      "code": "deducted_new_user_count",
+      "name": "新增用户数（扣后）",
+      "order": 9,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "新增规模与质量",
+        "primaryOrder": 0,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "新增与注册",
+        "metricType": "经营结算",
+        "metricLevel": "核心",
+        "definition": "按渠道结算扣量规则保留的新增量",
+        "developmentFormula": "每30分钟切片：扣前新增 × 保留比例后向上取整，再汇总",
+        "registeredFormula": "每30分钟切片：扣前新增 × 保留比例后向上取整，再汇总",
+        "deduplication": "同一用户每天只计一次",
+        "windowAndGrain": "业务日、渠道、合作方式",
+        "dataSource": "渠道新增与扣量配置",
+        "exclusions": "无扣量配置的渠道",
+        "knownIssues": "不是产品真实新增，不能进入产品增长与留存分母",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M009",
+      "kind": "standard",
+      "code": "anonymous_first_open_count",
+      "name": "匿名首开次数",
+      "order": 10,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "新增规模与质量",
+        "primaryOrder": 0,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "新增与注册",
+        "metricType": "数据质量",
+        "metricLevel": "诊断",
+        "definition": "无Token匿名登录或首次打开请求次数",
+        "developmentFormula": "匿名首开请求记录数",
+        "registeredFormula": "匿名首开请求记录数",
+        "deduplication": "每次匿名首开请求都计一次",
+        "windowAndGrain": "业务日、渠道、平台",
+        "dataSource": "现有匿名登录日志",
+        "exclusions": "明确识别的测试请求",
+        "knownIssues": "清缓存、重装或重复请求均会增加，不是新增用户数",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M010",
+      "kind": "standard",
+      "code": "new_user_dedup_rate",
+      "name": "新用户排重率",
+      "order": 11,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "新增规模与质量",
+        "primaryOrder": 0,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "新增与注册",
+        "metricType": "数据质量",
+        "metricLevel": "诊断",
+        "definition": "匿名首开中最终形成真实新增账号的比例",
+        "developmentFormula": "新增用户数 ÷ 匿名首开次数",
+        "registeredFormula": "新增用户数 ÷ 匿名首开次数",
+        "deduplication": "新增账号按用户每天去重；匿名首开按发生次数统计",
+        "windowAndGrain": "业务日、渠道、平台",
+        "dataSource": "注册事实与匿名首开日志",
+        "exclusions": "测试流量",
+        "knownIssues": "名称像去重比例，实质更接近首开转注册且分子分母主体不同",
+        "recommendedDefinition": "保留当前名称作为历史别名；产品展示名建议改为“首开有效新增率”",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M033",
+      "kind": "standard",
+      "code": "first_video_page_reach_rate",
+      "name": "首个视频页到达率",
+      "order": 12,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "首次激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "首次体验",
+        "metricType": "技术质量",
+        "metricLevel": "过程",
+        "definition": "Notion 技术字典未登记；其他现有资料显示后台已有同名或近似指标，但尚未提供可核对的统一技术定义。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "首次体验内到达视频页人数 ÷ 启动成功人数",
+        "deduplication": "同一首次启动用户只计一次",
+        "windowAndGrain": "首次体验窗口",
+        "dataSource": "技术方案写 page_load_result + page_view；当前埋点有 launch_result + page_view",
+        "exclusions": "非视频业务页、重复页面到达",
+        "knownIssues": "技术方案依赖当前埋点未登记的 page_load_result",
+        "recommendedDefinition": "首次启动成功用户中到达首个视频业务页面的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M037",
+      "kind": "standard",
+      "code": "new_user_effective_view_rate",
+      "name": "新增用户-有效观影转化率",
+      "order": 13,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "首次激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "首次体验",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "新增用户有效观影人数 ÷ 新增用户数",
+        "deduplication": "同一新增用户只计一次",
+        "windowAndGrain": "注册Cohort的首次体验窗口、规则版本",
+        "dataSource": "新增用户事实、首次体验窗口、有效观看加工",
+        "exclusions": "老用户、窗口外观看、未成熟Cohort",
+        "knownIssues": "当前技术参考口径使用旧身份字段",
+        "recommendedDefinition": "新增用户中，在首次体验阶段至少完成一次有效观看的用户比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M038",
+      "kind": "standard",
+      "code": "second_effective_view_user_count",
+      "name": "二次有效观看用户数",
+      "order": 14,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "首次激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "首次体验",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "首次体验窗口内 session_effective_play_seq>=2 的去重用户数",
+        "deduplication": "同一新增用户只计一次；同一次播放尝试不重复计算",
+        "windowAndGrain": "新用户首次体验窗口、规则版本",
+        "dataSource": "有效观看序号、首次体验窗口",
+        "exclusions": "同一播放重复记录、窗口外播放",
+        "knownIssues": "“首个Session”与当前 app_launch 触发规则不能简单等同",
+        "recommendedDefinition": "首次体验阶段内完成至少两次不同有效观看的新用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M016",
+      "kind": "standard",
+      "code": "daily_active_user_count",
+      "name": "日活跃用户数",
+      "order": 15,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "活跃规模",
+        "primaryOrder": 0,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "用户行为",
+        "metricLevel": "核心",
+        "definition": "当天打开并登录产品的去重用户数",
+        "developmentFormula": "当天登录账号去重",
+        "registeredFormula": "当天登录 uid 去重",
+        "deduplication": "同一用户每天只计一次",
+        "windowAndGrain": "业务日、渠道、PID；按 Android / iOS 与新用户 / 老用户查看",
+        "dataSource": "现有登录日志与用户注册日快照",
+        "exclusions": "测试账号、机器人",
+        "knownIssues": "多天直接相加会把同一用户重复计算；且未登录使用者不进入该口径",
+        "recommendedDefinition": "保留“登录DAU”；新老用户按统计业务日判断，二者合计应与同范围日活一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "stale",
+        "mappingVersion": "m016-pday-sum-v1",
+        "authorityVersion": "v0.23-draft",
+        "sourceApiIds": [
+          "/api/admin/statistics/pDaySum"
+        ],
+        "capabilities": {
+          "grains": [
+            "day"
+          ],
+          "platformModes": [
+            "single_pid"
+          ],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_stale"
+        ]
+      }
+    },
+    {
+      "id": "M018",
+      "kind": "standard",
+      "code": "monthly_active_user_count",
+      "name": "月活跃用户数",
+      "order": 16,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "活跃规模",
+        "primaryOrder": 0,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "用户行为",
+        "metricLevel": "核心",
+        "definition": "月度区间内至少活跃一次的去重用户数",
+        "developmentFormula": "自然月内登录过的不同账号数",
+        "registeredFormula": "自然月内登录过的不同 uid 数",
+        "deduplication": "同一用户每个自然月只计一次",
+        "windowAndGrain": "自然月、平台、PID",
+        "dataSource": "现有登录日志",
+        "exclusions": "测试账号",
+        "knownIssues": "现有T+1且不含当天；与登录DAU同样不包含匿名使用",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M115",
+      "kind": "standard",
+      "code": "registration_retained_user_count",
+      "name": "注册留存用户数",
+      "order": 17,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "过程",
+        "definition": "逸品日报分别提供次留登录人数、3留登录人数和7留登录人数，表示对应注册批次在目标日登录的人数；当前日报未展示D30留存人数。",
+        "developmentFormula": "D1、D3或D7目标日登录人数",
+        "registeredFormula": "D0注册用户中，在所选D+N业务日再次登录的去重用户数",
+        "deduplication": "同一注册批次、同一留存周期内，同一用户只计一次",
+        "windowAndGrain": "D0至D+N；按注册批次和 D1 / D3 / D7 / D30 留存周期统计，可按 D0 Android / iOS 平台及自然新增 / 内部导量获客类型查看，目标日允许跨平台",
+        "dataSource": "注册、登录与D0获客归因事实；逸品日报09月10号新",
+        "exclusions": "未成熟注册批次、测试账号、重复登录",
+        "knownIssues": "当前日报把未成熟日期显示为0，无法区分“尚未到观察日”和“成熟后无人留存”；D30人数的现有支持状态还需核对",
+        "recommendedDefinition": "某一注册批次中，在指定第N个业务日再次登录的去重用户数；D1、D3、D7和D30作为留存周期查看，不为每个周期复制基础指标",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M020",
+      "kind": "standard",
+      "code": "registration_d1_retention_rate",
+      "name": "注册用户D1留存率",
+      "order": 18,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "某日注册用户中第 2 天登录的人数占该日注册人数的比例；汇总卡片按各注册批次留存人数之和除以注册人数之和计算。",
+        "developmentFormula": "D1登录的D0注册用户数 ÷ D0注册用户数",
+        "registeredFormula": "D1登录的D0注册用户数 ÷ D0注册用户数",
+        "deduplication": "同一注册批次内，同一用户只计一次",
+        "windowAndGrain": "D0与D1业务日；加权汇总；按 D0 Android / iOS 平台及自然新增 / 内部导量获客类型拆分，D1 回访允许跨平台",
+        "dataSource": "注册、登录与 D0 获客归因事实",
+        "exclusions": "未成熟Cohort、测试账号",
+        "knownIssues": "后台“次日”有时写作第2天，需固定D1定义",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M021",
+      "kind": "standard",
+      "code": "registration_d3_retention_rate",
+      "name": "注册用户D3留存率",
+      "order": 19,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "某日注册用户中第 3 天登录的人数占该日注册人数的比例；汇总卡片使用成熟注册批次的加权口径。",
+        "developmentFormula": "D3登录的D0注册用户数 ÷ D0注册用户数",
+        "registeredFormula": "D3登录的D0注册用户数 ÷ D0注册用户数",
+        "deduplication": "同一注册批次内，同一用户只计一次",
+        "windowAndGrain": "D0至D3；加权汇总；按 D0 Android / iOS 平台及自然新增 / 内部导量获客类型拆分，D3 回访允许跨平台",
+        "dataSource": "注册、登录与 D0 获客归因事实",
+        "exclusions": "未成熟Cohort",
+        "knownIssues": "现有页面有小数和百分比两种显示格式",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M022",
+      "kind": "standard",
+      "code": "registration_d7_retention_rate",
+      "name": "注册用户D7留存率",
+      "order": 20,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "某日注册用户中第 7 天登录的人数占该日注册人数的比例；汇总卡片使用成熟注册批次的加权口径。",
+        "developmentFormula": "D7登录的D0注册用户数 ÷ D0注册用户数",
+        "registeredFormula": "D7登录的D0注册用户数 ÷ D0注册用户数",
+        "deduplication": "同一注册批次内，同一用户只计一次",
+        "windowAndGrain": "D0至D7；加权汇总；按 D0 Android / iOS 平台及自然新增 / 内部导量获客类型拆分，D7 回访允许跨平台",
+        "dataSource": "注册、登录与 D0 获客归因事实",
+        "exclusions": "未成熟Cohort",
+        "knownIssues": "同上",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M023",
+      "kind": "standard",
+      "code": "registration_d30_retention_rate",
+      "name": "注册用户D30留存率",
+      "order": 21,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "某日注册用户中第 30 天登录的人数占该日注册人数的比例；只对已成熟注册批次计算加权结果。",
+        "developmentFormula": "D30登录的D0注册用户数 ÷ D0注册用户数",
+        "registeredFormula": "D30登录的D0注册用户数 ÷ D0注册用户数",
+        "deduplication": "同一注册批次内，同一用户只计一次",
+        "windowAndGrain": "D0至D30；加权汇总；按 D0 Android / iOS 平台及自然新增 / 内部导量获客类型拆分，D30 回访允许跨平台",
+        "dataSource": "注册、登录与 D0 获客归因事实",
+        "exclusions": "未成熟Cohort",
+        "knownIssues": "数据成熟慢，不能把观察中补0",
+        "recommendedDefinition": "增加Cohort成熟状态后再进入汇总",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M024",
+      "kind": "standard",
+      "code": "existing_user_next_day_return_rate",
+      "name": "存量用户次日复访率",
+      "order": 22,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "注册满2天的当日活跃用户中次日仍活跃的比例",
+        "developmentFormula": "次日仍活跃的老用户数 ÷ 当日日活跃用户数（老用户）",
+        "registeredFormula": "次日仍活跃的老用户数 ÷ 当日日活跃用户数（老用户）",
+        "deduplication": "同一用户每天只计一次",
+        "windowAndGrain": "连续两个业务日；T+2",
+        "dataSource": "登录与注册事实",
+        "exclusions": "当日新增用户、未成熟数据",
+        "knownIssues": "不能与新用户注册留存直接比较",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M100",
+      "kind": "standard",
+      "code": "reactivation_48h_rate",
+      "name": "48小时再次激活率",
+      "order": 23,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "诊断",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "48小时内再激活成功人数 ÷ 首次体验失败人数",
+        "deduplication": "同一首次体验失败用户只计一次；在窗口内首次完成有效观看时计为成功",
+        "windowAndGrain": "首次体验结束后滚动48小时，加迟到缓冲",
+        "dataSource": "首次体验状态、回访会话、有效观看加工",
+        "exclusions": "观察中窗口、48小时外激活、未进入失败人群",
+        "knownIssues": "与72小时口径使用同一失败人群和有效观看标准，只缩短观察窗口",
+        "recommendedDefinition": "首次体验失败用户中，结束后48小时内再次进入产品并完成有效观看的用户比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M025",
+      "kind": "standard",
+      "code": "reactivation_72h_rate",
+      "name": "72小时再次激活率",
+      "order": 24,
+      "classification": {
+        "primary": "用户生命周期",
+        "secondary": "留存与再激活",
+        "primaryOrder": 0,
+        "secondaryOrder": 5
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "活跃与留存",
+        "metricType": "业务结果",
+        "metricLevel": "诊断",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "再激活成功人数 ÷ 首次体验失败人数",
+        "deduplication": "同一首次体验失败用户只计一次",
+        "windowAndGrain": "首次体验结束后滚动72小时，加迟到缓冲",
+        "dataSource": "首次体验状态、回访会话、有效观看加工",
+        "exclusions": "观察中窗口、72小时外激活",
+        "knownIssues": "依赖首次体验与有效观看规则版本，当前没有正式生产结果",
+        "recommendedDefinition": "首次体验失败用户中，结束后72小时内再次进入产品并完成有效观看的用户比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M026",
+      "kind": "standard",
+      "code": "viewer_user_count",
+      "name": "观影用户数",
+      "order": 25,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "观影规模与转化",
+        "primaryOrder": 1,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "核心",
+        "definition": "统计日内有过视频播放行为的去重用户数",
+        "developmentFormula": "播放上报用户按日去重",
+        "registeredFormula": "发起过合法视频播放尝试的用户按业务日去重",
+        "deduplication": "同一用户在同一业务日最多计一次；同一播放尝试的重复上报不重复计算；跨业务日分别计数",
+        "windowAndGrain": "业务日、渠道、PID、平台、视频类型；按 Android / iOS、自然新增 / 内部导量、新用户 / 老用户查看",
+        "dataSource": "现有播放日志与用户归因、用户阶段结果；待播放器埋点正式上线并完成双跑验数后，以 video_play_start 作为统一播放尝试来源",
+        "exclusions": "预加载、重复开始、测试流量、非人工流量、身份缺失、非视频内容",
+        "knownIssues": "现有“播放上报”与 video_play_start 尚未完成同源验数；多日逐日相加得到 DM002 累计观影人天，不等于查询区间去重观影用户数",
+        "recommendedDefinition": "统计业务日内至少一次进入播放器并发起视频加载的去重用户数；不论首帧是否成功，也不要求达到有效观看标准",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M101",
+      "kind": "standard",
+      "code": "play_attempt_count",
+      "name": "观影次数",
+      "order": 26,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "观影规模与转化",
+        "primaryOrder": 1,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "合法视频播放尝试数",
+        "deduplication": "同一次播放尝试只计一次；重复开始记录不重复计算",
+        "windowAndGrain": "业务日、渠道、PID、视频；按 Android / iOS、自然新增 / 内部导量、新用户 / 老用户查看",
+        "dataSource": "video_play_start",
+        "exclusions": "预加载、重复开始、测试流量、非视频内容",
+        "knownIssues": "不要求首帧成功，不能与起播次数或有效观看次数混用",
+        "recommendedDefinition": "用户发起的合法视频播放尝试次数，不论后续首帧是否成功",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M102",
+      "kind": "standard",
+      "code": "total_watch_duration_ms",
+      "name": "观影总时长",
+      "order": 27,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "观影规模与转化",
+        "primaryOrder": 1,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记独立统一指标。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "合格观看记录的实际前台观看时长求和",
+        "deduplication": "相同观看记录不重复累计；同一播放的多段前台时长可以累加",
+        "windowAndGrain": "业务日、渠道、PID、视频；按 Android / iOS、自然新增 / 内部导量、新用户 / 老用户查看",
+        "dataSource": "video_watch_stay.watch_duration_ms",
+        "exclusions": "暂停、缓冲、进入后台的时间，重复记录，测试流量",
+        "knownIssues": "底层统一使用毫秒，展示时按需要转换为秒、分钟或小时",
+        "recommendedDefinition": "统计窗口内全部合格观看记录产生的实际前台观看时长总和",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M098",
+      "kind": "standard",
+      "code": "viewer_avg_watch_duration_ms",
+      "name": "观影用户人均观影时长",
+      "order": 28,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "观影规模与转化",
+        "primaryOrder": 1,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "诊断",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "统计窗口内全部合格 video_watch_stay.watch_duration_ms 之和 ÷ M026 观影用户数",
+        "deduplication": "相同观看记录不重复累计；同一观影用户在统计窗口内只计一次；只有播放尝试但没有合格观看时长的观影用户以 0 时长进入分母",
+        "windowAndGrain": "业务日、渠道、PID、视频；按 Android / iOS、自然新增 / 内部导量、新用户 / 老用户查看",
+        "dataSource": "M026 观影用户数、video_watch_stay",
+        "exclusions": "暂停、缓冲、进入后台的时间，重复观看记录，测试流量，身份缺失，分母为0",
+        "knownIssues": "底层统一使用毫秒，展示时转换为秒或分钟；不限定新增用户，不要求达到有效观看标准",
+        "recommendedDefinition": "统计窗口内，每名至少发生过一次视频播放的观影用户平均产生的实际前台观看时长",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M081",
+      "kind": "standard",
+      "code": "active_user_view_rate",
+      "name": "活跃用户观影率",
+      "order": 29,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "观影规模与转化",
+        "primaryOrder": 1,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "Notion 技术字典未登记；其他现有资料显示后台已有同名或近似指标，但尚未提供可核对的统一技术定义。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "观影用户数 ÷ 日活跃用户数",
+        "deduplication": "观影用户和活跃用户均按同一用户、同一天去重",
+        "windowAndGrain": "业务日、渠道、PID；按 Android / iOS、自然新增 / 内部导量、新用户 / 老用户查看",
+        "dataSource": "现有播放日志与登录活跃事实；新体系对应播放开始与日活加工",
+        "exclusions": "测试账号、机器人、身份缺失",
+        "knownIssues": "日报“总观影率”是否使用同一登录 DAU 分母仍需验数",
+        "recommendedDefinition": "当天活跃用户中至少发起过一次视频播放的用户比例；这里只衡量是否进入观影，不代表首帧成功或有效观看",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M103",
+      "kind": "standard",
+      "code": "active_user_start_rate",
+      "name": "活跃用户起播率",
+      "order": 30,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "观影规模与转化",
+        "primaryOrder": 1,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "M030 起播用户数 ÷ M016 日活跃用户数",
+        "deduplication": "起播用户和活跃用户均按同一用户、同一业务日去重",
+        "windowAndGrain": "业务日、渠道、PID、平台、视频类型",
+        "dataSource": "M030 起播用户数、M016 日活跃用户数",
+        "exclusions": "测试账号、机器人、身份缺失、分母为0",
+        "knownIssues": "这是用户级进入播放结果指标，不替代按播放尝试计算的 M031 起播率",
+        "recommendedDefinition": "当天活跃用户中至少成功显示一次视频首帧的用户比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M030",
+      "kind": "standard",
+      "code": "play_success_user_count",
+      "name": "起播用户数",
+      "order": 31,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "播放链路与质量",
+        "primaryOrder": 1,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "video_play_result.result_status=success 的用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "查询周期、渠道、PID、平台、视频类型",
+        "dataSource": "video_play_result，通过 source_event_id 回指播放开始",
+        "exclusions": "只有开始无结果、重复结果",
+        "knownIssues": "技术参考文档仍以 operation_id 关联",
+        "recommendedDefinition": "至少有一次播放结果成功并真实出现首帧的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M097",
+      "kind": "standard",
+      "code": "video_play_success_count",
+      "name": "起播次数",
+      "order": 32,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "播放链路与质量",
+        "primaryOrder": 1,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "COUNT(DISTINCT video_play_start.event_id)，条件为关联的 video_play_result.result_status=success",
+        "deduplication": "同一次播放尝试最多计1次；相同播放事实的重试结果不重复计算",
+        "windowAndGrain": "业务日、平台、PID、渠道、视频ID、视频类型、内容分类、来源页面、来源列表",
+        "dataSource": "video_play_start、video_play_result",
+        "exclusions": "未成功出现首帧、缺少关联结果、重复上报、终态未成熟、测试流量",
+        "knownIssues": "查询别名保留“视频播放次数”；不把内容接口中含义未验证的累计观看量直接视为本指标",
+        "recommendedDefinition": "视频播放尝试已经成功完成首帧播放的次数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M083",
+      "kind": "standard",
+      "code": "play_request_rate",
+      "name": "播放发起率",
+      "order": 33,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "播放链路与质量",
+        "primaryOrder": 1,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "由点击直接触发的 video_play_start 次数 ÷ 可进入播放的 video_content_click 次数",
+        "deduplication": "同一次点击和由其触发的播放开始各只计一次",
+        "windowAndGrain": "业务日、页面、列表、视频类型、平台、PID",
+        "dataSource": "video_content_click、video_play_start",
+        "exclusions": "自动播放、恢复播放、用户重试、预加载、不可进入播放器的点击",
+        "knownIssues": "仅统计 play_trigger_type=user_click；自动播放没有点击分母，不能并入该比率",
+        "recommendedDefinition": "用户点击视频后，不论后续成功或失败，播放器实际接收到有效播放指令并开始加载媒体的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M031",
+      "kind": "standard",
+      "code": "play_success_rate",
+      "name": "起播率",
+      "order": 34,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "播放链路与质量",
+        "primaryOrder": 1,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "技术质量",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "video_play_result.result_status=success 的播放尝试数 ÷ 成熟窗口内有效 video_play_start 次数",
+        "deduplication": "同一次播放尝试只计一次；重复结果不重复计算",
+        "windowAndGrain": "同业务日、渠道、平台、视频类型、触发方式、播放模式",
+        "dataSource": "video_play_start、video_play_result",
+        "exclusions": "预加载、重复开始或结果、仍在终态等待窗口内的尝试",
+        "knownIssues": "历史后台可能按用户计算播放成功率，与本次按尝试计算的起播率不可直接拼接",
+        "recommendedDefinition": "有效播放尝试中成功渲染第一帧画面的比例；本指标就是标准化后的“播放成功率”",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M032",
+      "kind": "standard",
+      "code": "first_frame_duration_ms",
+      "name": "首帧耗时",
+      "order": 35,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "播放链路与质量",
+        "primaryOrder": 1,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "技术质量",
+        "metricLevel": "护栏",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "成功播放结果的 first_frame_duration_ms 分位数",
+        "deduplication": "同一次播放尝试只计一次，不按用户去重",
+        "windowAndGrain": "业务日、平台、版本、网络、视频类型",
+        "dataSource": "video_play_result.first_frame_duration_ms",
+        "exclusions": "失败播放、缺失耗时",
+        "knownIssues": "只看平均值会掩盖长尾",
+        "recommendedDefinition": "从有效播放开始到首帧成功渲染的耗时分布",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M034",
+      "kind": "standard",
+      "code": "effective_play_count",
+      "name": "有效观看次数",
+      "order": 36,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "有效观影与留存",
+        "primaryOrder": 1,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "COUNT(DISTINCT video_play_start.event_id)，条件为 result_status=success 且（watch_duration_ms>=15000，或 0<video_duration_ms<15000 且 watch_end_reason=completed）",
+        "deduplication": "同一次播放尝试最多计为一次有效观看",
+        "windowAndGrain": "业务日、会话、渠道、内容、effective_play_rule_version",
+        "dataSource": "video_play_start、video_play_result、video_watch_stay；下游以 source_event_id 回指播放开始",
+        "exclusions": "缺少播放结果或观看汇总、暂停/缓冲/后台时长、重复事件、非视频内容",
+        "knownIssues": "短内容例外依赖可靠的 video_duration_ms 和 watch_end_reason",
+        "recommendedDefinition": "首帧成功后实际观看达到15秒，计为一次有效观看；视频不足15秒且完整播放，也计为一次",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M035",
+      "kind": "standard",
+      "code": "effective_viewer_count",
+      "name": "有效观影用户数",
+      "order": 37,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "有效观影与留存",
+        "primaryOrder": 1,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "effective_play_flag=true 且 effective_play_rule_version=effective_play_v1 的去重用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "业务日、渠道、平台、内容类型、规则版本",
+        "dataSource": "有效观看加工结果",
+        "exclusions": "身份缺失、规则版本缺失、非人工流量",
+        "knownIssues": "当前正式埋点尚未上线，不能视为现有生产指标",
+        "recommendedDefinition": "统计周期内至少完成一次有效观看的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M036",
+      "kind": "standard",
+      "code": "effective_view_rate",
+      "name": "有效观影率",
+      "order": 38,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "有效观影与留存",
+        "primaryOrder": 1,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "有效观看次数 ÷ 起播次数",
+        "deduplication": "同一次成功起播最多计一次；分子和分母使用相同统计范围",
+        "windowAndGrain": "业务日、渠道、PID、视频；按 Android / iOS、自然新增 / 内部导量、新用户 / 老用户查看",
+        "dataSource": "M034 有效观看次数、M097 起播次数",
+        "exclusions": "未成功起播、仍在观察窗口、规则版本不一致、缺少观看汇总",
+        "knownIssues": "历史“有效观影用户数 ÷ 观影用户数（当时称播放尝试用户数）”是用户转化口径，与本指标的尝试级观看质量口径不同",
+        "recommendedDefinition": "成功起播的播放中，实际观看达到15秒的比例；视频不足15秒且完整播放，也算有效观看",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M043",
+      "kind": "standard",
+      "code": "avg_effective_watch_duration",
+      "name": "人均有效观看时长",
+      "order": 39,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "有效观影与留存",
+        "primaryOrder": 1,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "视频消费与播放",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "effective_play_flag=true 记录的 watch_duration_ms 总和 ÷ 有效观影人数",
+        "deduplication": "每位有效观影用户只计一次；其有效观看时长累加",
+        "windowAndGrain": "业务日、渠道、平台、视频类型、规则版本",
+        "dataSource": "video_watch_stay.watch_duration_ms、有效观看加工结果",
+        "exclusions": "暂停、缓冲、后台时长、规则版本不一致",
+        "knownIssues": "不能与“单次有效播放平均时长”混用",
+        "recommendedDefinition": "有效观影用户平均产生的实际前台观看时长",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M040",
+      "kind": "standard",
+      "code": "consumption_d1_retention_rate",
+      "name": "D1有效观影留存率",
+      "order": 40,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "有效观影与留存",
+        "primaryOrder": 1,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "有效观影留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "D1有效观看人数 ÷ D0有效观影人数",
+        "deduplication": "同一首日有效观影用户只计一次",
+        "windowAndGrain": "D0与D1业务日、规则版本；平台拆分为 Android / iOS，按 D0 首次有效观看平台归属，D1 再次有效观看允许跨平台",
+        "dataSource": "有效观看加工、业务日期",
+        "exclusions": "仅打开未观看、未成熟Cohort、规则版本不一致",
+        "knownIssues": "与注册D1留存分母不同",
+        "recommendedDefinition": "首日有效观影用户中，次日再次有效观看的用户比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M041",
+      "kind": "standard",
+      "code": "consumption_d3_retention_rate",
+      "name": "D3有效观影留存率",
+      "order": 41,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "有效观影与留存",
+        "primaryOrder": 1,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "有效观影留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "D3有效观看人数 ÷ D0有效观影人数",
+        "deduplication": "同一首日有效观影用户只计一次",
+        "windowAndGrain": "D0至D3、规则版本；平台拆分为 Android / iOS，按 D0 首次有效观看平台归属，D3 再次有效观看允许跨平台",
+        "dataSource": "有效观看加工、业务日期",
+        "exclusions": "仅打开未观看、未成熟Cohort、规则版本不一致",
+        "knownIssues": "与注册D3留存分母不同",
+        "recommendedDefinition": "首日有效观影用户中，第3天再次有效观看的用户比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M042",
+      "kind": "standard",
+      "code": "consumption_d7_retention_rate",
+      "name": "D7有效观影留存率",
+      "order": 42,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "有效观影与留存",
+        "primaryOrder": 1,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "有效观影留存",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "D7有效观看人数 ÷ D0有效观影人数",
+        "deduplication": "同一首日有效观影用户只计一次",
+        "windowAndGrain": "D0至D7、规则版本；平台拆分为 Android / iOS，按 D0 首次有效观看平台归属，D7 再次有效观看允许跨平台",
+        "dataSource": "有效观看加工、业务日期",
+        "exclusions": "仅打开未观看、未成熟Cohort、规则版本不一致",
+        "knownIssues": "与注册D7留存分母不同",
+        "recommendedDefinition": "首日有效观影用户中，第7天再次有效观看的用户比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M106",
+      "kind": "standard",
+      "code": "video_home_category_tab_click_count",
+      "name": "视频首页分类Tab点击次数",
+      "order": 43,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "capability_missing",
+          "label": "待补能力"
+        },
+        "businessDomain": "内容发现",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记；现有分类汇总接口统计分类下视频内容点击，不是分类 Tab 点击。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "视频首页一级、二级分类 Tab 的有效切换点击次数",
+        "deduplication": "同一次点击只计一次；相同业务事实的重复发送不重复计算",
+        "windowAndGrain": "业务日或查询区间、平台、PID、分类层级、一级分类、二级分类、Tab位置",
+        "dataSource": "目标来源为“视频顶部频道Tab点击”（video_channel_tab_click），先按事件唯一标识（event_id）去除重复发送；接口映射：暂无已确认的分类 Tab 点击接口，video.byCategory 仅返回分类下视频内容点击，不能作为本指标来源；接口支持状态：不支持本指标；验数状态：未开始",
+        "exclusions": "点击当前已选分类且未切换内容、默认自动选中、程序触发切换、缺少稳定分类标识、测试流量",
+        "knownIssues": "当前事件仅覆盖一级分类且仍为草稿，尚不能区分一级与二级；没有已确认可返回分类 Tab 点击的接口，暂不生成曝光-点击转化率",
+        "recommendedDefinition": "用户在视频首页点击一级或二级分类 Tab，并触发对应内容切换或请求的次数；二级分类按第二组内容切换 Tab 处理，不归入高级筛选操作",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M107",
+      "kind": "standard",
+      "code": "video_home_category_tab_click_user_count",
+      "name": "视频首页分类Tab点击用户数",
+      "order": 44,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "capability_missing",
+          "label": "待补能力"
+        },
+        "businessDomain": "内容发现",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记；现有分类汇总接口未提供分类 Tab 点击用户数。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "至少完成一次视频首页一级或二级分类 Tab 有效切换点击的不同用户数",
+        "deduplication": "同一用户在整个统计窗口只计一次；优先按账号识别，无账号时按设备识别，均缺失时不计入",
+        "windowAndGrain": "业务日或查询区间、平台、PID、分类层级、一级分类、二级分类、Tab位置",
+        "dataSource": "目标来源为“视频顶部频道Tab点击”（video_channel_tab_click）；事件先按事件唯一标识（event_id）去重，再优先按账号标识（user_id）对用户去重，无账号时使用设备标识（device_id）；接口映射：暂无已确认的分类 Tab 点击用户数接口，video.byCategory 不能作为本指标来源；接口支持状态：不支持本指标；验数状态：未开始",
+        "exclusions": "点击当前已选分类且未切换内容、默认自动选中、程序触发切换、身份缺失、缺少稳定分类标识、测试流量",
+        "knownIssues": "当前事件仅覆盖一级分类且仍为草稿，尚不能区分一级与二级；没有已确认可返回分类 Tab 点击用户数的接口",
+        "recommendedDefinition": "统计窗口内至少点击一次视频首页一级或二级分类 Tab，并触发对应内容切换或请求的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M108",
+      "kind": "standard",
+      "code": "video_home_category_tab_avg_click_count",
+      "name": "视频首页分类Tab人均点击次数",
+      "order": 45,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "capability_missing",
+          "label": "待补能力"
+        },
+        "businessDomain": "内容发现",
+        "metricType": "用户行为",
+        "metricLevel": "诊断",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "M106 视频首页分类Tab点击次数 ÷ M107 视频首页分类Tab点击用户数",
+        "deduplication": "分子按点击事实去重，分母按整个统计窗口对用户去重；不使用每日人均值再平均",
+        "windowAndGrain": "业务日或查询区间、平台、PID、分类层级、一级分类、二级分类、Tab位置",
+        "dataSource": "由 M106 视频首页分类Tab点击次数和 M107 视频首页分类Tab点击用户数派生，不单独依赖新接口；接口支持状态与验数状态继承 M106、M107，当前均未开始",
+        "exclusions": "点击用户数为0、缺少稳定分类标识、身份缺失、测试流量",
+        "knownIssues": "单位为次/人；依赖 M106、M107 完成事件补充、上线和验数后才能正式产出",
+        "recommendedDefinition": "点击过视频首页分类 Tab 的用户，平均产生的有效分类切换点击次数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M109",
+      "kind": "standard",
+      "code": "video_content_click_count",
+      "name": "视频内容点击次数",
+      "order": 46,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "内容发现",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "开发资料将“分类下视频内容点击次数”定义为用户点击视频封面、进入视频播放页的次数；分类汇总接口按分类返回该点击量。",
+        "developmentFormula": "按所选分类读取视频点击次数（clickedCount）；全站总量能否直接汇总各级分类结果待验数",
+        "registeredFormula": "用户主动点击视频内容的有效点击次数",
+        "deduplication": "同一次真实内容点击只计一次；重复发送不重复计算；同一用户多次真实点击分别计数",
+        "windowAndGrain": "业务日或查询区间、平台、PID、来源页面、来源列表、分类层级、一级分类、二级分类、Tab、视频位置、视频",
+        "dataSource": "现有 video.byCategory（/api/admin/statistics/todayVideos/getVideoStatsByCategories）返回 clickedCountRank[].categoryName 和 clickedCount；接口支持状态：代码已接入，一级与二级分类映射待核对；验数状态：待验数。新体系对应“视频内容点击”（video_content_click，事件版本 1.0，草稿），按事件唯一标识（event_id）去重",
+        "exclusions": "分类 Tab 点击、自动进入或滑动切换、自动播放、预加载、广告卡点击、不可操作遮罩、重复发送、测试流量",
+        "knownIssues": "当前 YPBI 适配只读取分类名称与点击次数，未传一级分类条件，也未保留稳定分类 ID；暂不能证明同名二级分类可正确归属，一级与二级结果也不能混合求和",
+        "recommendedDefinition": "用户主动点击视频卡片、封面或相关推荐项，选择进入视频详情或播放的次数；分类 Tab 点击不计入本指标",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M044",
+      "kind": "standard",
+      "code": "video_content_ctr",
+      "name": "视频内容曝光-点击转化率",
+      "order": 47,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "内容发现",
+        "metricType": "用户行为",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "匹配到合格曝光的点击数 ÷ 合格曝光数",
+        "deduplication": "同一次合格曝光及其匹配点击各只计一次",
+        "windowAndGrain": "同业务日、请求、列表、位置、策略、渠道、视频",
+        "dataSource": "video_content_expose、video_content_click、source_event_id",
+        "exclusions": "无对应曝光的快速点击、位置或策略错配",
+        "knownIssues": "不能把未匹配点击塞入分子",
+        "recommendedDefinition": "视频卡片达到合格曝光后产生点击的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M046",
+      "kind": "standard",
+      "code": "search_result_ctr",
+      "name": "搜索结果-内容点击转化率",
+      "order": 48,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "搜索",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "有结果后产生内容点击的搜索数 ÷ 成功返回结果的搜索数",
+        "deduplication": "同一次搜索只计一次",
+        "windowAndGrain": "业务日、搜索类型、来源渠道、PID",
+        "dataSource": "search_query_submit、search_query_result、带 search_id 的内容点击",
+        "exclusions": "无结果查询、搜索ID缺失",
+        "knownIssues": "不宜用点击次数除查询人数",
+        "recommendedDefinition": "成功返回搜索结果的查询中产生内容点击的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M092",
+      "kind": "standard",
+      "code": "search_query_count",
+      "name": "搜索次数",
+      "order": 49,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "搜索",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "不同 search_id 的有效 search_query_submit 数",
+        "deduplication": "同一次用户搜索只计一次；自动重试不重复计算",
+        "windowAndGrain": "业务日、平台、PID；搜索词作为 BI 维度下钻",
+        "dataSource": "search_query_submit",
+        "exclusions": "空词、客户端校验未通过、重复 search_id、测试流量",
+        "knownIssues": "旧后台若以接口请求数计次，自动重试可能导致与用户搜索次数不一致",
+        "recommendedDefinition": "用户通过输入词、热词、历史词或推荐词发起有效搜索的次数，不要求搜索成功返回结果",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M093",
+      "kind": "standard",
+      "code": "search_user_count",
+      "name": "搜索用户数",
+      "order": 50,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容发现与搜索",
+        "primaryOrder": 1,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "搜索",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "存在有效 search_query_submit 的不同用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "业务日或查询区间、平台、PID；搜索词作为 BI 维度下钻",
+        "dataSource": "search_query_submit",
+        "exclusions": "身份缺失、空词、重复 search_id、测试流量",
+        "knownIssues": "每日用户数不能直接相加得到区间搜索用户数",
+        "recommendedDefinition": "统计窗口内至少发起过一次有效搜索的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M047",
+      "kind": "standard",
+      "code": "video_like_count",
+      "name": "点赞数",
+      "order": 51,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容互动与社区",
+        "primaryOrder": 1,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频互动",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "点赞操作最终生效的结果数",
+        "deduplication": "同一次点赞生效事实只计一次；同一用户对不同视频或不同时点的真实点赞分别计数",
+        "windowAndGrain": "业务日、视频、视频类型",
+        "dataSource": "video_interaction_result 的点赞生效结果",
+        "exclusions": "取消点赞、重复结果",
+        "knownIssues": "结果事件不能与单次点击精准配对",
+        "recommendedDefinition": "统计窗口内实际生效的点赞次数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M048",
+      "kind": "standard",
+      "code": "video_favorite_count",
+      "name": "收藏数",
+      "order": 52,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容互动与社区",
+        "primaryOrder": 1,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "视频互动",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "收藏操作最终生效的结果数",
+        "deduplication": "同一次收藏生效事实只计一次；同一用户对不同视频或不同时点的真实收藏分别计数",
+        "windowAndGrain": "业务日、视频、视频类型",
+        "dataSource": "video_interaction_result 的收藏生效结果",
+        "exclusions": "取消收藏、重复结果",
+        "knownIssues": "结果事件不能与单次点击精准配对",
+        "recommendedDefinition": "统计窗口内实际生效的收藏次数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M049",
+      "kind": "standard",
+      "code": "author_follow_user_count",
+      "name": "作者关注生效用户数",
+      "order": 53,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容互动与社区",
+        "primaryOrder": 1,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "作者互动",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "author_interaction_result.action_id=follow_author 且激活的用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "业务日、作者",
+        "dataSource": "author_interaction_result",
+        "exclusions": "取消关注、重复结果",
+        "knownIssues": "作者结果事件不带来源视频或来源点击",
+        "recommendedDefinition": "统计窗口内至少成功关注一个作者的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M050",
+      "kind": "standard",
+      "code": "community_post_ctr",
+      "name": "社区帖子曝光-点击转化率",
+      "order": 54,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容互动与社区",
+        "primaryOrder": 1,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "社区",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "匹配曝光的帖子点击数 ÷ 帖子合格曝光数",
+        "deduplication": "同一次合格曝光及其匹配点击各只计一次",
+        "windowAndGrain": "业务日、列表、位置、帖子",
+        "dataSource": "community_post_expose、community_post_click",
+        "exclusions": "无曝光匹配的点击、重复曝光",
+        "knownIssues": "需要保持列表位置键一致",
+        "recommendedDefinition": "合格曝光的社区帖子产生点击的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M051",
+      "kind": "standard",
+      "code": "comment_submit_user_count",
+      "name": "评论提交用户数",
+      "order": 55,
+      "classification": {
+        "primary": "内容消费与互动",
+        "secondary": "内容互动与社区",
+        "primaryOrder": 1,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "社区",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "存在合法评论提交事实的去重用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "业务日、内容类型、内容ID",
+        "dataSource": "community_comment_submit 及内容上下文",
+        "exclusions": "空内容、客户端校验未通过、重复提交",
+        "knownIssues": "提交不等于服务端发布成功",
+        "recommendedDefinition": "统计窗口内提交过评论的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M053",
+      "kind": "standard",
+      "code": "ad_load_success_rate",
+      "name": "广告加载成功率",
+      "order": 56,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "广告",
+        "metricType": "技术质量",
+        "metricLevel": "护栏",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "加载成功实例数 ÷ 有结果的广告加载实例数",
+        "deduplication": "同一次广告加载只保留一个最终结果",
+        "windowAndGrain": "业务日、广告位、广告类型、平台、版本",
+        "dataSource": "ad_load_result",
+        "exclusions": "无结果请求、重复结果",
+        "knownIssues": "当前广告事件仍是草稿",
+        "recommendedDefinition": "发起广告加载的实例中成功完成加载的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M054",
+      "kind": "standard",
+      "code": "ad_exposure_count",
+      "name": "广告曝光次数",
+      "order": 57,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "广告",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "合格 ad_expose 记录数",
+        "deduplication": "同一次合格曝光只计一次",
+        "windowAndGrain": "业务日、广告位、素材、广告类型",
+        "dataSource": "ad_expose",
+        "exclusions": "未达到曝光阈值、预加载",
+        "knownIssues": "曝光次数不是曝光用户数",
+        "recommendedDefinition": "达到广告曝光规则的展示次数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M055",
+      "kind": "standard",
+      "code": "ad_click_count",
+      "name": "广告点击次数",
+      "order": 58,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "广告",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "用户真实点击广告的次数",
+        "developmentFormula": "广告点击记录数",
+        "registeredFormula": "广告点击记录数",
+        "deduplication": "每次真实点击都计一次；重复日志不重复计算",
+        "windowAndGrain": "业务日、广告位、素材、渠道",
+        "dataSource": "现有广告点击日志；未来 ad_click",
+        "exclusions": "自动跳转、跳过动作、重复发送",
+        "knownIssues": "现有后台同时有点击人数和次数，跨页面口径需验数",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M094",
+      "kind": "standard",
+      "code": "ad_click_user_count",
+      "name": "广告点击用户数",
+      "order": 59,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "广告",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "统计窗口内至少真实点击一次广告的去重用户数",
+        "developmentFormula": "存在有效广告点击记录的不同用户数",
+        "registeredFormula": "存在有效广告点击记录的不同用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "业务日或查询区间、广告位、素材、渠道、平台、PID",
+        "dataSource": "现有广告点击日志；未来 ad_click",
+        "exclusions": "自动跳转、跳过动作、身份缺失、重复发送、测试流量",
+        "knownIssues": "现有后台不同页面的点击人数可能使用不同身份键，多日直接相加也会重复",
+        "recommendedDefinition": "先保留现有数据并验数；新埋点按统一身份规则计算，区间用户数重新真去重",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M110",
+      "kind": "standard",
+      "code": "active_user_avg_ad_click_count",
+      "name": "活跃用户人均广告点击次数",
+      "order": 60,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "广告",
+        "metricType": "业务结果",
+        "metricLevel": "诊断",
+        "definition": "逸品日报中的“广告总人次比例”表示广告总点击人次相对于日活总计的比例；“广告新增人次比例”使用新增用户范围计算。",
+        "developmentFormula": "广告总点击人次 ÷ 日活总计；新增视图为广告新增点击人次 ÷ 新增总计",
+        "registeredFormula": "M055 广告点击次数 ÷ M016 日活跃用户数",
+        "deduplication": "广告点击按真实点击次数累计并去除重复日志；日活跃用户按账号每天去重",
+        "windowAndGrain": "同一业务日、平台、PID、渠道、广告位；可按新用户 / 老用户查看",
+        "dataSource": "M055 广告点击次数、M016 日活跃用户数；逸品日报09月10号新",
+        "exclusions": "自动跳转、跳过动作、重复日志、测试流量",
+        "knownIssues": "现有字段名“人次比例”不能直接说明分母，也容易被误解为百分比上限为100%；该值实际可以超过100%",
+        "recommendedDefinition": "每名日活跃用户平均产生的真实广告点击次数；新增用户视图中，分子和分母同时限定为注册当日新用户",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M111",
+      "kind": "standard",
+      "code": "active_user_ad_click_penetration",
+      "name": "活跃用户广告点击渗透率",
+      "order": 61,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "广告",
+        "metricType": "业务结果",
+        "metricLevel": "诊断",
+        "definition": "逸品日报中的“广告总点击人数比例”表示广告点击人数占日活总计的比例；“广告新增点击人数比例”使用新增用户范围计算。",
+        "developmentFormula": "广告总点击人数 ÷ 日活总计；新增视图为广告新增点击人数 ÷ 新增总计",
+        "registeredFormula": "M094 广告点击用户数 ÷ M016 日活跃用户数",
+        "deduplication": "分子和分母都按账号在同一业务日去重，同一用户无论点击多少次只计一次",
+        "windowAndGrain": "同一业务日、平台、PID、渠道、广告位；可按新用户 / 老用户查看",
+        "dataSource": "M094 广告点击用户数、M016 日活跃用户数；逸品日报09月10号新",
+        "exclusions": "自动跳转、跳过动作、身份缺失、重复日志、测试流量",
+        "knownIssues": "日报不同广告页面可能使用不同用户标识，需要先验证分子用户都属于同范围登录日活",
+        "recommendedDefinition": "日活跃用户中，当天至少真实点击过一次广告的去重用户比例；新增用户视图中，分子和分母同时限定为注册当日新用户",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M056",
+      "kind": "standard",
+      "code": "ad_ctr",
+      "name": "广告曝光-点击转化率",
+      "order": 62,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "广告",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "匹配曝光的广告点击数 ÷ 广告合格曝光数",
+        "deduplication": "同一次广告曝光及其匹配点击各只计一次",
+        "windowAndGrain": "业务日、广告位、素材、广告类型",
+        "dataSource": "ad_expose、ad_click",
+        "exclusions": "无对应曝光的点击、重复曝光",
+        "knownIssues": "现有后台只有点击而不一定有同口径曝光",
+        "recommendedDefinition": "合格广告曝光产生真实点击的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M057",
+      "kind": "standard",
+      "code": "ad_end_reason_distribution",
+      "name": "广告结束方式分布",
+      "order": 63,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "广告交付与转化",
+        "primaryOrder": 2,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "广告",
+        "metricType": "用户行为",
+        "metricLevel": "诊断",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "各结束原因实例数 ÷ 有结束结果的广告实例数",
+        "deduplication": "同一次广告展示只保留一个结束结果",
+        "windowAndGrain": "业务日、广告位、素材、关闭策略",
+        "dataSource": "ad_display_end、ad_close_click",
+        "exclusions": "无结束结果、重复结果",
+        "knownIssues": "主动关闭点击与展示结束不能混为同一事件",
+        "recommendedDefinition": "广告完整展示、自动跳过、主动关闭等结束原因的占比",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M058",
+      "kind": "standard",
+      "code": "total_recharge_amount",
+      "name": "总充值金额",
+      "order": 64,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费规模与复购",
+        "primaryOrder": 2,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "页面一、页面二累计全部在线充值成功金额，包含 VIP 与金币并按支付时间归日；渠道汇总页会排除钻石代付。",
+        "developmentFormula": "页面一、二：成功订单金额累加（含 VIP、金币）；渠道汇总：成功订单金额累加并排除钻石代付。",
+        "registeredFormula": "支付成功订单金额累加",
+        "deduplication": "同一订单只计一次，金额累加",
+        "windowAndGrain": "支付成功业务日、渠道、平台、币种、商品类型",
+        "dataSource": "现有支付流水",
+        "exclusions": "失败、重复回调、未到账订单",
+        "knownIssues": "渠道汇总页面排除钻石代付，与其他页面存在差异",
+        "recommendedDefinition": "先保留各页面现有范围；统一前需确认代付与退款口径",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M059",
+      "kind": "standard",
+      "code": "payer_user_count",
+      "name": "付费用户数",
+      "order": 65,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费规模与复购",
+        "primaryOrder": 2,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "至少有一笔充值成功的去重用户数",
+        "developmentFormula": "成功充值用户账号去重",
+        "registeredFormula": "成功充值用户 uid 去重",
+        "deduplication": "同一付费用户每天只计一次；多日查询时对整个周期重新去重",
+        "windowAndGrain": "支付成功业务日、渠道、平台",
+        "dataSource": "支付流水",
+        "exclusions": "失败、未到账、重复订单",
+        "knownIssues": "多天按日相加会虚高",
+        "recommendedDefinition": "与现有定义一致",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M060",
+      "kind": "standard",
+      "code": "successful_payment_order_count",
+      "name": "支付成功订单数",
+      "order": 66,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费规模与复购",
+        "primaryOrder": 2,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "数据质量",
+        "metricLevel": "诊断",
+        "definition": "渠道汇总页字段名为“总充值人数”，实际统计查询区间内的充值订单笔数；逸品日报另以“总充值成功次数”展示成功订单量，并按支付宝、微信拆分。",
+        "developmentFormula": "成功支付订单记录数",
+        "registeredFormula": "成功支付订单记录数",
+        "deduplication": "同一支付订单只计一次",
+        "windowAndGrain": "支付成功业务日、渠道、平台、支付方式",
+        "dataSource": "支付流水；逸品日报09月10号新",
+        "exclusions": "失败、重复回调",
+        "knownIssues": "两个现有页面名称不同，且日报成功终点尚未与支付回调状态验数，不能仅凭字段名判定完全同源",
+        "recommendedDefinition": "统一使用“支付成功订单数”；日报“总充值成功次数”验数一致后作为同一指标的报表别名",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M086",
+      "kind": "standard",
+      "code": "successful_recharge_credit_order_count",
+      "name": "充值到账订单数",
+      "order": 67,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费规模与复购",
+        "primaryOrder": 2,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "recharge_credit_status_change.credit_status=success 的不同订单数",
+        "deduplication": "同一订单最多计一次到账成功",
+        "windowAndGrain": "到账成功业务日、渠道、平台、支付方式、到账类型、PID",
+        "dataSource": "recharge_credit_status_change",
+        "exclusions": "到账失败、重复状态、仍在观察中的订单",
+        "knownIssues": "逸品日报“总充值成功次数”当前先映射 M060 支付成功订单数；只有确认其终点为权益或金币到账成功后，才可改映射本指标",
+        "recommendedDefinition": "统计窗口内会员权益或金币最终到账成功的订单笔数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M104",
+      "kind": "standard",
+      "code": "repeat_payer_count",
+      "name": "复购用户数",
+      "order": 68,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费规模与复购",
+        "primaryOrder": 2,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "统计窗口内完成个人历史第 2 笔及以后成功到账充值的去重用户数",
+        "deduplication": "同一用户在整个统计窗口只计一次；充值顺序按用户完整历史中的成功到账订单判断",
+        "windowAndGrain": "到账成功业务日、渠道、平台、PID、支付方式、商品；支持 Android / iOS 与新用户 / 老用户查看",
+        "dataSource": "用户完整充值历史与成功到账订单",
+        "exclusions": "首笔充值、失败或未到账订单、测试订单、退款后是否保留序号待治理",
+        "knownIssues": "复购必须基于完整历史判断，不能仅在查询窗口内排序；新用户复购表示注册日内或新人阶段已发生第二笔到账",
+        "recommendedDefinition": "统计窗口内至少完成一笔个人历史第 2 笔及以后成功到账充值的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M105",
+      "kind": "standard",
+      "code": "repeat_recharge_amount",
+      "name": "复购充值金额",
+      "order": 69,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费规模与复购",
+        "primaryOrder": 2,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "统计窗口内个人历史第 2 笔及以后成功到账充值订单的金额之和",
+        "deduplication": "同一到账订单只计一次并累加金额；只纳入第 2 笔及以后订单",
+        "windowAndGrain": "到账成功业务日、渠道、平台、PID、支付方式、商品、币种；支持 Android / iOS 与新用户 / 老用户查看",
+        "dataSource": "用户完整充值历史、成功到账订单与订单金额",
+        "exclusions": "首笔充值、失败或未到账订单、重复订单、测试订单；退款口径待统一",
+        "knownIssues": "只累计复购订单金额，不把复购用户在窗口内的首笔充值金额倒算进来",
+        "recommendedDefinition": "统计窗口内所有复购订单的成功到账充值金额之和",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M061",
+      "kind": "standard",
+      "code": "active_payer_rate",
+      "name": "活跃用户-付费转化率",
+      "order": 70,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费转化与用户价值",
+        "primaryOrder": 2,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "活跃用户中当天付费的比例",
+        "developmentFormula": "付费用户数 ÷ 日活跃用户数",
+        "registeredFormula": "付费用户数 ÷ 日活跃用户数",
+        "deduplication": "付费用户和活跃用户均按同一用户、同一天去重",
+        "windowAndGrain": "业务日、渠道、平台",
+        "dataSource": "支付流水与登录活跃",
+        "exclusions": "数据范围不一致",
+        "knownIssues": "仅当分子是真实去重付费用户时可用；不能使用订单笔数",
+        "recommendedDefinition": "在页面标题中固定分母为登录DAU或全访问DAU",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M064",
+      "kind": "standard",
+      "code": "new_user_payer_rate",
+      "name": "新增用户-付费转化率",
+      "order": 71,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费转化与用户价值",
+        "primaryOrder": 2,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "页面一、页面二按新增付费用户数除以新增用户数计算；渠道汇总页按充值笔数除以注册事件数计算，当前存在两套不同实现。",
+        "developmentFormula": "页面一、二：新增付费用户数 ÷ 新增用户数；渠道汇总：充值订单数 ÷ 注册记录数。",
+        "registeredFormula": "新增付费用户数 ÷ 新增用户数",
+        "deduplication": "新增付费用户和新增用户均按同一用户、同一天去重",
+        "windowAndGrain": "注册业务日、渠道、平台",
+        "dataSource": "新增用户与支付流水",
+        "exclusions": "未到账、测试账号",
+        "knownIssues": "部分渠道页面可能把订单笔数作为分子",
+        "recommendedDefinition": "只允许使用去重付费用户作为分子，订单数另列",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M065",
+      "kind": "standard",
+      "code": "vip_recharge_amount",
+      "name": "VIP充值金额",
+      "order": 72,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费转化与用户价值",
+        "primaryOrder": 2,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "过程",
+        "definition": "VIP商品成功充值金额",
+        "developmentFormula": "VIP商品成功订单金额累加",
+        "registeredFormula": "VIP商品成功订单金额累加",
+        "deduplication": "同一订单只计一次，金额累加",
+        "windowAndGrain": "支付成功业务日、VIP类型、渠道",
+        "dataSource": "支付流水与商品类型",
+        "exclusions": "失败、退款口径未确认",
+        "knownIssues": "现金购买VIP与金币兑换VIP在部分旧页面混淆",
+        "recommendedDefinition": "现金充值与金币兑换分成两个指标，不直接合并",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M066",
+      "kind": "standard",
+      "code": "coin_recharge_amount",
+      "name": "金币充值金额",
+      "order": 73,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费转化与用户价值",
+        "primaryOrder": 2,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "过程",
+        "definition": "金币商品成功充值金额",
+        "developmentFormula": "金币商品成功订单金额累加",
+        "registeredFormula": "金币商品成功订单金额累加",
+        "deduplication": "同一订单只计一次，金额累加",
+        "windowAndGrain": "支付成功业务日、金币包、渠道",
+        "dataSource": "支付流水与商品类型",
+        "exclusions": "失败、未到账",
+        "knownIssues": "充值金额与赠送金币不是同一单位",
+        "recommendedDefinition": "现金金额、到账金币和赠送金币分别展示",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M067",
+      "kind": "standard",
+      "code": "payment_arppu",
+      "name": "付费用户人均充值金额（ARPPU）",
+      "order": 74,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费转化与用户价值",
+        "primaryOrder": 2,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "诊断",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "总充值金额 ÷ 区间付费用户数",
+        "deduplication": "同一付费用户在整个统计周期只计一次",
+        "windowAndGrain": "查询区间、渠道、平台、商品类型",
+        "dataSource": "充值金额与付费用户",
+        "exclusions": "退款口径未确认",
+        "knownIssues": "后台现有“客单价”实际是每个新增摊到的渠道成本，不是ARPPU",
+        "recommendedDefinition": "统计窗口内每个付费用户贡献的平均充值金额",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M087",
+      "kind": "standard",
+      "code": "recharge_arpu",
+      "name": "活跃用户人均充值金额（ARPU）",
+      "order": 75,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费转化与用户价值",
+        "primaryOrder": 2,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "诊断",
+        "definition": "Notion 技术字典未登记；其他现有资料显示后台已有同名或近似指标，但尚未提供可核对的统一技术定义。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "总充值金额 ÷ 日活跃用户数",
+        "deduplication": "同一到账订单只计一次并累加金额；同一活跃用户只计一次",
+        "windowAndGrain": "业务日或查询区间、渠道、平台、PID、商品类型",
+        "dataSource": "M058、M016",
+        "exclusions": "失败或未到账订单、测试账号",
+        "knownIssues": "日报“总充值ARPU”的活跃分母与跨日算法未明确",
+        "recommendedDefinition": "统计窗口内每名活跃用户平均贡献的充值金额，包括未付费活跃用户",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M088",
+      "kind": "standard",
+      "code": "new_user_recharge_arpu",
+      "name": "新增用户人均充值金额（ARPU）",
+      "order": 76,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "付费转化与用户价值",
+        "primaryOrder": 2,
+        "secondaryOrder": 2
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "业务结果",
+        "metricLevel": "诊断",
+        "definition": "Notion 技术字典未登记；其他现有资料显示后台已有同名或近似指标，但尚未提供可核对的统一技术定义。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "新增用户充值金额 ÷ 新增用户数",
+        "deduplication": "同一到账订单只计一次并累加金额；同一新增用户只计一次",
+        "windowAndGrain": "注册业务日、渠道、平台、PID",
+        "dataSource": "M058 总充值金额的新用户分析视图、M008",
+        "exclusions": "老用户、失败或未到账订单、测试账号",
+        "knownIssues": "日报字段未明确分母是否为扣前新增用户数",
+        "recommendedDefinition": "当天每名新增用户平均贡献的注册当日充值金额",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M073",
+      "kind": "standard",
+      "code": "membership_upsell_ctr",
+      "name": "会员引导曝光-点击转化率",
+      "order": 77,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "会员引导与付费墙",
+        "primaryOrder": 2,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "会员",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "匹配引导点击数 ÷ 合格引导曝光数",
+        "deduplication": "同一次会员引导展示及其匹配点击各只计一次",
+        "windowAndGrain": "业务日、引导位、原因、会员类型",
+        "dataSource": "membership_upsell_expose、membership_upsell_click",
+        "exclusions": "无曝光匹配、重复曝光",
+        "knownIssues": "引导点击不代表购买",
+        "recommendedDefinition": "会员引导曝光后产生点击的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M068",
+      "kind": "standard",
+      "code": "paywall_exposed_user_count",
+      "name": "内容付费墙曝光用户数",
+      "order": 78,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "会员引导与付费墙",
+        "primaryOrder": 2,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "存在合格 content_paywall_expose 的用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "业务日、内容类型、付费墙类型、访问类型",
+        "dataSource": "content_paywall_expose",
+        "exclusions": "重复曝光、页面未实际可见",
+        "knownIssues": "付费墙属于会员模块，不等于支付页",
+        "recommendedDefinition": "至少看到一次内容付费墙的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M069",
+      "kind": "standard",
+      "code": "paywall_action_rate",
+      "name": "付费墙曝光-操作转化率",
+      "order": 79,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "会员引导与付费墙",
+        "primaryOrder": 2,
+        "secondaryOrder": 3
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "付费墙操作用户数 ÷ 付费墙曝光用户数",
+        "deduplication": "同一用户只计一次；可按每次付费墙展示进一步分析",
+        "windowAndGrain": "业务日、付费墙、内容类型、动作",
+        "dataSource": "content_paywall_expose、content_paywall_action_click",
+        "exclusions": "关闭和返回按动作分开，不混入转化分子",
+        "knownIssues": "操作点击不代表支付成功",
+        "recommendedDefinition": "看到付费墙的用户中点击开通、充值或解锁等动作的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M084",
+      "kind": "standard",
+      "code": "payment_submit_count",
+      "name": "支付提交次数",
+      "order": 80,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "不同 recharge_request_id 的支付提交数",
+        "deduplication": "同一次有效充值请求只计一次",
+        "windowAndGrain": "业务日、渠道、平台、支付方式、商品、充值场景、PID",
+        "dataSource": "recharge_submit_click",
+        "exclusions": "未生成有效充值请求的点击、重复上报、测试订单",
+        "knownIssues": "逸品日报“拉单”经产品确认指成功获取支付订单，不等于本指标的客户端支付提交",
+        "recommendedDefinition": "用户确认商品、金额和支付方式后，生成有效充值请求并提交支付的次数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M085",
+      "kind": "standard",
+      "code": "payment_submit_user_count",
+      "name": "支付提交用户数",
+      "order": 81,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "存在有效 recharge_submit_click 的不同用户数",
+        "deduplication": "同一用户在整个统计周期只计一次",
+        "windowAndGrain": "业务日或查询区间、渠道、平台、支付方式、商品、PID",
+        "dataSource": "recharge_submit_click",
+        "exclusions": "无有效请求、测试账号、机器人",
+        "knownIssues": "多日若直接相加每日人数会重复；逸品日报“拉单人数”属于订单获取阶段，不能作为本指标别名",
+        "recommendedDefinition": "统计窗口内至少提交过一次有效支付请求的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M112",
+      "kind": "standard",
+      "code": "payment_order_acquisition_count",
+      "name": "支付订单获取次数",
+      "order": 82,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "逸品日报“总拉单次数”统计支付过程中成功获取订单的次数，并分别提供支付宝、微信结果。",
+        "developmentFormula": "成功获取支付订单的记录数",
+        "registeredFormula": "成功获取支付订单的不同支付请求数",
+        "deduplication": "同一次支付请求最多计一次；超时重试或重复返回同一结果不重复计算",
+        "windowAndGrain": "订单获取业务日、平台、PID、渠道、支付方式、商品；可按新用户 / 老用户查看",
+        "dataSource": "现有日报支付订单数据；统一实现时核对 order_create_request_result 的成功结果与充值请求标识",
+        "exclusions": "下单失败、超时且未成功、重复结果、测试订单",
+        "knownIssues": "现有日报只提供汇总值，尚未验证一次拉单是否按请求、订单或回调记录去重",
+        "recommendedDefinition": "用户发起支付后，服务端成功返回可继续支付的订单，计为一次支付订单获取",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M113",
+      "kind": "standard",
+      "code": "payment_order_acquisition_user_count",
+      "name": "支付订单获取用户数",
+      "order": 83,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "逸品日报“总拉单人数”统计支付过程中至少成功获取一次订单的用户数，并分别提供支付宝、微信结果。",
+        "developmentFormula": "成功获取支付订单的用户数",
+        "registeredFormula": "至少成功获取一次支付订单的去重用户数",
+        "deduplication": "同一用户在同一统计窗口内只计一次；同一用户获取多笔订单仍计一人",
+        "windowAndGrain": "订单获取业务日或查询区间、平台、PID、渠道、支付方式、商品；可按新用户 / 老用户查看",
+        "dataSource": "现有日报支付订单数据；统一实现时核对订单获取结果与登录账号",
+        "exclusions": "未登录或身份无法确认、下单失败、测试账号、重复结果",
+        "knownIssues": "日报未说明多日查询是区间去重还是每日人数相加，暂不能直接将日报日值跨日求和",
+        "recommendedDefinition": "统计窗口内至少成功获取过一次可继续支付订单的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M070",
+      "kind": "standard",
+      "code": "recharge_page_submit_rate",
+      "name": "充值页访问-支付提交转化率",
+      "order": 84,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "会员与付费",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "支付提交用户数 ÷ 充值页访问用户数",
+        "deduplication": "按用户计算时，同一用户只计一次；按充值会话计算时，同一次会话只计一次",
+        "windowAndGrain": "同一充值会话、业务日、场景",
+        "dataSource": "recharge_page_view、recharge_submit_click",
+        "exclusions": "重复进入、重复点击",
+        "knownIssues": "用户率和会话率不能混用",
+        "recommendedDefinition": "进入充值页的用户中点击提交支付的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M071",
+      "kind": "standard",
+      "code": "order_create_success_rate",
+      "name": "下单成功率",
+      "order": 85,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "支付质量",
+        "metricType": "技术质量",
+        "metricLevel": "护栏",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "下单成功请求数 ÷ 下单请求结果数",
+        "deduplication": "同一次有效充值请求只计一次",
+        "windowAndGrain": "业务日、支付工具、商品、平台",
+        "dataSource": "recharge_submit_click、order_create_request_result",
+        "exclusions": "重复请求、无结果请求单独监控",
+        "knownIssues": "只表示订单创建，不代表支付成功",
+        "recommendedDefinition": "已提交支付请求中成功创建订单的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M114",
+      "kind": "standard",
+      "code": "order_acquisition_payment_success_rate",
+      "name": "订单获取-支付成功转化率",
+      "order": 86,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "definition_pending_confirmation",
+          "label": "现有口径待确认"
+        },
+        "businessDomain": "支付质量",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "逸品日报“总成功率”按总充值成功次数除以总拉单次数计算，支付宝和微信使用各自相同字段计算。",
+        "developmentFormula": "总充值成功次数 ÷ 总拉单次数",
+        "registeredFormula": "同一批成功获取的支付订单中，最终支付成功的订单数 ÷ M112 支付订单获取次数",
+        "deduplication": "同一支付订单在分子和分母中各最多计一次，并按同一订单关系匹配",
+        "windowAndGrain": "订单获取批次及其支付观察窗口、平台、PID、渠道、支付方式、商品；可按新用户 / 老用户查看",
+        "dataSource": "M112 支付订单获取次数、M060 支付成功订单数与订单关联关系；逸品日报09月10号新",
+        "exclusions": "获取失败、重复订单、重复回调、仍在支付观察窗口、测试订单",
+        "knownIssues": "日报当前把同日两个汇总数直接相除，未证明分子与分母是同一批订单；支付跨日时可能失真",
+        "recommendedDefinition": "成功获取的支付订单中，在规定观察窗口内最终支付成功的订单比例；支付宝、微信作为支付方式拆分，不复制指标",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M090",
+      "kind": "standard",
+      "code": "payment_submit_credit_rate",
+      "name": "支付提交-充值到账转化率",
+      "order": 87,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "支付质量",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "充值到账订单数 ÷ 支付提交次数",
+        "deduplication": "同一次支付提交和最终到账订单各只计一次，并按同一支付链路匹配",
+        "windowAndGrain": "业务日、渠道、平台、支付方式、商品、到账类型、PID；需设置支付观察窗口",
+        "dataSource": "recharge_submit_click、order_create_request_result、recharge_credit_status_change",
+        "exclusions": "重复请求、重复状态、仍在观察窗口、测试订单",
+        "knownIssues": "本指标覆盖“支付提交至最终到账”，不等于逸品日报 M114 订单获取-支付成功转化率，两个漏斗的起点和终点都不同",
+        "recommendedDefinition": "已提交支付的有效充值请求中，最终会员权益或金币到账成功的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M072",
+      "kind": "standard",
+      "code": "recharge_credit_success_rate",
+      "name": "支付回调-充值到账转化率",
+      "order": 88,
+      "classification": {
+        "primary": "商业变现",
+        "secondary": "支付链路与到账质量",
+        "primaryOrder": 2,
+        "secondaryOrder": 4
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "支付质量",
+        "metricType": "技术质量",
+        "metricLevel": "护栏",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "已到账订单数 ÷ 支付回调确认成功订单数",
+        "deduplication": "同一订单只计一次",
+        "windowAndGrain": "业务日、支付工具、到账类型",
+        "dataSource": "payment_callback_process_result、recharge_credit_status_change",
+        "exclusions": "重复回调、观察中订单",
+        "knownIssues": "回调成功与到账成功是两个阶段",
+        "recommendedDefinition": "支付回调成功订单中最终成功到账的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M074",
+      "kind": "standard",
+      "code": "checkin_entry_ctr",
+      "name": "签到入口曝光-点击转化率",
+      "order": 89,
+      "classification": {
+        "primary": "运营玩法",
+        "secondary": "签到、任务与福利",
+        "primaryOrder": 3,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "福利成长",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "匹配签到入口点击数 ÷ 合格曝光数",
+        "deduplication": "同一次签到入口展示及其匹配点击各只计一次",
+        "windowAndGrain": "业务日、入口",
+        "dataSource": "checkin_entry_expose、checkin_entry_click",
+        "exclusions": "无曝光匹配、重复曝光",
+        "knownIssues": "入口点击不等于签到成功",
+        "recommendedDefinition": "签到入口合格曝光后产生点击的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M075",
+      "kind": "standard",
+      "code": "checkin_success_user_count",
+      "name": "签到成功用户数",
+      "order": 90,
+      "classification": {
+        "primary": "运营玩法",
+        "secondary": "签到、任务与福利",
+        "primaryOrder": 3,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "福利成长",
+        "metricType": "业务结果",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "签到结果成功的去重用户数",
+        "deduplication": "同一用户在同一签到周期内只计一次成功",
+        "windowAndGrain": "业务日、签到周期",
+        "dataSource": "checkin_submit、checkin_result",
+        "exclusions": "失败、重复结果",
+        "knownIssues": "需要明确跨端重复提交去重键",
+        "recommendedDefinition": "统计窗口内至少签到成功一次的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M076",
+      "kind": "standard",
+      "code": "task_reward_success_rate",
+      "name": "任务奖励成功率",
+      "order": 91,
+      "classification": {
+        "primary": "运营玩法",
+        "secondary": "签到、任务与福利",
+        "primaryOrder": 3,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "福利成长",
+        "metricType": "业务结果",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "奖励成功任务数 ÷ 有结果任务数",
+        "deduplication": "同一用户的同一任务在同一任务周期内只计一次",
+        "windowAndGrain": "业务日、任务类型、任务周期",
+        "dataSource": "task_action_click、task_reward_result",
+        "exclusions": "重复发奖、观察中结果",
+        "knownIssues": "点击任务不代表完成任务",
+        "recommendedDefinition": "任务操作后成功发放奖励的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M077",
+      "kind": "standard",
+      "code": "benefit_claim_success_rate",
+      "name": "福利领取提交-成功转化率",
+      "order": 92,
+      "classification": {
+        "primary": "运营玩法",
+        "secondary": "签到、任务与福利",
+        "primaryOrder": 3,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "福利成长",
+        "metricType": "业务结果",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "福利领取成功结果数 ÷ 福利领取提交数",
+        "deduplication": "同一用户的同一福利在同一领取周期内只计一次",
+        "windowAndGrain": "业务日、福利类型",
+        "dataSource": "benefit_claim_submit、对应领取结果事实",
+        "exclusions": "重复提交、库存不足等失败",
+        "knownIssues": "当前福利模块结果事件需按正式契约核对",
+        "recommendedDefinition": "福利领取提交后服务端确认成功的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M078",
+      "kind": "standard",
+      "code": "invite_bind_success_rate",
+      "name": "邀请绑定提交-成功转化率",
+      "order": 93,
+      "classification": {
+        "primary": "运营玩法",
+        "secondary": "分享邀请",
+        "primaryOrder": 3,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "分享邀请",
+        "metricType": "业务结果",
+        "metricLevel": "过程",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "邀请绑定成功结果数 ÷ 邀请绑定提交数",
+        "deduplication": "同一次邀请关系绑定只计一次",
+        "windowAndGrain": "业务日、绑定来源",
+        "dataSource": "share_invite_bind_submit、share_invite_bind_result",
+        "exclusions": "重复绑定、无效邀请码",
+        "knownIssues": "提交与成功必须分开",
+        "recommendedDefinition": "邀请绑定提交中服务端确认成功的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M079",
+      "kind": "standard",
+      "code": "invite_reward_recipient_count",
+      "name": "邀请奖励成功发放用户数",
+      "order": 94,
+      "classification": {
+        "primary": "运营玩法",
+        "secondary": "分享邀请",
+        "primaryOrder": 3,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "platform_processing_required",
+          "label": "需平台加工"
+        },
+        "businessDomain": "分享邀请",
+        "metricType": "业务结果",
+        "metricLevel": "核心",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "奖励成功结果中的奖励接收用户数",
+        "deduplication": "同一用户在同一奖励里程碑只计一次",
+        "windowAndGrain": "业务日、奖励接收方、里程碑、奖励单位",
+        "dataSource": "share_invite_reward_result",
+        "exclusions": "重复发放、失败结果",
+        "knownIssues": "邀请人与被邀请人共用奖励体系，不能按事件名拆成两套口径",
+        "recommendedDefinition": "统计窗口内成功收到邀请奖励的去重用户数",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M080",
+      "kind": "standard",
+      "code": "launch_success_rate",
+      "name": "启动成功率",
+      "order": 95,
+      "classification": {
+        "primary": "产品体验",
+        "secondary": "启动体验",
+        "primaryOrder": 4,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "启动质量",
+        "metricType": "技术质量",
+        "metricLevel": "核心",
+        "definition": "Notion 技术字典未登记；其他现有资料显示后台已有同名或近似指标，但尚未提供可核对的统一技术定义。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "launch_result.result_status=success 的启动数 ÷ 已产生终态的启动数",
+        "deduplication": "同一次启动只保留一个最终结果",
+        "windowAndGrain": "业务日、平台、launch_type、应用版本、网络、PID",
+        "dataSource": "launch_result",
+        "exclusions": "重复终态、测试启动、缺失 launch_id",
+        "knownIssues": "仅使用已上报终态作分母会漏掉完全未上报结果的启动，可能高估成功率",
+        "recommendedDefinition": "产品启动后成功到达首个目标业务页面且可以操作的比例；可按 App 和 Web 分开查看",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M091",
+      "kind": "standard",
+      "code": "app_launch_count",
+      "name": "应用启动次数",
+      "order": 96,
+      "classification": {
+        "primary": "产品体验",
+        "secondary": "启动体验",
+        "primaryOrder": 4,
+        "secondaryOrder": 0
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "技术称已实现（待验数）"
+        },
+        "businessDomain": "启动质量",
+        "metricType": "用户行为",
+        "metricLevel": "过程",
+        "definition": "Notion 技术字典未登记；其他现有资料显示后台已有同名或近似指标，但尚未提供可核对的统一技术定义。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "有效启动记录数",
+        "deduplication": "同一次启动只计一次；重复上报不重复计算",
+        "windowAndGrain": "业务日、平台、应用版本、PID",
+        "dataSource": "现有启动日志；未来 app_launch",
+        "exclusions": "预加载、健康检查、重复发送、测试启动",
+        "knownIssues": "现有后台“启动量”的唯一键与新埋点尚未完成验数，不能直接拼接两套历史序列",
+        "recommendedDefinition": "App 或 Web 产品被用户实际启动并进入前台的次数；同一次启动只计一次",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "M052",
+      "kind": "standard",
+      "code": "bottom_navigation_tab_penetration",
+      "name": "底部导航Tab渗透率",
+      "order": 97,
+      "classification": {
+        "primary": "产品体验",
+        "secondary": "全局导航",
+        "primaryOrder": 4,
+        "secondaryOrder": 1
+      },
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tracking_draft",
+          "label": "埋点草稿支持"
+        },
+        "businessDomain": "全局导航",
+        "metricType": "用户行为",
+        "metricLevel": "诊断",
+        "definition": "现有后台未登记。",
+        "developmentFormula": "Notion 未登记公式",
+        "registeredFormula": "指定Tab点击用户数 ÷ 活跃用户数",
+        "deduplication": "同一用户每天只计一次",
+        "windowAndGrain": "业务日、平台、Tab",
+        "dataSource": "bottom_navigation_tab_click、活跃用户口径",
+        "exclusions": "默认首页自动进入、重复点击",
+        "knownIssues": "分母需明确登录DAU还是全访问用户",
+        "recommendedDefinition": "活跃用户中点击过指定底部Tab的比例",
+        "boundary": null,
+        "baseMetricIds": [],
+        "unit": null
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "DM001",
+      "kind": "period_derived",
+      "code": "active_user_days",
+      "name": "累计活跃人天",
+      "order": 98,
+      "classification": null,
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "基础指标技术称已实现（待验数），派生结果待验数"
+        },
+        "businessDomain": null,
+        "metricType": null,
+        "metricLevel": null,
+        "definition": "所选周期内，每个成熟业务日的日活跃用户数之和",
+        "developmentFormula": null,
+        "registeredFormula": "所选周期每日活跃用户数求和",
+        "deduplication": "每个业务日内按 M016 规则去重；同一用户跨业务日出现时分别计数",
+        "windowAndGrain": "所选周期内数据已经成熟的业务日",
+        "dataSource": null,
+        "exclusions": null,
+        "knownIssues": null,
+        "recommendedDefinition": null,
+        "boundary": "不等于查询区间内去重的活跃用户数，不能解释为查询区间内的不同用户数；缺失或尚未成熟的业务日不按 0 计算",
+        "baseMetricIds": [
+          "M016"
+        ],
+        "unit": "人·天"
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "DM002",
+      "kind": "period_derived",
+      "code": "viewer_user_days",
+      "name": "累计观影人天",
+      "order": 99,
+      "classification": null,
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "基础指标技术称已实现（待验数），派生结果待验数"
+        },
+        "businessDomain": null,
+        "metricType": null,
+        "metricLevel": null,
+        "definition": "所选周期内，每个成熟业务日的观影用户数之和",
+        "developmentFormula": null,
+        "registeredFormula": "所选周期每日观影用户数求和",
+        "deduplication": "每个业务日内按 M026 规则去重；同一用户跨业务日观影时分别计数",
+        "windowAndGrain": "所选周期内数据已经成熟的业务日",
+        "dataSource": null,
+        "exclusions": null,
+        "knownIssues": null,
+        "recommendedDefinition": null,
+        "boundary": "不等于查询区间去重观影用户数，也不代表有效观影用户数；缺失或尚未成熟的业务日不按 0 计算",
+        "baseMetricIds": [
+          "M026"
+        ],
+        "unit": "人·天"
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    },
+    {
+      "id": "DM003",
+      "kind": "period_derived",
+      "code": "payer_user_days",
+      "name": "累计付费人天",
+      "order": 100,
+      "classification": null,
+      "authority": {
+        "document": "全站指标体系.md",
+        "version": "v0.24-draft",
+        "sourceBuildStatus": {
+          "code": "tech_claimed_pending_validation",
+          "label": "基础指标技术称已实现（待验数），派生结果待验数"
+        },
+        "businessDomain": null,
+        "metricType": null,
+        "metricLevel": null,
+        "definition": "所选周期内，每个成熟业务日的付费用户数之和",
+        "developmentFormula": null,
+        "registeredFormula": "所选周期每日付费用户数求和",
+        "deduplication": "每个业务日内按 M059 规则去重；同一用户在不同业务日付费时分别计数",
+        "windowAndGrain": "所选周期内数据已经成熟的业务日",
+        "dataSource": null,
+        "exclusions": null,
+        "knownIssues": null,
+        "recommendedDefinition": null,
+        "boundary": "不等于查询区间去重付费用户数；缺失或尚未成熟的业务日不按 0 计算",
+        "baseMetricIds": [
+          "M059"
+        ],
+        "unit": "人·天"
+      },
+      "ypbiMapping": {
+        "status": "not_configured",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "sourceApiIds": [],
+        "capabilities": {
+          "grains": [],
+          "platformModes": [],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null
+      },
+      "analysis": {
+        "status": "unavailable",
+        "reasonCodes": [
+          "mapping_not_configured"
+        ]
+      }
+    }
+  ]
+}

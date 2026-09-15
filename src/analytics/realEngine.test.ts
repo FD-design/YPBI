@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DashboardCardConfig } from "../types";
-import { buildAnalyticsRequest, buildDrillInsights, transformRealResult } from "./realEngine";
+import { buildAnalyticsRequest, buildDrillInsights, parseAnalyticsResponse, transformRealResult } from "./realEngine";
 import type { DashboardFilters } from "./mockEngine";
 
 const filters: DashboardFilters = { mode: "all", platforms: ["Pornhub"], dateRange: "近7日" };
@@ -11,6 +11,10 @@ const response = (rows: Array<Record<string, string | number | null>>, summary: 
 });
 
 describe("transformRealResult", () => {
+  test("接口空响应转换为稳定的中文错误", async () => {
+    await expect(parseAnalyticsResponse(new Response("", { status: 502 }))).rejects.toThrow("数据服务暂时不可用，请稍后重试");
+  });
+
   test("查询请求保留内容和关键词等真实维度", () => {
     const contentCard: DashboardCardConfig = { id: "content-tree", title: "内容贡献", type: "treemap", model: "content_position", metrics: ["videoWatchCount"], dimensions: ["category", "content"], size: "lg" };
     expect(buildAnalyticsRequest(contentCard, filters)).toMatchObject({ analysisType: "ranking", dimensionIds: ["category", "content"] });

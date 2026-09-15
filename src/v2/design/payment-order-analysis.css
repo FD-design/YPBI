@@ -1,0 +1,11 @@
+.payment-order__state { margin:12px 16px; font-size:var(--font-size-body-sm); color:var(--color-text-2); }
+.payment-business__summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px 20px; padding:0 16px 16px; }
+.payment-business__summary > .compact-metric-reading { border-top:0; border-bottom:1px solid var(--color-divider); padding:12px 0; }
+.payment-business__comparison-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin:8px 16px; }
+.payment-business__comparison-head h3 { margin:0; font-size:var(--font-size-body); }
+.payment-business__advanced[open] > .topic-preview__grid { margin-top:16px; }
+.board-preview > .payment-business__advanced { margin:0; padding:16px; border:1px solid var(--color-border); border-radius:var(--radius-card); background:var(--color-surface); }
+.payment-business__note,.payment-business__advanced { margin:12px 16px; color:var(--color-text-2); font-size:var(--font-size-body-sm); line-height:1.7; }
+.payment-business__pending { margin:8px 16px 16px; padding:24px 16px; background:var(--color-surface-subtle); color:var(--color-text-3); text-align:center; }
+.payment-business__advanced summary { cursor:pointer; color:var(--color-text-2); }
+@media(max-width:767px) { .payment-business__summary { grid-template-columns:repeat(2,minmax(0,1fr)); } }

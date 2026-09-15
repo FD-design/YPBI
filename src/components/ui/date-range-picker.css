@@ -1,0 +1,63 @@
+.ui-date-range { min-width: max-content; flex-shrink: 0; }
+.ui-date-range__trigger { width: 100%; height: var(--size-control-md); box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-control); color: var(--color-text-1); background: var(--color-surface); font-size: var(--font-size-body-sm); white-space: nowrap; }
+.ui-date-range__trigger span { flex: 1; text-align: left; }
+.ui-date-range__trigger svg { width: 14px; height: 14px; flex: none; color: var(--color-text-2); }
+.ui-date-range__trigger:hover { border-color: var(--color-border-hover); }
+.ui-date-range__trigger:active, .ui-date-range__trigger[aria-expanded="true"] { border-color: var(--color-brand-600); background: var(--color-brand-050); box-shadow: 0 0 0 2px var(--color-brand-100); }
+.ui-date-range__trigger[aria-expanded="true"] > svg:last-child { transform: rotate(180deg); color: var(--color-brand-700); }
+.ui-date-panel { position: fixed; margin: 0; box-sizing: border-box; width: min(850px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-card); color: var(--color-text-1); background: var(--color-surface); box-shadow: var(--shadow-overlay); font-size: var(--font-size-body); }
+.ui-date-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.ui-date-panel::backdrop { background: transparent; }
+.ui-date-panel > header, .ui-date-panel > footer { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+.ui-date-panel > header { border-bottom: 1px solid var(--color-divider); }
+.ui-date-panel > header > strong { font-size: var(--font-size-metric-label); }
+.ui-date-panel > header > small { margin-left: auto; }
+.ui-date-panel button { cursor: pointer; }
+.ui-date-panel button:focus-visible, .ui-date-range__trigger:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: 2px; }
+.ui-date-panel button:disabled, .ui-date-panel button[aria-disabled="true"] { cursor: not-allowed; color: var(--color-text-3); }
+.ui-date-panel small { font-size: var(--font-size-body-sm); font-weight: var(--font-weight-regular); color: var(--color-text-2); }
+.ui-date-panel > header > button, .ui-date-panel__months header > button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--color-text-2); }
+.ui-date-panel svg { width: 16px; height: 16px; }
+.ui-date-panel__body { display: grid; grid-template-columns: 218px minmax(0, 1fr); overflow: auto; }
+.ui-date-panel__body aside { padding: 16px; border-right: 1px solid var(--color-divider); }
+.ui-date-panel__body aside > strong { font-size: var(--font-size-metric-label); }
+.ui-date-panel__quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.ui-date-panel__quick-grid button { border: 0; border-radius: var(--radius-control); padding: 7px 4px; background: var(--color-surface-subtle); color: var(--color-text-2); font-size: var(--font-size-body-sm); }
+.ui-date-panel__quick-grid button[aria-pressed="true"] { background: var(--color-brand-600); color: var(--color-text-on-emphasis); }
+.ui-date-panel__quick-grid button:not([aria-disabled="true"]):hover { box-shadow: inset 0 0 0 1px var(--color-brand-600); }
+.ui-date-panel__quick-grid button:not([aria-disabled="true"]):active { background: var(--color-brand-100); color: var(--color-brand-700); }
+.ui-date-panel__quick-grid button small { display: block; margin-top: 4px; font-size: var(--font-size-caption); }
+.ui-date-panel__custom { padding: 16px; min-width: 0; }
+.ui-date-panel__inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.ui-date-panel__inputs label { min-width: 0; display: grid; gap: 6px; font-size: var(--font-size-body-sm); color: var(--color-text-2); }
+.ui-date-panel__inputs input { box-sizing: border-box; min-width: 0; width: 100%; height: 34px; border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: 4px 8px; color: var(--color-text-1); background: var(--color-surface); font: inherit; }
+.ui-date-panel__months { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ui-date-panel__months > section { min-width: 0; }
+.ui-date-panel__months header { display: flex; align-items: center; min-height: 32px; }
+.ui-date-panel__months header strong { flex: 1; text-align: center; font-size: var(--font-size-metric-label); }
+.ui-date-panel__week, .ui-date-panel__grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.ui-date-panel__week span { text-align: center; padding: 10px 0; color: var(--color-text-2); font-size: var(--font-size-body-sm); }
+.ui-date-panel__grid button, .ui-date-panel__grid > span { height: 34px; border: 0; background: transparent; color: var(--color-text-1); font-size: var(--font-size-body-sm); }
+.ui-date-panel__grid button.is-range { background: var(--color-brand-050); }
+.ui-date-panel__grid button.is-endpoint { background: var(--color-brand-600); color: var(--color-text-on-emphasis); border-radius: var(--radius-control); }
+.ui-date-panel__grid button:not(:disabled):hover { box-shadow: inset 0 0 0 1px var(--color-brand-600); }
+.ui-date-panel__grid button:not(:disabled):active { background: var(--color-brand-100); color: var(--color-brand-700); }
+.ui-date-panel__grid button.is-anchor { background: var(--color-brand-600); color: var(--color-text-on-emphasis); box-shadow: inset 0 0 0 2px var(--color-brand-800); }
+.ui-date-panel__guidance { margin: 12px 0 0; min-height: 20px; color: var(--color-text-2); font-size: var(--font-size-body-sm); }
+.ui-date-panel > footer { border-top: 1px solid var(--color-divider); }
+.ui-date-panel > footer > span { flex: 1; font-size: var(--font-size-body-sm); color: var(--color-text-2); }
+@media (max-width: 767px) {
+  .ui-date-range__trigger { min-height: 44px; }
+  .ui-date-panel { inset: 0; width: 100%; height: 100dvh; max-height: none; border-radius: 0; }
+  .ui-date-panel > header { flex-wrap: wrap; }
+  .ui-date-panel > header > small { order: 3; width: 100%; margin: 0; }
+  .ui-date-panel > header > button { margin-left: auto; }
+  .ui-date-panel__body { display: block; }
+  .ui-date-panel__body aside { border-right: 0; border-bottom: 1px solid var(--color-divider); }
+  .ui-date-panel__quick-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .ui-date-panel__quick-grid button { min-height: 44px; }
+  .ui-date-panel__months { grid-template-columns: 1fr; }
+  .ui-date-panel__grid button { height: 44px; }
+  .ui-date-panel > footer { flex-wrap: wrap; }
+  .ui-date-panel > footer > span { flex-basis: 100%; }
+}

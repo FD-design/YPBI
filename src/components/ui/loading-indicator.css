@@ -1,0 +1,5 @@
+.ui-loading-indicator { width: 24px; height: 24px; flex: none; color: var(--color-brand-600); }
+@keyframes ui-loading-turn { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: no-preference) {
+  .ui-loading-indicator { animation: ui-loading-turn var(--motion-loading-cycle) linear infinite; }
+}

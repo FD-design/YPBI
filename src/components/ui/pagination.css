@@ -1,0 +1,20 @@
+.ui-pagination { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; min-height: 40px; padding: var(--space-2) var(--space-4); box-sizing: border-box; color: var(--color-text-2); font-size: var(--font-size-caption); }
+.ui-pagination__range { white-space: nowrap; margin-right: auto; }
+.ui-pagination__pages, .ui-pagination form, .ui-pagination label { display: flex; align-items: center; gap: 4px; }
+.ui-pagination button, .ui-pagination select, .ui-pagination input { font: inherit; color: var(--color-text-2); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-control); min-width: 28px; min-height: 28px; padding: 3px 6px; }
+.ui-pagination button { cursor: pointer; }
+.ui-pagination button svg { width: 14px; height: 14px; display: block; }
+.ui-pagination button[aria-current=page] { background: var(--color-brand-600); border-color: var(--color-brand-600); color: var(--color-text-inverse, white); }
+.ui-pagination button:disabled { opacity: .4; cursor: default; }
+.ui-pagination input { width: 48px; }
+.ui-pagination button:focus-visible, .ui-pagination select:focus-visible, .ui-pagination input:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: 2px; }
+.ui-result-table { min-width: 0; width: 100%; }
+.ui-result-table__viewport { overflow: auto; max-height: min(420px, 55dvh); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.ui-result-table.is-compact { height: 100%; display: flex; flex-direction: column; }
+.ui-result-table.is-compact .ui-result-table__viewport { flex: 1; min-height: 0; max-height: none; }
+.ui-result-table table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: var(--font-size-body-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ui-result-table th, .ui-result-table td { text-align: right; padding: 10px 12px; border-bottom: 1px solid var(--color-divider); }
+.ui-result-table th:first-child, .ui-result-table td:first-child { text-align: left; }
+.ui-result-table th { position: sticky; top: 0; z-index: 1; background: var(--color-surface-subtle); color: var(--color-text-2); }
+.ui-result-table td button { border: 0; background: transparent; padding: 0; font: inherit; color: var(--color-brand-700); cursor: pointer; }
+@media(max-width: 767px) { .ui-pagination button, .ui-pagination select, .ui-pagination input { min-height: 32px; min-width: 32px; } }
