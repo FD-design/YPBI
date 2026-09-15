@@ -1,4 +1,5 @@
 import { randomBytes, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
+import { BI_PASSWORD_MAX_LENGTH, BI_PASSWORD_MIN_LENGTH } from "../../contracts/bi-auth";
 
 interface PendingPasswordWork {
   work: () => Promise<unknown>;
@@ -101,7 +102,9 @@ function assertParameters(parameters: ScryptParameters) {
 
 function passwordBytes(password: string) {
   const bytes = Buffer.byteLength(password, "utf8");
-  if (password.length < 12 || password.length > 256 || bytes > 1024) throw new Error("密码长度必须为 12～256 个字符");
+  if (password.length < BI_PASSWORD_MIN_LENGTH || password.length > BI_PASSWORD_MAX_LENGTH || bytes > 1024) {
+    throw new Error(`密码长度必须为 ${BI_PASSWORD_MIN_LENGTH}～${BI_PASSWORD_MAX_LENGTH} 个字符`);
+  }
   return password;
 }
 

@@ -17,6 +17,12 @@ const testScryptParameters: ScryptParameters = {
 };
 
 describe("BI password hashing", () => {
+  test("普通账号接受 6 位密码并拒绝更短密码", async () => {
+    const encoded = await hashPassword("adi123", testScryptParameters);
+    expect(await verifyPassword("adi123", encoded)).toBe(true);
+    await expect(hashPassword("adi12", testScryptParameters)).rejects.toThrow("密码长度必须为 6～256 个字符");
+  });
+
   test("使用带参数和随机 salt 的 scrypt 哈希", async () => {
     const first = await hashPassword("Correct-password-2026", testScryptParameters);
     const second = await hashPassword("Correct-password-2026", testScryptParameters);

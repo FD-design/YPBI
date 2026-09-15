@@ -1,5 +1,6 @@
 import { AlertTriangle, KeyRound, LoaderCircle, LockKeyhole, LogOut, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
+import { BI_PASSWORD_MAX_LENGTH, BI_PASSWORD_MIN_LENGTH } from "../../../contracts/bi-auth";
 import { AuthRequestError } from "../api/auth";
 import { useAuthentication } from "../app/AuthProvider";
 import { navigate, ProductLink } from "../app/router";
@@ -75,7 +76,7 @@ export function LoginPage({ returnTo }: { returnTo: string }) {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (submitting || username.trim().length < 3 || password.length < 12) return;
+    if (submitting || username.trim().length < 3 || password.length < BI_PASSWORD_MIN_LENGTH) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -95,9 +96,9 @@ export function LoginPage({ returnTo }: { returnTo: string }) {
     <div className="v2-auth-intro"><LockKeyhole aria-hidden="true"/><div><h1 id="v2-login-title">登录 YPBI</h1><p>使用管理员为你创建的内部账号登录。</p></div></div>
     <form className="v2-auth-form" onSubmit={submit}>
       <label><span>账号</span><input name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} minLength={3} maxLength={64} required autoFocus value={username} onChange={(event) => setUsername(event.target.value)} disabled={submitting}/></label>
-      <label><span>密码</span><input name="password" type="password" autoComplete="current-password" minLength={12} maxLength={256} required value={password} onChange={(event) => setPassword(event.target.value)} disabled={submitting}/></label>
+      <label><span>密码</span><input name="password" type="password" autoComplete="current-password" minLength={BI_PASSWORD_MIN_LENGTH} maxLength={BI_PASSWORD_MAX_LENGTH} required value={password} onChange={(event) => setPassword(event.target.value)} disabled={submitting}/></label>
       <ErrorMessage error={error}/>
-      <button type="submit" className="ui-button ui-button--primary ui-button--lg" disabled={submitting || username.trim().length < 3 || password.length < 12}>{submitting ? <LoaderCircle className="is-spinning" aria-hidden="true"/> : <KeyRound aria-hidden="true"/>}{submitting ? "正在登录" : "登录"}</button>
+      <button type="submit" className="ui-button ui-button--primary ui-button--lg" disabled={submitting || username.trim().length < 3 || password.length < BI_PASSWORD_MIN_LENGTH}>{submitting ? <LoaderCircle className="is-spinning" aria-hidden="true"/> : <KeyRound aria-hidden="true"/>}{submitting ? "正在登录" : "登录"}</button>
     </form>
     <div className="v2-auth-security"><ShieldCheck aria-hidden="true"/><span>系统不会在浏览器本地保存账号密码。</span></div>
   </section></main></div>;
@@ -110,14 +111,14 @@ export function PasswordForm({ forced, onComplete, onCancel }: { forced: boolean
   const [confirmation, setConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<AuthRequestError | null>(null);
-  const localError = newPassword.length > 0 && newPassword.length < 12
-    ? "新密码至少需要 12 个字符"
+  const localError = newPassword.length > 0 && newPassword.length < BI_PASSWORD_MIN_LENGTH
+    ? `新密码至少需要 ${BI_PASSWORD_MIN_LENGTH} 个字符`
     : confirmation.length > 0 && newPassword !== confirmation
       ? "两次输入的新密码不一致"
       : currentPassword.length > 0 && currentPassword === newPassword
         ? "新密码不能与当前密码相同"
         : "";
-  const valid = Boolean(currentPassword && newPassword.length >= 12 && newPassword === confirmation && currentPassword !== newPassword);
+  const valid = Boolean(currentPassword && newPassword.length >= BI_PASSWORD_MIN_LENGTH && newPassword === confirmation && currentPassword !== newPassword);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -141,9 +142,9 @@ export function PasswordForm({ forced, onComplete, onCancel }: { forced: boolean
   };
 
   return <form className="v2-auth-form" onSubmit={submit}>
-    <label><span>当前密码</span><input type="password" autoComplete="current-password" maxLength={256} required autoFocus value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} disabled={submitting}/></label>
-    <label><span>新密码</span><input type="password" autoComplete="new-password" minLength={12} maxLength={256} required aria-describedby="v2-password-rule" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} disabled={submitting}/><small id="v2-password-rule">至少 12 个字符，请勿与其他系统共用。</small></label>
-    <label><span>确认新密码</span><input type="password" autoComplete="new-password" minLength={12} maxLength={256} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={submitting}/></label>
+    <label><span>当前密码</span><input type="password" autoComplete="current-password" maxLength={BI_PASSWORD_MAX_LENGTH} required autoFocus value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} disabled={submitting}/></label>
+    <label><span>新密码</span><input type="password" autoComplete="new-password" minLength={BI_PASSWORD_MIN_LENGTH} maxLength={BI_PASSWORD_MAX_LENGTH} required aria-describedby="v2-password-rule" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} disabled={submitting}/><small id="v2-password-rule">至少 {BI_PASSWORD_MIN_LENGTH} 个字符。</small></label>
+    <label><span>确认新密码</span><input type="password" autoComplete="new-password" minLength={BI_PASSWORD_MIN_LENGTH} maxLength={BI_PASSWORD_MAX_LENGTH} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={submitting}/></label>
     {localError && <p className="v2-auth-validation" role="status">{localError}</p>}
     <ErrorMessage error={error}/>
     <div className="v2-auth-form-actions">{onCancel && <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={onCancel} disabled={submitting}>取消</button>}<button type="submit" className="ui-button ui-button--primary ui-button--lg" disabled={submitting || !valid}>{submitting ? <LoaderCircle className="is-spinning" aria-hidden="true"/> : <KeyRound aria-hidden="true"/>}{submitting ? "正在更新" : forced ? "设置新密码并继续" : "更新密码"}</button></div>
