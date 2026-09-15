@@ -4,6 +4,8 @@
 
 ## 项目概况
 
+本次交付：[原多平台 BI PR #1](https://github.com/FD-design/YPBI/pull/1)，个人分支已上传；未合并、未部署。待办与验证见[部署交接](modules/deployment.md#原多平台-bi-代码审核交接2026-09-16)。
+
 - 本地目录：`/Users/liyujing/claude code test/YPBI`
 - 本地运行状态（2026-09-15）：后端进程缺失导致会话代理 500，已按授权重新启动；前端入口与后端健康检查返回 200，匿名会话返回预期 401。退出原因尚未确认，尚无本地进程自动恢复；证据见部署模块。
 - VPS 目录：`/opt/config-driven-bi-demo`
