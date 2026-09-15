@@ -172,10 +172,13 @@ describe("日看板真实候选读取", () => {
     for (const dateRange of [["2024-01-01", "2025-01-01"], ["2026-09-06", "2026-09-05"], ["2026-02-30", "2026-03-01"]]) expect(dailyDashboardQuerySchema.safeParse({ ...query, dateRange }).success).toBe(false);
     expect(dailyDashboardQuerySchema.safeParse({ ...query, token: "not-accepted" }).success).toBe(false);
   });
-  test("开关默认关闭，生产及非本地监听不可开启", () => {
+  test("正式开关可用于生产，本地兼容开关仍受 loopback 与非生产限制", () => {
+    expect(loadEnv({}).BI_DAILY_DASHBOARD_QUERY_ENABLED).toBe(false);
+    expect(loadEnv({ NODE_ENV: "development", BI_DAILY_DASHBOARD_QUERY_ENABLED: "true" }).BI_DAILY_DASHBOARD_QUERY_ENABLED).toBe(true);
     expect(loadEnv({}).BI_LOCAL_DASHBOARD_READING_ENABLED).toBe(false);
     expect(loadEnv({ BI_LOCAL_DASHBOARD_READING_ENABLED: "true" }).BI_LOCAL_DASHBOARD_READING_ENABLED).toBe(true);
     for (const settings of [{ NODE_ENV: "production" }, { HOST: "0.0.0.0" }]) expect(() => loadEnv({ ...settings, BI_LOCAL_DASHBOARD_READING_ENABLED: "true" })).toThrow("仅允许非生产环境");
+    expect(() => loadEnv({ BI_DAILY_DASHBOARD_QUERY_ENABLED: "1" })).toThrow("环境变量配置错误");
   });
 });
 

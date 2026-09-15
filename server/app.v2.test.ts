@@ -19,6 +19,7 @@ const env: AppEnv = {
   UPSTREAM_CREDENTIALS_FILE: join(tmpdir(), "ypbi-v2-error-test-credentials.json"),
   WORKSPACE_FILE: join(tmpdir(), "ypbi-v2-error-test-workspace.json"),
   BI_V2_CORE_OVERVIEW_QUERY_ENABLED: false,
+  BI_DAILY_DASHBOARD_QUERY_ENABLED: false,
   BI_LOCAL_DASHBOARD_READING_ENABLED: false,
   REQUEST_TIMEOUT_MS: 1_000,
   MAX_PLATFORM_CONCURRENCY: 1
@@ -49,11 +50,19 @@ const maintainerIdentity: IdentityProvider = {
 };
 
 describe("buildApp V2 error boundary", () => {
-  test("核心经营总览开关开启但没有真实执行器时启动即失败关闭", async () => {
-    await expect(buildApp(
+  test("核心经营总览开关走标准启动执行器，未验数指标仍按可信水位门禁失败关闭", async () => {
+    const app = await buildApp(
       { ...env, BI_V2_CORE_OVERVIEW_QUERY_ENABLED: true },
       { identityProvider: readerIdentity }
-    )).rejects.toThrow("必须注入核心经营总览真实查询执行器");
+    );
+    openApps.push(app);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/bi/v2/queries/dashboards/core-overview",
+      payload: { scope: { kind: "pids", pids: ["PH"] }, metricIds: ["M016"] }
+    });
+    expect(response.statusCode).toBe(422);
+    expect(response.json().error.code).toBe("METRIC_NOT_READY");
   });
 
   test("默认运行入口没有正式身份来源时必然失败关闭", async () => {

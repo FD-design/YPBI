@@ -27,6 +27,7 @@ const envSchema = z.object({
   BI_AUTH_CSRF_SECRET: z.preprocess(emptyStringAsUndefined, z.string().min(32).optional()),
   BI_PUBLIC_ORIGIN: z.preprocess(emptyStringAsUndefined, z.url().optional()),
   BI_V2_CORE_OVERVIEW_QUERY_ENABLED: explicitBoolean,
+  BI_DAILY_DASHBOARD_QUERY_ENABLED: explicitBoolean,
   BI_LOCAL_DASHBOARD_READING_ENABLED: explicitBoolean,
   DATABASE_URL: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),

@@ -33,7 +33,9 @@ import { resolveIdentity } from "./identity/resolve-identity";
 import { bindClientRequestAbort } from "./http/client-request-abort";
 import { PDaySumM016Source } from "./v2/m016-source";
 import { V2MetricQueryService } from "./v2/metric-query.service";
-import { DailyDashboardService } from "./v2/daily-dashboard.service";
+import { DailyDashboardService, type DailyDashboardExecutor } from "./v2/daily-dashboard.service";
+import { CoreOverviewQueryService } from "./v2/core-overview/core-overview-query.service";
+import { getV2MetricDefinition } from "./v2/metric-definitions";
 import {
   v2BiPlugin,
   type V2CoreOverviewQueryExecutor,
@@ -55,6 +57,7 @@ export interface BuildAppDependencies {
   authHealthCheck?: () => Promise<void>;
   v2MetricQueryService?: V2MetricQueryExecutor;
   v2CoreOverviewQueryService?: V2CoreOverviewQueryExecutor;
+  dailyDashboardService?: DailyDashboardExecutor;
 }
 
 function rawPath(request: FastifyRequest) {
@@ -90,9 +93,6 @@ function maintenanceSecurityContext(principal: Principal): MaintenanceSecurityCo
 }
 
 export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies = {}) {
-  if (env.BI_V2_CORE_OVERVIEW_QUERY_ENABLED && !dependencies.v2CoreOverviewQueryService) {
-    throw new Error("BI_V2_CORE_OVERVIEW_QUERY_ENABLED=true 时必须注入核心经营总览真实查询执行器");
-  }
   const app = Fastify({
     logger: env.NODE_ENV === "test" ? false : {
       serializers: {
@@ -173,6 +173,8 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     }
   });
   const upstream = new UpstreamClient(env);
+  const dailyDashboardReadingEnabled = env.BI_DAILY_DASHBOARD_QUERY_ENABLED
+    || env.BI_LOCAL_DASHBOARD_READING_ENABLED;
   const sources = new SourceService(upstream);
   const details = new DetailAdapter(upstream);
   const channels = new ChannelAdapter(upstream);
@@ -512,9 +514,11 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     prefix: "/api/bi/v2",
     identityProvider,
     metricQueryService: v2MetricQueryService,
-    dailyDashboardService: env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1" ? new DailyDashboardService(upstream) : undefined,
+    dailyDashboardService: dailyDashboardReadingEnabled
+      ? dependencies.dailyDashboardService ?? new DailyDashboardService(upstream)
+      : undefined,
     coreOverviewQueryEnabled: env.BI_V2_CORE_OVERVIEW_QUERY_ENABLED,
-    coreOverviewQueryService: dependencies.v2CoreOverviewQueryService
+    coreOverviewQueryService: dependencies.v2CoreOverviewQueryService ?? new CoreOverviewQueryService(getV2MetricDefinition)
   });
 
   return app;

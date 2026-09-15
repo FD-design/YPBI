@@ -12,13 +12,19 @@
 
 日去重人数只提供日均；比率、人均、成熟批次、月活及未知币种金额不做普通日聚合。统计仍为待验数、未知完整性和空水位，权限、Token、查询字段与线上路径不变。验收记录见调整方案 9.25。
 
-## 2026-09-12 本地受保护日看板读取
+## 2026-09-16 受保护日看板读取与核心总览启动链
+
+正式日看板读取由`BI_DAILY_DASHBOARD_QUERY_ENABLED`显式开启，production 可用；标准`server/index.ts`启动链会创建真实`DailyDashboardService`，继续经过登录、`bi:read`、PID权限、HTTPS反代、上游凭据和严格响应结构校验。`BI_LOCAL_DASHBOARD_READING_ENABLED`仅作为旧本地联调兼容开关，仍只允许非生产环境监听`127.0.0.1`。两个开关均默认关闭，关闭时不执行日看板上游查询。
+
+核心总览开关改由标准启动链创建`CoreOverviewQueryService`，不再要求外部手工注入执行器。该服务只调用同时满足当前权威版本映射、passed验数和可信完整日水位的provider；当前9项指标仍未达到这些条件，因此开启开关后返回明确`METRIC_NOT_READY`，不会伪造水位、跳过验数或使用日看板候选值冒充正式结果。
+
+## 2026-09-12 日看板候选读取
 
 新增`GET /api/bi/v2/catalog/readable-dashboards`和`POST /api/bi/v2/queries/dashboards/daily-reading`，共同受现有真实会话、`bi:read`和有效PID范围保护，响应`no-store`。目录从PRD生成的官方看板快照派生；查询契约由`contracts/daily-dashboard.ts`统一定义，输入仅接受看板、单PID、1～366天日期区间。
 
 `DailyDashboardService`从唯一候选表读取日汇总、注册留存增强、渠道V2、支付通道统计、签到概览及实时统计6类来源，80个投影按板分配，`dailyDashboardProjectionDocumentation()`派生核对表。校验分页总数、重复日期、错PID、越界日期、数值类型及结果映射；日汇总／留存整源冲突独立失败，渠道／支付／签到／实时统计逐日失败独立保留。真实0、无记录、字段缺失、异常值、分母为0、未成熟、来源失败分别返回，完整性未知、水位为空、验数状态为待验数。不返回上游原文或凭据，不改变正式指标准入与授权。
 
-`BI_LOCAL_DASHBOARD_READING_ENABLED`默认关闭，只允许非生产、loopback运行。关闭后不执行上游日查询；production禁止启用。该独立路径不改变既有M016技术查询、正式核心总览准入或角色策略。无Schema变更、存量迁移或对象写API。实际UI覆盖见[数据支持清单](./data-platform.md#看板数据支持清单2026-09-12)。
+该候选路径不改变既有M016技术查询、正式核心总览准入或角色策略。无Schema变更、存量迁移或对象写API。实际UI覆盖见[数据支持清单](./data-platform.md#看板数据支持清单2026-09-12)。
 
 ## 2026-09-12 独立本地认证验证
 
@@ -33,7 +39,7 @@
 后端保留同仓模块化单体，当前分为四条边界：
 
 1. `/api/bi/v2/auth/*`：YPBI 自有账号、会话和改密。
-2. `/api/bi/v2/*`：需要普通账号身份和 `bi:read` 权限的目标产品只读 API；当前包含指标 / 平台目录、M016 技术查询，以及默认关闭且尚无真实执行器的核心经营总览首屏批量查询门禁。
+2. `/api/bi/v2/*`：需要普通账号身份和 `bi:read` 权限的目标产品只读 API；当前包含指标 / 平台目录、日看板候选读取、M016 技术查询，以及默认关闭、具有标准编排器但尚无已准入provider的核心经营总览首屏批量查询门禁。
 3. `/api/bi/admin/*`：已登录用户进入数据源维护前的能力校验和二次认证。
 4. 遗留 `/api/bi/*`：仍保留在 Fastify 内，供本机迁移核对；目标公网代理不再转发，生产环境的旧工作区写入还会由应用层返回 `410`。
 
@@ -142,11 +148,11 @@ V2 业务路由每次请求都通过 `IdentityProvider` 解析服务端会话，
 | GET | `/api/bi/v2/catalog/metrics` | 兼容首个技术查询切片；仅当 M016 映射已配置、能力可投影且绑定当前权威版本时返回 M016，否则安全返回空目录；不代表正式选择器已经开放该指标 |
 | GET | `/api/bi/v2/catalog/platforms` | 返回服务端有效平台目录与 Principal PID 范围的交集 |
 | POST | `/api/bi/v2/queries/metrics` | 兼容 M016 受控验数与后续正式查询；接受 `metricId + pid + dateRange + grain=day`，返回单 PID 日序列、逐日数据状态、映射版本和验数状态；未验数时只有具备数据源维护权限的维护者可对“已配置且绑定当前权威版本”的映射执行，其他不可用映射均失败关闭 |
-| POST | `/api/bi/v2/queries/dashboards/core-overview` | 核心经营总览 `core-overview/v1` 首屏只读批量契约；接受正式整体或一组 PID、最近共同完整周期或明确日期范围，以及固定 9 项指标的可选子集。当前 `BI_V2_CORE_OVERVIEW_QUERY_ENABLED=false` 且没有真实执行器，因此经过身份校验后返回 503，不提供业务值 |
+| POST | `/api/bi/v2/queries/dashboards/core-overview` | 核心经营总览 `core-overview/v1` 首屏只读批量契约；接受正式整体或一组 PID、最近共同完整周期或明确日期范围，以及固定 9 项指标的可选子集。标准启动链已创建正式编排器；开关默认关闭时经过身份校验后返回 503，开启后若所选指标尚无当前映射、passed 验数、正式 provider 或可信水位，则返回 422，不提供业务值 |
 
-完整指标目录由 `tools/generate-metric-definitions.mjs` 从 `全站指标体系.md` 与版本化 `server/v2/config/metric-mapping-registry.v1.json` 确定性生成。前者是指标定义权威源，后者是 YPBI 查询映射与验数证据的唯一登记源；运行快照带指标权威版本、接入登记版本、源文件和内容 SHA-256。注册表严格拒绝未知字段、重复指标、错绑映射版本或权威版本，以及没有带时区时间与证据 ID 的通过 / 失败 / 过期结果；非未开始的验数状态必须同时登记 `mappingVersion` 与 `authorityVersion`。对状态为 `configured` 的映射，生成器还会校验指标 ID、映射版本、来源接口和全部声明能力与当前已实现查询 Adapter 精确一致，避免注册表改了来源而执行器仍调用旧接口。`metrics:check`、服务端启动及浏览器响应都会拒绝结构、版本、Adapter 契约或哈希不一致。`npm run build` 已通过 `prebuild` 强制执行该检查，发布统一入口 `npm run verify:release` 还包含生成器测试、类型检查、服务端检查、生产构建和 Bun 测试；发布工作区缺少相邻权威源时不得跳过检查。源建设、查询映射和验数互相独立；只有当前权威版本、映射版本、Adapter 契约一致且验数通过时，派生 `analysis.status` 才能为可用。
+完整指标目录由 `tools/generate-metric-definitions.mjs` 从 `全站指标体系.md` 与版本化 `server/v2/config/metric-mapping-registry.v1.json` 确定性生成。前者是指标定义权威源，后者是 YPBI 查询映射与验数证据的唯一登记源；运行快照带指标权威版本、接入登记版本、源文件和内容 SHA-256。注册表严格拒绝未知字段、重复指标、错绑映射版本或权威版本，以及没有带时区时间与证据 ID 的通过 / 失败 / 过期结果；非未开始的验数状态必须同时登记 `mappingVersion` 与 `authorityVersion`。对状态为 `configured` 的映射，生成器还会校验指标 ID、映射版本、来源接口和全部声明能力与当前已实现查询 Adapter 精确一致，避免注册表改了来源而执行器仍调用旧接口。普通构建和发布校验使用仓库内已提交的指标、事件、功能投影与固定哈希证明，拒绝结构、版本、Adapter 契约、投影或哈希不一致，因此全新 checkout 不依赖仓库外文档即可复现。权威文档维护者更新源内容后，显式运行 `metrics:source:check`、`catalogs:source:check` 或对应生成命令，再把更新后的固定投影一并提交。源建设、查询映射和验数互相独立；只有当前权威版本、映射版本、Adapter 契约一致且验数通过时，派生 `analysis.status` 才能为可用。
 
-`verify:release` 的当前确切顺序为：指标定义生成器测试 → M016 离线验数工具测试 → 运行时发布准入测试 → `validation:check` → `typecheck` → `build:server` → 生产 `build` → 完整 `npm test`。最后一步依赖 Bun；运行环境缺少 Bun 时必须报告统一发布校验未全量完成，不能用前置 Node 测试通过替代。
+`verify:release` 先验证仓库内固定投影、M016 离线验数工具、运行时发布准入、导航与主题，再覆盖看板模型、目录、核心总览服务端与控制器契约；随后执行 `validation:check`、`typecheck`、`build:server`、生产 `build` 和完整 `npm test`。Bun 版本由仓库锁定；运行环境缺少锁定版本时必须报告统一发布校验未全量完成，不能用前置 Node 测试通过替代。
 
 结果态验数还必须在注册表中通过 `evidenceSha256` 固定证据原文；证据再绑定平台目录 revision 与内容摘要、全部启用 PID、7～366 个连续完整业务日、候选 / 参考数据摘要、自动比较产物路径及其摘要和九项检查。生成器同时写出 `server/v2/generated/metric-release-attestation.json`；服务启动加载指标定义时重验指标快照、注册表、平台目录、结果态证据和比较产物的固定路径与 SHA-256，并拒绝符号链接、路径逃逸、未来验证时间和注册结果缺失。该 attestation 是仓库内一致性门禁，不是带外数字签名。
 
@@ -160,9 +166,9 @@ V2 查询响应的公共 `watermark` 契约现为 `null | { type: "complete_thro
 
 默认日期由真实执行器把 `latest_complete + 7 天 + previous_equal` 解析为 Asia/Shanghai 下的共同可信水位、当前范围和上一等长范围；明确日期请求可以没有对比或使用不等长对比。当前期与对比期趋势是两条独立序列，分别逐日完整回显，避免按位置配对导致非等长周期丢点。可用卡片必须返回实际统计范围、纳入日期、非负原始值、单位、币种、合法比较、趋势、当前权威版本、映射版本、`passed` 验数、登记来源与范围一致的可信水位；比例统一使用 0～1 原始值，真实 0 合法。不可用状态区分 `no_records / no_values / not_produced / immature / not_ready / unsupported / failed`，部分成功仍返回 HTTP 200 并由 `meta.partial` 与逐卡状态保持一致。
 
-`server/v2/core-overview/core-overview-admission.ts` 与 `core-overview-period.ts` 是内部纯函数底座。前者由调用方显式注入当前指标定义解析器，直接采用快照已派生的 `analysis` 状态后再检查日粒度和范围能力，不重算准入事实；后者仅接受已通过契约和来源登记校验的指标×范围水位，取全部传入水位的最小完整日并解析周期。`available` 及带可信 provenance 的 `no_records / no_values / not_produced / immature` 均可参与计算；数组为空时抛出 `NO_TRUSTED_WATERMARK`，明确日期的当前期或对比期越过公共水位时也失败关闭。公共成功响应 Schema 已要求至少一张卡片提供合法 provenance，并直接校验 `commonCompleteThrough` 等于所有卡片可信水位最小值。正确执行器抛出的周期解析错误由路由映射为现有 `422 METRIC_NOT_READY`；执行器若错误返回全 `not_ready` / `failed` 的 200 成功体，会被 Schema 拒绝并返回 `502 CORE_OVERVIEW_SOURCE_CONFLICT`。当前仍未创建 provider / 真实 executor，也未改变生产开关。
+`server/v2/core-overview/core-overview-admission.ts` 与 `core-overview-period.ts` 是内部纯函数底座。前者由调用方显式注入当前指标定义解析器，直接采用快照已派生的 `analysis` 状态后再检查日粒度和范围能力，不重算准入事实；后者仅接受已通过契约和来源登记校验的指标×范围水位，取全部传入水位的最小完整日并解析周期。`available` 及带可信 provenance 的 `no_records / no_values / not_produced / immature` 均可参与计算；数组为空时抛出 `NO_TRUSTED_WATERMARK`，明确日期的当前期或对比期越过公共水位时也失败关闭。公共成功响应 Schema 已要求至少一张卡片提供合法 provenance，并直接校验 `commonCompleteThrough` 等于所有卡片可信水位最小值。`core-overview-query.service.ts` 是标准启动链的正式编排器，按已准入指标查找 provider、校验范围水位并执行卡片查询；周期解析错误由路由映射为现有 `422 METRIC_NOT_READY`。执行器若错误返回全 `not_ready` / `failed` 的 200 成功体，会被 Schema 拒绝并返回 `502 CORE_OVERVIEW_SOURCE_CONFLICT`。当前尚无满足准入条件的正式 provider，生产开关仍默认关闭。
 
-路由先恢复身份，再检查开关、执行器、请求、PID 范围、执行结果 Schema、请求回显及当前指标准入。响应若缺卡、跨 PID 合并、日期越界、单位或币种冲突、对比算法错误、版本或水位失配，统一返回脱敏的 `502 CORE_OVERVIEW_SOURCE_CONFLICT`；单张上游查询失败应由真实执行器收敛为对应卡片 `failed`，不擦除其他成功卡。读取型 POST 不要求 CSRF，但仍要求会话、`bi:read`、HTTPS 和可信代理。开关只接受明确 `true/false`，默认关闭；若配置为 true 却未注入真实执行器，应用在启动时失败关闭。
+路由先恢复身份，再检查开关、请求、PID 范围、执行结果 Schema、请求回显及当前指标准入。响应若缺卡、跨 PID 合并、日期越界、单位或币种冲突、对比算法错误、版本或水位失配，统一返回脱敏的 `502 CORE_OVERVIEW_SOURCE_CONFLICT`；单张上游查询失败由正式编排器收敛为对应卡片 `failed`，不擦除其他成功卡。读取型 POST 不要求 CSRF，但仍要求会话、`bi:read`、HTTPS 和可信代理。开关只接受明确 `true/false`，默认关闭；开启但缺少准入 provider 或可信水位时请求失败关闭为 `422 METRIC_NOT_READY`，应用本身可正常启动。
 
 当前 V2 没有保存分析、看板编辑、卡片编辑、导出任务或其他目标对象写 API。
 

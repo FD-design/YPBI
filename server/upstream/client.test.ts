@@ -18,6 +18,7 @@ const env: AppEnv = {
   UPSTREAM_CREDENTIALS_FILE: join(tmpdir(), "bi-upstream-client-test-unused.json"),
   WORKSPACE_FILE: join(tmpdir(), "bi-workspace-client-test-unused.json"),
   BI_V2_CORE_OVERVIEW_QUERY_ENABLED: false,
+  BI_DAILY_DASHBOARD_QUERY_ENABLED: false,
   BI_LOCAL_DASHBOARD_READING_ENABLED: false,
   REQUEST_TIMEOUT_MS: 1000,
   MAX_PLATFORM_CONCURRENCY: 1

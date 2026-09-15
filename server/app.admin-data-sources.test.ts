@@ -91,6 +91,7 @@ async function createHarness(options: {
     TOKEN_MAINTENANCE_KEY: options.maintenanceEnabled === false ? undefined : MAINTENANCE_PASSWORD,
     BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
     BI_V2_CORE_OVERVIEW_QUERY_ENABLED: false,
+    BI_DAILY_DASHBOARD_QUERY_ENABLED: false,
     BI_LOCAL_DASHBOARD_READING_ENABLED: false,
     REQUEST_TIMEOUT_MS: 1_000,
     MAX_PLATFORM_CONCURRENCY: 1,
@@ -758,6 +759,34 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
 });
 
 describe("生产环境配置", () => {
+  test("正式日看板开关通过标准启动链路注册真实查询并保留身份与 PID 边界", async () => {
+    const { app } = await createHarness({
+      nodeEnv: "production",
+      envOverrides: { BI_DAILY_DASHBOARD_QUERY_ENABLED: true }
+    });
+    const catalog = await app.inject({
+      method: "GET",
+      url: "/api/bi/v2/catalog/readable-dashboards",
+      ...forwardedRequest("198.51.100.23")
+    });
+    expect(catalog.statusCode).toBe(200);
+    expect(catalog.json().data.enabled).toBe(true);
+
+    const result = await app.inject({
+      method: "POST",
+      url: "/api/bi/v2/queries/dashboards/daily-reading",
+      ...forwardedRequest("198.51.100.23"),
+      payload: { boardId: "5.14", pid: "PH", dateRange: ["2026-09-12", "2026-09-12"] }
+    });
+    expect(result.statusCode).toBe(200);
+    expect(result.json().data).toMatchObject({
+      query: { boardId: "5.14", pid: "PH", dateRange: ["2026-09-12", "2026-09-12"] },
+      validationStatus: "pending_validation",
+      completeness: "unknown",
+      watermark: null
+    });
+  });
+
   test("核心经营总览开关默认关闭且只接受明确 true 或 false", () => {
     expect(loadEnv({ NODE_ENV: "development" }).BI_V2_CORE_OVERVIEW_QUERY_ENABLED).toBe(false);
     expect(loadEnv({ NODE_ENV: "development", BI_V2_CORE_OVERVIEW_QUERY_ENABLED: "false" }).BI_V2_CORE_OVERVIEW_QUERY_ENABLED).toBe(false);
@@ -776,11 +805,13 @@ describe("生产环境配置", () => {
       BI_IDENTITY_MODE: "local",
       BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
       BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
-      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
+      BI_DAILY_DASHBOARD_QUERY_ENABLED: "true"
     });
 
     expect(env.UPSTREAM_X_TOKEN).toBeUndefined();
     expect(env.UPSTREAM_SECONDARY_X_TOKEN).toBeUndefined();
+    expect(env.BI_DAILY_DASHBOARD_QUERY_ENABLED).toBe(true);
   });
 
   test("从环境模板读取空白可选项时按未配置处理而不是启动报错", () => {
