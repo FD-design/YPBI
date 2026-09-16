@@ -1,0 +1,5 @@
+.ui-toast { position: fixed; z-index: var(--z-modal); right: 20px; bottom: 20px; display: flex; align-items: center; gap: 12px; max-width: min(440px, calc(100vw - 32px)); padding: 12px 14px; border-radius: var(--radius-overlay); background: var(--color-surface-emphasis, #1f2937); color: var(--color-text-on-emphasis); box-shadow: var(--shadow-overlay); font-family: var(--font-sans); font-size: var(--font-size-body-sm); line-height: var(--line-height-body); box-sizing: border-box; }
+.ui-toast button { display: grid; place-items: center; flex: none; border: 0; width: 28px; height: 28px; background: transparent; color: inherit; cursor: pointer; border-radius: var(--radius-control); }
+.ui-toast button svg { width: 16px; height: 16px; }
+.ui-toast button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+@media(max-width:767px) { .ui-toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } }

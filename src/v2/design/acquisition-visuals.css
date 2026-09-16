@@ -1,0 +1,3 @@
+.acquisition-visuals__stages,.acquisition-visuals__relations { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); padding:var(--space-2) var(--space-4); gap:var(--space-4); }
+.acquisition-visuals__relations { padding-top:0; }
+@media(max-width:767px) { .acquisition-visuals__stages,.acquisition-visuals__relations { grid-template-columns:minmax(0,1fr); } }

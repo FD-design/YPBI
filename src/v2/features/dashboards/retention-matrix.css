@@ -1,0 +1,33 @@
+.retention-matrix { min-width: 0; font-size: var(--font-size-body-sm); }
+.retention-matrix__heatmap-scroll { overflow:auto; overscroll-behavior:contain; margin:0 16px 12px; border:1px solid var(--color-divider); border-radius:var(--radius-control); }
+.retention-matrix__heatmap { width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; font-variant-numeric:tabular-nums; }
+.retention-matrix__heatmap :is(td,th) { height:36px; padding:0; text-align:center; font-size:var(--font-size-body-sm); font-weight:var(--font-weight-regular); border-bottom:1px solid var(--color-surface); }
+.retention-matrix__heatmap th:first-child { width:120px; position:sticky; left:0; z-index:1; background:var(--color-surface); }
+.retention-matrix__heatmap thead th { position:sticky; top:0; z-index:2; background:var(--color-surface-subtle); font-weight:var(--font-weight-semibold); }
+.retention-matrix__heatmap thead th:first-child { z-index:3; background:var(--color-surface-subtle); }
+.retention-matrix__heatmap td { border-right:1px solid var(--color-surface); background:color-mix(in srgb,var(--color-brand-600) var(--retention-intensity),var(--color-surface)); }
+.retention-matrix__heatmap td.is-pending { background:var(--color-surface-subtle); color:var(--color-text-3); }
+.retention-matrix__heatmap button { display:block; width:100%; min-height:36px; border:0; background:transparent; color:inherit; font:inherit; padding:8px; cursor:pointer; }
+.retention-matrix__heatmap .ui-floating-hint { display:block; width:100%; }
+.retention-matrix__heatmap button:focus-visible { outline:2px solid var(--color-brand-600); outline-offset:-2px; }
+.retention-matrix__formula { padding:12px 0; color:var(--color-text-2); font-size:var(--font-size-body-sm); line-height:1.7; }
+.retention-matrix__formula p { margin:0 0 8px; }
+.retention-matrix__formula summary { color:var(--color-brand-700); cursor:pointer; width:fit-content; }
+.retention-matrix__range { margin:0 16px 8px; color:var(--color-text-2); line-height:1.6; }
+.retention-matrix__tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px 12px; }
+.retention-matrix__choices,.retention-matrix__actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
+.retention-matrix__actions { margin-left:auto; gap:8px; }
+.retention-matrix__table { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: 100%; min-width: var(--retention-table-width); }
+.ui-result-table .retention-matrix__table :is(th,td) { min-width: 112px; text-align: center; }
+.ui-result-table .retention-matrix__table :is(th,td):first-child { position: sticky; left: 0; width: 124px; min-width: 124px; max-width: 124px; box-sizing: border-box; z-index: 2; background: var(--color-surface); }
+.ui-result-table .retention-matrix__table :is(th,td):nth-child(2) { position: sticky; left: 124px; width: 112px; min-width: 112px; max-width: 112px; box-sizing: border-box; z-index: 2; background: var(--color-surface); border-right: 1px solid var(--color-border); }
+.ui-result-table .retention-matrix__table thead th { background: var(--color-surface-subtle); }
+.ui-result-table .retention-matrix__table thead th:nth-child(-n+2) { z-index: 4; }
+.ui-result-table .retention-matrix__table td:nth-child(n+3) { padding: 0; background: color-mix(in srgb,var(--color-brand-600) var(--retention-intensity,0%),var(--color-surface)); }
+.retention-matrix__table td:nth-child(n+3) button { width: 100%; min-height: 36px; padding: 8px; color: inherit; font: inherit; font-variant-numeric: tabular-nums; border:0; background:transparent; cursor:pointer; }
+.retention-matrix__table td.is-pending { color: var(--color-text-3); background: var(--color-surface-subtle) !important; }
+.retention-matrix__table .is-highlighted { box-shadow: inset 0 0 0 1px var(--color-brand-border-soft); }
+.retention-matrix__table .is-highlighted > td:first-child { color: var(--color-brand-700); font-weight: var(--font-weight-semibold); }
+.retention-matrix__legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; color: var(--color-text-2); }
+.retention-matrix__legend i { width: 110px; height: 8px; background: linear-gradient(90deg,var(--color-brand-050),var(--color-brand-600)); border-radius: 3px; }
+.retention-matrix__legend-state { margin-left: auto; color: var(--color-text-3); }

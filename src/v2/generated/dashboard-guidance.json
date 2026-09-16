@@ -1,0 +1,287 @@
+[
+  {
+    "key": "core.results",
+    "title": "主结果",
+    "description": "快速判断用户、内容与付费的核心经营规模和变化。"
+  },
+  {
+    "key": "core.efficiency",
+    "title": "效率与留存",
+    "description": "对照渗透、有效观看和注册留存，判断规模是否转化为有效经营结果。"
+  },
+  {
+    "key": "core.chains",
+    "title": "关键业务链路与质量",
+    "description": "按内容、获客和支付关系查看阶段规模及已登记的转化和质量指标。"
+  },
+  {
+    "key": "core.advertising",
+    "title": "广告点击表现",
+    "description": "看广告点击规模和活跃用户点击情况，区分总体与新用户。"
+  },
+  {
+    "key": "core.detail",
+    "title": "经营明细",
+    "description": "按业务平台核对同一数据日的核心指标、基准变化与数据状态。"
+  },
+  {
+    "key": "function.overview",
+    "title": "各功能使用概览",
+    "description": "比较各页面或模块在活跃用户中的使用程度，识别高低渗透功能。"
+  },
+  {
+    "key": "function.trend",
+    "title": "所选功能详情与趋势",
+    "description": "观察所选功能在当前范围内的变化，并核对实际日期和基准。"
+  },
+  {
+    "key": "function.structure",
+    "title": "功能使用结构",
+    "description": "按已支持的平台、新老用户或获客类型查看同一功能的使用差异。"
+  },
+  {
+    "key": "acquisition.stages",
+    "title": "获客阶段与转化",
+    "description": "同时查看访问、下载和注册阶段规模及三项已登记转化，不解释为同用户漏斗。"
+  },
+  {
+    "key": "acquisition.sources",
+    "title": "来源结构与变化",
+    "description": "判断新增来自哪些已确认来源，以及各来源规模和占比如何变化。"
+  },
+  {
+    "key": "acquisition.download",
+    "title": "下载表现",
+    "description": "按下载目标比较点击规模和已登记转化，不重复首屏日趋势。"
+  },
+  {
+    "key": "acquisition.landing",
+    "title": "落地页转化诊断",
+    "description": "并列核对落地页访问、下载点击和注册结果，区分不同统计主体。"
+  },
+  {
+    "key": "acquisition.detail",
+    "title": "获客明细",
+    "description": "按渠道、下载目标或获客类型核对完整结果和数据状态。"
+  },
+  {
+    "key": "acquisition.channel-quality",
+    "title": "渠道质量",
+    "description": "比较各渠道的新增、转化、首次体验与后续质量，识别规模与质量的差异。"
+  },
+  {
+    "key": "acquisition.activation",
+    "title": "首次激活质量",
+    "description": "观察首次体验启动成功人群的首个视频页到达，以及新增用户的有效观看表现。"
+  },
+  {
+    "key": "active.core",
+    "title": "核心判断",
+    "description": "同时查看活跃规模、注册留存和存量复访的核心结果。"
+  },
+  {
+    "key": "active.scale",
+    "title": "活跃规模与结构",
+    "description": "判断日活和月活规模，并按已支持的端别和新老用户结构定位差异。"
+  },
+  {
+    "key": "active.registration-retention",
+    "title": "注册留存详情",
+    "description": "按注册批次比较 D1、D3、D7 和 D30 的成熟留存人数与留存率。"
+  },
+  {
+    "key": "active.reactivation",
+    "title": "首次体验失败用户再激活",
+    "description": "观察首次体验失败用户在 48 小时和 72 小时窗口内是否重新激活。"
+  },
+  {
+    "key": "active.overall-return",
+    "title": "整体活跃次日回访",
+    "description": "看全部活跃用户第二天是否再次回来，并与注册留存、存量复访分别阅读。"
+  },
+  {
+    "key": "video.core",
+    "title": "消费核心结果",
+    "description": "判断观看人数、次数、时长、深度、渗透和有效观看质量。"
+  },
+  {
+    "key": "video.structure",
+    "title": "消费结构",
+    "description": "按已支持维度比较同一消费指标的结构差异并核对完整结果。"
+  },
+  {
+    "key": "video.duration",
+    "title": "观影时长结构与人均时长",
+    "description": "看观看时长来自哪些视频类型，以及人均观看深度。"
+  },
+  {
+    "key": "video.effective",
+    "title": "有效观影",
+    "description": "判断观看是否达到有效标准，以及有效消费的规模和深度。"
+  },
+  {
+    "key": "video.retention-diagnosis",
+    "title": "观影与留存诊断",
+    "description": "观影表现好，用户后续还会不会回来、继续有效观看。"
+  },
+  {
+    "key": "video.retention-outcomes",
+    "title": "观影后用户去向",
+    "description": "区分用户没有回来，还是回来后没有继续有效观看。"
+  },
+  {
+    "key": "video.ranking",
+    "title": "内容排行",
+    "description": "按所选消费指标识别主要贡献内容，图形聚焦 Top10，完整表和导出保留全集。"
+  },
+  {
+    "key": "member.core",
+    "title": "付费核心",
+    "description": "判断充值金额、付费用户、转化、用户价值和复购贡献。"
+  },
+  {
+    "key": "member.users",
+    "title": "新老用户付费表现",
+    "description": "比较新老用户的充值金额、付费规模与 ARPPU，不把分组人数相加成总体。"
+  },
+  {
+    "key": "member.income",
+    "title": "商品与分端收入",
+    "description": "判断收入来自哪些商品和客户端，并核对构成、趋势和真实交叉结果。"
+  },
+  {
+    "key": "member.structure",
+    "title": "更多付费拆解",
+    "description": "按已准入的渠道、支付方式、商品等维度继续定位付费差异。"
+  },
+  {
+    "key": "member.paywall",
+    "title": "会员引导与付费墙",
+    "description": "观察会员引导和内容付费墙的曝光、操作及已登记转化。"
+  },
+  {
+    "key": "payment.core",
+    "title": "支付链路核心",
+    "description": "查看支付提交、到账结果及已登记端到端转化和诊断指标。"
+  },
+  {
+    "key": "payment.order",
+    "title": "拉单与充值转化",
+    "description": "按总体、微信和支付宝核对日报订单链路规模与成功率。"
+  },
+  {
+    "key": "payment.method",
+    "title": "支付方式比较",
+    "description": "比较微信、支付宝的拉单次数、充值成功率和充值金额。"
+  },
+  {
+    "key": "playback.core",
+    "title": "播放核心质量",
+    "description": "判断播放是否发起、是否成功、是否达到有效标准。"
+  },
+  {
+    "key": "playback.users",
+    "title": "播放用户规模",
+    "description": "查看成功起播用户规模，并与播放次数和比率保持不同统计主体。"
+  },
+  {
+    "key": "playback.stages",
+    "title": "播放阶段关系",
+    "description": "并列核对播放尝试、成功起播和起播率，不用阶段差额推算失败。"
+  },
+  {
+    "key": "playback.diagnosis",
+    "title": "播放质量诊断",
+    "description": "按平台、版本、视频类型和触发方式定位播放质量差异。"
+  },
+  {
+    "key": "playback.first-frame",
+    "title": "首帧耗时分布",
+    "description": "看首帧加载快慢及慢加载样本分布。"
+  },
+  {
+    "key": "discovery.core",
+    "title": "视频发现与互动",
+    "description": "先看视频曝光承接，再看点击来源、分类导航和视频互动。"
+  },
+  {
+    "key": "discovery.category-nav",
+    "title": "视频首页一级分类导航",
+    "description": "比较一级分类 Tab 的点击、用户和人均使用，不生成总渗透率。"
+  },
+  {
+    "key": "discovery.category-content",
+    "title": "视频点击来源",
+    "description": "看用户从哪些页面、列表和分类入口选择视频，定位主要内容入口。"
+  },
+  {
+    "key": "discovery.sources",
+    "title": "内容发现结构",
+    "description": "先看总体曝光是否转化为点击，再比较各页面、列表和位置的承接差异。"
+  },
+  {
+    "key": "discovery.search",
+    "title": "搜索需求",
+    "description": "同表查看搜索规模、搜索用户与结果承接，定位需求是否得到满足。"
+  },
+  {
+    "key": "discovery.interaction",
+    "title": "视频互动排行",
+    "description": "查看点赞、收藏等互动次数及互动内容排行。"
+  },
+  {
+    "key": "discovery.community",
+    "title": "作者与社区",
+    "description": "按作者、帖子和内容类型核对关注、帖子曝光点击与评论提交。"
+  },
+  {
+    "key": "operations.outcomes",
+    "title": "玩法结果规模",
+    "description": "查看玩法参与和邀请结果的总体规模。"
+  },
+  {
+    "key": "operations.quality",
+    "title": "过程与成功质量",
+    "description": "判断签到、任务、福利和邀请过程是否完成及其成熟状态。"
+  },
+  {
+    "key": "operations.tasks",
+    "title": "签到、任务与福利",
+    "description": "按入口、类型、周期和福利类型定位参与差异。"
+  },
+  {
+    "key": "operations.invite",
+    "title": "分享与邀请",
+    "description": "按绑定来源、奖励接收方和里程碑查看邀请结果。"
+  },
+  {
+    "key": "experience.startup",
+    "title": "启动诊断",
+    "description": "先判断启动能否成功，再结合样本规模和周期变化定位异常。"
+  },
+  {
+    "key": "experience.diagnosis",
+    "title": "启动结构与质量诊断",
+    "description": "按平台、启动类型和版本比较，定位启动异常集中在哪里。"
+  },
+  {
+    "key": "function.navigation",
+    "title": "全局导航",
+    "description": "看各底部 Tab 被多少用户使用、覆盖多少活跃用户，以及使用频次。"
+  },
+  {
+    "key": "version.distribution",
+    "title": "版本分布",
+    "description": "看各版本的使用人数与启动次数，确认主流版本和旧版本的覆盖。"
+  },
+  {
+    "key": "version.core",
+    "title": "核心表现",
+    "description": "比较各版本在 Android、iOS 的活跃、播放、观影与留存表现。"
+  },
+  {
+    "key": "version.trend",
+    "title": "变化趋势",
+    "description": "观察所选版本的指标变化，并对比其他版本或上一周期。"
+  }
+]

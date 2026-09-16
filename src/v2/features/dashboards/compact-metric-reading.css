@@ -1,0 +1,127 @@
+.compact-metric-reading {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(116px, 42%);
+  grid-template-areas: "summary trend" "actions actions";
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-divider);
+  padding: var(--space-3) 0;
+}
+
+.compact-metric-reading.is-stage {
+  border-top: 0;
+  border-left: 2px solid var(--color-brand-border-soft);
+  padding-left: var(--space-3);
+}
+
+.compact-metric-reading > .metric-summary { grid-area: summary; }
+.compact-metric-reading.is-link-only {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "summary" "actions";
+}
+
+.compact-metric-reading__title {
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.compact-metric-reading__title:hover { color: var(--color-brand-700); }
+.compact-metric-reading__title:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: 3px; }
+.compact-metric-reading__note { display: flex; flex-wrap: wrap; gap: 4px var(--space-2); }
+.compact-metric-reading__note [role="status"] { color: var(--color-warning); font-weight: var(--font-weight-medium); }
+
+.compact-metric-reading__trend-wrap {
+  grid-area: trend;
+  min-width: 0;
+  align-self: end;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.compact-metric-reading__trend {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--color-text-3);
+  cursor: pointer;
+}
+
+.compact-metric-reading__trend:hover { background: color-mix(in srgb, var(--color-brand-600) 5%, transparent); }
+.compact-metric-reading__trend:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: 3px; }
+.compact-metric-reading__trend svg { width: 100%; height: 52px; display: block; overflow: visible; }
+.compact-metric-reading__trend line { stroke: var(--chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.compact-metric-reading__trend path { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.compact-metric-reading__trend path.is-current { stroke: var(--chart-current-period); stroke-width: 2; }
+.compact-metric-reading__trend path.is-comparison { stroke: var(--chart-compare-period); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.compact-metric-reading__trend circle { vector-effect: non-scaling-stroke; stroke-width: 1.5; }
+.compact-metric-reading__trend circle.is-current { fill: var(--color-surface); stroke: var(--chart-current-period); }
+.compact-metric-reading__trend circle.is-comparison { fill: var(--color-surface); stroke: var(--chart-compare-period); }
+
+.compact-metric-reading__dates {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-3);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.compact-metric-reading__trend-empty {
+  grid-area: trend;
+  min-height: 72px;
+  display: grid;
+  place-items: center;
+  border-top: 1px solid var(--chart-grid);
+  border-bottom: 1px solid var(--chart-grid);
+  color: var(--color-text-3);
+  font-size: var(--font-size-caption);
+  text-align: center;
+}
+
+.compact-metric-reading__actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.compact-metric-reading__actions > button {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  color: var(--color-brand-700);
+  font: inherit;
+  font-size: var(--font-size-body-sm);
+  cursor: pointer;
+}
+
+.compact-metric-reading__actions > button:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: 2px; }
+.compact-metric-reading__details { display: grid; gap: var(--space-4); }
+.compact-metric-reading__details-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.compact-metric-reading__details-head p { margin: 0; color: var(--color-text-2); }
+.compact-metric-reading__state { margin: 0; color: var(--color-warning); }
+.compact-metric-reading__point { display: grid; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); }
+.compact-metric-reading__point > div { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.compact-metric-reading__point p { margin: 0; }
+.compact-metric-reading__point button { border: 0; background: transparent; color: var(--color-brand-700); font: inherit; cursor: pointer; }
+
+@media (max-width: 767px) {
+  .compact-metric-reading { grid-template-columns: minmax(0, 1fr); grid-template-areas: "summary" "trend" "actions"; }
+  .compact-metric-reading.is-stage { border-left: 0; border-top: 1px solid var(--color-divider); padding-left: 0; }
+  .compact-metric-reading__trend svg { height: 48px; }
+}

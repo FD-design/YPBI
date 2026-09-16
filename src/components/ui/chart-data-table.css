@@ -1,0 +1,18 @@
+.ui-chart-data-table { margin-top: 8px; border-top: 1px solid var(--color-divider); }
+.ui-chart-data-table__trigger { display: flex; gap: 6px; align-items: center; width: 100%; padding: 12px 14px; border: 0; background: transparent; color: var(--color-text-2); font: inherit; font-size: var(--font-size-body-sm); text-align: left; cursor: pointer; }
+.ui-chart-data-table__trigger:hover { color: var(--color-brand-700); background: var(--color-brand-050); }
+.ui-chart-data-table__trigger svg { width: 14px; height: 14px; flex: none; }
+.ui-chart-data-dialog { width: min(1000px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 48px); margin: auto; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-overlay); background: var(--color-surface); color: var(--color-text-1); box-shadow: var(--shadow-overlay); overflow: hidden; }
+.ui-chart-data-dialog[open] { display: flex; flex-direction: column; }
+.ui-chart-data-dialog::backdrop { background: var(--color-overlay-scrim); }
+.ui-chart-data-dialog > header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; flex: none; }
+.ui-chart-data-dialog > header { justify-content: space-between; border-bottom: 1px solid var(--color-divider); }
+.ui-chart-data-dialog h2 { min-width: 0; font-size: var(--font-size-title-sm); margin: 0; overflow-wrap: anywhere; }
+.ui-chart-data-dialog__actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.ui-chart-data-dialog__body { padding: 16px 20px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.ui-chart-data-dialog table { width: 100%; border-collapse: collapse; font-size: var(--font-size-body-sm); white-space: nowrap; }
+.ui-chart-data-dialog th, .ui-chart-data-dialog td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--color-divider); font-variant-numeric: tabular-nums; }
+.ui-chart-data-dialog th { background: var(--color-surface-subtle); color: var(--color-text-2); position: sticky; top: 0; }
+.ui-chart-data-dialog th:first-child, .ui-chart-data-dialog td:first-child, .ui-chart-data-dialog th:last-child, .ui-chart-data-dialog td:last-child { text-align: left; }
+.ui-chart-data-dialog td button { border: 0; background: transparent; color: var(--color-brand-700); font: inherit; padding: 0; cursor: pointer; }
+@media(max-width: 600px) { .ui-chart-data-dialog > header, .ui-chart-data-dialog__body { padding: 12px; } }

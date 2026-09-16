@@ -1,0 +1,3 @@
+const key = "ypbi.development-preview.favorites.v1";
+export function previewFavorites(): string[] { try { const items = JSON.parse(localStorage.getItem(key) ?? "[]"); return Array.isArray(items) ? items.filter(item => typeof item === "string" && /^5\.\d+$/.test(item)) : []; } catch { return []; } }
+export function setPreviewFavorite(id: string, favorite: boolean) { const previous = previewFavorites(); const next = favorite ? [...new Set([...previous, id])] : previous.filter(item => item !== id); localStorage.setItem(key, JSON.stringify(next)); window.dispatchEvent(new Event("preview-favorites-change")); }

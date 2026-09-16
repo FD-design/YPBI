@@ -1,0 +1,366 @@
+{
+  "marker": "FUNCTION_CATALOG_DEV_AUTHORITY_PROJECTION",
+  "source": "H5全站埋点规范-协作主文档.md",
+  "sourceSha256": "7ac5a1824251530558b63d3fee7b8d0d36959567a664ceb70467ffa9fb58068d",
+  "version": "v0.77",
+  "templateSource": "全站指标体系.md §4.3",
+  "templateSourceSha256": "f13c63a42a68b873145d13fa0ee7aa3a61a8fb4be361f2ba67257ecd8c95180c",
+  "template": {
+    "name": "渗透率",
+    "definition": "活跃用户中实际访问或使用该模块的比例",
+    "rule": "模块 UV ÷ 同窗口日活跃用户数；分子、分母使用同一业务日、平台、PID、渠道和用户群",
+    "boundary": "当前产品进入后默认分配登录身份，因此分母沿用登录 DAU；若未来存在未登录访问，需要另建全访问活跃口径"
+  },
+  "items": [
+    {
+      "id": "launch",
+      "name": "启动页",
+      "module": "全局",
+      "definition": "H5首次进入时展示启动广告和倒计时的全屏页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "navigation_home",
+      "name": "导航首页",
+      "module": "全局",
+      "definition": "展示外部App货架、广告和下载榜的一级页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "video_home",
+      "name": "视频首页",
+      "module": "视频",
+      "definition": "展示搜索入口、顶部频道、排序筛选和视频双列内容流的一级页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "short_video_feed",
+      "name": "短视频 Feed",
+      "module": "短视频",
+      "definition": "展示短视频分区和上下滑动内容流的一级页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "dark_web_home",
+      "name": "暗网首页",
+      "module": "视频",
+      "definition": "展示暗网视频或资讯及付费限制的一级页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "community_feed",
+      "name": "社区 Feed",
+      "module": "社区",
+      "definition": "展示话题、帖子流和社区互动入口的一级页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "community_post_detail",
+      "name": "帖子详情",
+      "module": "社区",
+      "definition": "展示帖子正文、作者、标签、投票、评论和回复的内容详情页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "profile_home",
+      "name": "个人中心",
+      "module": "个人中心",
+      "definition": "展示账户、会员、金币、记录、福利和商业化入口的一级页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "user_profile",
+      "name": "UP主主页",
+      "module": "视频",
+      "definition": "展示作者资料、长短视频、圈子与付费合集的作者主页",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "video_upload_gate",
+      "name": "上传视频 / UP主门槛",
+      "module": "创作者",
+      "definition": "在视频首页路由内替换主视图，展示UP主门槛、收益说明与上传规则",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "user_follow",
+      "name": "我的关注",
+      "module": "个人中心",
+      "definition": "按UP主、演员和系列查看当前用户已关注对象的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "my_records",
+      "name": "浏览记录",
+      "module": "个人中心",
+      "definition": "查看视频、短视频、圈子、短剧、漫画、小说和美图浏览资产的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "login",
+      "name": "登录",
+      "module": "个人中心",
+      "definition": "提供账号登录与邮箱登录的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "profile_info",
+      "name": "资料编辑",
+      "module": "个人中心",
+      "definition": "集中展示头像、性别、昵称、账号、密码、邮箱、生日和简介编辑入口",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "profile_nickname_edit",
+      "name": "修改昵称",
+      "module": "个人中心",
+      "definition": "修改并保存当前用户昵称的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "profile_password_edit",
+      "name": "修改密码",
+      "module": "个人中心",
+      "definition": "修改当前账户密码的页面；埋点不得采集任何密码值",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "profile_email_bind",
+      "name": "绑定邮箱",
+      "module": "个人中心",
+      "definition": "绑定或修改账户邮箱的页面；埋点不得采集邮箱与密码原文",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "profile_intro_edit",
+      "name": "修改简介",
+      "module": "个人中心",
+      "definition": "修改并保存个人简介的页面；埋点不得采集简介正文",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "share_invite",
+      "name": "分享邀请",
+      "module": "个人中心",
+      "definition": "展示邀请规则和分享资产的页面；埋点不得采集二维码、邀请码或邀请链接内容",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "bind_invite_code",
+      "name": "绑定邀请码",
+      "module": "个人中心",
+      "definition": "展示邀请码绑定状态与提交入口的页面；埋点不得采集用户输入的邀请码",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "creator_join",
+      "name": "博主入驻",
+      "module": "创作者",
+      "definition": "在个人中心路由内替换主视图，展示创作者扶持与入驻说明",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "benefit_center",
+      "name": "福利中心",
+      "module": "福利中心",
+      "definition": "聚合白嫖、积分、卡包、签到、我的福利、会员日和邀请等福利入口",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "task_hub",
+      "name": "签到任务中心",
+      "module": "签到 / 任务 / 积分商城",
+      "definition": "同一长页面承载7天签到、新手与每日任务、积分余额、积分商城和游戏入口",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "points_record",
+      "name": "积分 / 奖励明细",
+      "module": "积分商城",
+      "definition": "展示积分明细、奖励明细、获得与消耗筛选及汇总",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "points_game_detail",
+      "name": "积分游戏详情",
+      "module": "积分商城",
+      "definition": "展示积分游戏信息、说明和积分兑换入口的详情页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "video_detail",
+      "name": "视频详情",
+      "module": "视频",
+      "definition": "展示播放器、作者、互动、标签和猜你喜欢的内容详情页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "search_home",
+      "name": "搜索首页",
+      "module": "搜索",
+      "definition": "尚未形成有效查询时展示热词、历史词和推荐词的页面状态",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "search_results",
+      "name": "搜索结果页",
+      "module": "搜索",
+      "definition": "已形成有效查询并展示不同内容类型结果的页面状态",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "coin_recharge",
+      "name": "金币充值",
+      "module": "会员",
+      "definition": "展示金币余额、充值档位和支付方式；本批通过进入充值页、支付提交及后续支付结果事件分析完整链路",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "membership_center",
+      "name": "会员中心",
+      "module": "会员",
+      "definition": "展示普通会员、暗网会员、会员卡和权益；本批通过进入充值页、支付提交及后续支付结果事件分析完整链路",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "recharge_record",
+      "name": "充值 / 消费记录",
+      "module": "会员",
+      "definition": "展示充值订单、消费订单和视频购买记录的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "acg_home",
+      "name": "ACG内容中心",
+      "module": "视频",
+      "definition": "聚合漫画、动漫、小说、美图和黄游Tab的内容中心",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "comic_detail",
+      "name": "漫画详情",
+      "module": "视频",
+      "definition": "展示漫画简介、标签、收藏和章节选集的详情页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "comic_reader",
+      "name": "漫画阅读",
+      "module": "视频",
+      "definition": "展示漫画图片、章节导航、目录和收藏操作的阅读页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "novel_reader",
+      "name": "小说阅读",
+      "module": "视频",
+      "definition": "展示小说正文、章节目录、书架、夜间模式和阅读设置的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "image_gallery_reader",
+      "name": "图集阅读",
+      "module": "视频",
+      "definition": "展示图集大图、页码和喜欢操作的阅读页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "ai_home",
+      "name": "AI首页",
+      "module": "AI",
+      "definition": "展示AI创作、AI女友和历史记录入口的AI总入口；本批仅登记页面，不设计AI业务事件",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "ai_creation_auth",
+      "name": "AI创作授权",
+      "module": "AI",
+      "definition": "展示AI创作授权、协议、余额不足和充值引导的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "ai_girlfriend_auth",
+      "name": "AI女友授权",
+      "module": "AI",
+      "definition": "展示AI女友授权与金币充值入口的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "ai_history",
+      "name": "AI历史记录",
+      "module": "AI",
+      "definition": "展示不同AI工具历史任务和状态筛选的页面；本批仅登记页面，不设计AI业务事件",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "physical_mall",
+      "name": "实物商城",
+      "module": "实物商城",
+      "definition": "展示实物商品推荐、双列商品卡、金币价格和订单入口的页面；商品曝光、点击与订单创建纳入本批，金币扣减、支付和履约状态后续单独设计",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "physical_goods_detail",
+      "name": "实物商品详情",
+      "module": "实物商城",
+      "definition": "展示实物商品图片、金币价格、销量和购买入口的详情页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "physical_order_list",
+      "name": "实物订单列表",
+      "module": "实物商城",
+      "definition": "展示全部、待发货、待收货和已完成订单的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "physical_address_manage",
+      "name": "地址管理",
+      "module": "实物商城",
+      "definition": "在订单路由内替换主视图，展示收货地址列表和新增地址入口",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "physical_address_add",
+      "name": "新增收货地址",
+      "module": "实物商城",
+      "definition": "填写收货人、手机号、地区、详细地址和默认地址的页面；埋点不得采集表单原文",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "benefit_airborne",
+      "name": "幸福白嫖",
+      "module": "福利中心",
+      "definition": "展示白嫖期次、名额进度、抽奖格、活动规则和概率公示的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "benefit_card_pack",
+      "name": "我的卡包",
+      "module": "福利中心",
+      "definition": "展示金币、积分、AI体验券和观影券等卡包资产的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "benefit_assets",
+      "name": "我的福利",
+      "module": "福利中心",
+      "definition": "展示免费次数、观影券、下载券和AI次数等权益资产的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "membership_day",
+      "name": "每月会员日",
+      "module": "福利中心",
+      "definition": "展示会员等级、会员日礼物、每月18日领取和活动规则的页面",
+      "trackingStatus": "纳入本批草稿"
+    },
+    {
+      "id": "profile_publish",
+      "name": "我的发布",
+      "module": "个人中心",
+      "definition": "在个人中心路由内替换主视图，展示当前用户已发布内容的页面状态",
+      "trackingStatus": "纳入本批草稿"
+    }
+  ]
+}

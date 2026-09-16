@@ -1,0 +1,23 @@
+.metric-breakdown { display: grid; gap: var(--space-5); min-width: 0; }
+.metric-breakdown p { margin: 0; color: var(--color-text-3); font-size: var(--font-size-body-sm); overflow-wrap: anywhere; }
+.metric-breakdown__summary { display: grid; gap: 8px; padding-bottom: var(--space-4); border-bottom: 1px solid var(--color-divider); }
+.metric-breakdown__summary > div { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.metric-breakdown__summary strong { font-size: var(--font-size-metric-supporting); font-variant-numeric: tabular-nums; }
+.metric-breakdown__summary span { color: var(--color-text-2); }
+.metric-breakdown__group { border-bottom: 1px solid var(--color-divider); padding: 0 0 var(--space-5); min-width: 0; }
+.metric-breakdown__group header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.metric-breakdown__group h3 { margin: 0; font-size: var(--font-size-metric-label); font-weight: var(--font-weight-semibold); }
+.metric-breakdown__group header > span { color: var(--color-text-3); font-size: var(--font-size-body-sm); }
+.metric-breakdown__group ul { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 18px; }
+.metric-breakdown__group li { min-width: 0; display: grid; gap: 6px; }
+.metric-breakdown__row { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(50px, 1.4fr) minmax(92px, 1fr); align-items: center; gap: 12px; }
+.metric-breakdown__row > :last-child { text-align: right; }
+.metric-breakdown__notes { margin-top: 14px; font-size: var(--font-size-body-sm); color: var(--color-text-3); }
+.metric-breakdown__notes summary { cursor: pointer; }
+.metric-breakdown__notes p { margin-top: 8px; }
+.metric-breakdown__notice { padding: 8px 10px; background: var(--color-surface-subtle); border-radius: var(--radius-control); }
+.metric-breakdown__row b { font-variant-numeric: tabular-nums; font-weight: var(--font-weight-semibold); }
+.metric-breakdown__row small { color: var(--color-text-2); margin-left: 4px; }
+.metric-breakdown__track { height: 8px; border-radius: var(--radius-control); background: var(--color-brand-050); overflow: hidden; }
+.metric-breakdown__track > div { height: 100%; background: var(--color-brand-600); border-radius: inherit; }
+.metric-breakdown .metric-breakdown__status { font-size: var(--font-size-body-sm); font-weight: var(--font-weight-regular); color: var(--color-text-2); }

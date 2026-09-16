@@ -330,6 +330,19 @@ function pruneQueryCache(now = Date.now()) {
   }
 }
 
+export async function parseAnalyticsResponse(response: Response): Promise<QueryPayload> {
+  let payload: BiResponse;
+  try {
+    payload = await response.json() as BiResponse;
+  } catch {
+    throw new Error(response.ok ? "数据服务返回格式异常，请稍后重试" : "数据服务暂时不可用，请稍后重试");
+  }
+  if (!response.ok || !payload.success || !payload.data) {
+    throw new Error(payload.error?.message ?? "真实数据查询失败，请稍后重试");
+  }
+  return payload.data;
+}
+
 function fetchSharedQuery(request: ReturnType<typeof buildAnalyticsRequest>, bypassCache = false) {
   const key = JSON.stringify(request);
   const cached = queryPromiseCache.get(key);
@@ -340,9 +353,7 @@ function fetchSharedQuery(request: ReturnType<typeof buildAnalyticsRequest>, byp
     headers: { "content-type": "application/json" },
     body: key
   }).then(async (response) => {
-    const payload = await response.json() as BiResponse;
-    if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? "真实数据查询失败");
-    return payload.data;
+    return parseAnalyticsResponse(response);
   }).catch((error) => {
     queryPromiseCache.delete(key);
     throw error;
