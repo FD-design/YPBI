@@ -9,7 +9,7 @@
 - 本地目录：`/Users/liyujing/claude code test/YPBI`
 - 本地运行状态（2026-09-15）：后端进程缺失导致会话代理 500，已按授权重新启动；前端入口与后端健康检查返回 200，匿名会话返回预期 401。退出原因尚未确认，尚无本地进程自动恢复；证据见部署模块。
 - VPS 目录：`/opt/config-driven-bi-demo`
-- 目标公网地址：`https://187.77.129.207.nip.io`（候选域名，尚未部署；正式入口必须使用 HTTPS 并先登录，不提供匿名 BI）
+- 首期内测公网地址已确认沿用：`https://187.77.129.207.nip.io`（尚未部署；入口必须使用 HTTPS 并先登录，不提供匿名 BI）
 - 技术栈：React 19、TypeScript、Vite、ECharts、Fastify、PostgreSQL、Bun
 - GitHub 仓库：`https://github.com/FD-design/YPBI`
 - 代码审核交接（2026-09-16）：仓库写入权限已核实；`review/liyujing-bi-source-20260916` 为仅包含 BI 工程的独立提交分支，原分支与本地第三方样例保留。PR审核指出的生产日看板关闭、核心总览启动注入及仓库外构建依赖已进入同分支修正：新增正式日看板开关和标准服务、核心总览标准编排器、仓库内固定投影校验；未伪造尚缺的正式映射、验数和可信水位。构建、测试和后续上线分工见[部署模块](modules/deployment.md#原多平台-bi-代码审核交接2026-09-16)。
