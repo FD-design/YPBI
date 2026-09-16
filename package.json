@@ -10,6 +10,7 @@
     "user:manage": "bun server/scripts/manage-bi-user.ts",
     "prebuild": "npm run projections:check && npm run dashboards:preview:check && npm run dashboards:guidance:check",
     "build": "tsc -b && vite build",
+    "build:internal-preview": "node tools/build-internal-preview.mjs",
     "postbuild": "node tools/verify-production-preview-isolation.mjs",
     "build:server": "tsc -p server/tsconfig.json",
     "typecheck": "tsc -b && tsc -p server/tsconfig.json --noEmit",

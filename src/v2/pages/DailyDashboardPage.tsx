@@ -17,7 +17,8 @@ import "../features/dashboards/dashboard-workbench.css";
 
 type Board = DailyDashboardCatalog["items"][number];
 type Platforms = V2PlatformCatalogSuccess["data"]["items"];
-const ConnectedBoard = import.meta.env.DEV ? lazy(() => import("../design/ConnectedBoard")) : null;
+const internalDashboardPreviewEnabled = import.meta.env.VITE_INTERNAL_DASHBOARD_PREVIEW_ENABLED === "true";
+const ConnectedBoard = import.meta.env.DEV || internalDashboardPreviewEnabled ? lazy(() => import("../design/ConnectedBoard")) : null;
 const PersonalWorkspace = import.meta.env.DEV ? lazy(() => import("../design/PersonalWorkspacePreview")) : null;
 const ConnectedDirectoryState = import.meta.env.DEV ? lazy(() => import("../design/ConnectedDirectoryState")) : null;
 const navigationKey = "ypbi.daily-dashboard.navigation";
@@ -92,6 +93,11 @@ function DailyWorkbench({ catalog, platforms }: { catalog: DailyDashboardCatalog
 }
 
 function DailyBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: Board; platforms: Platforms }) {
-  return ConnectedBoard ? <Suspense fallback={<StatePanel kind="loading" title="正在打开看板" description="正在载入既有看板。" />}><ConnectedBoard query={query} board={board} platforms={platforms} /></Suspense>
-    : <StatePanel kind="empty" title="真实看板正在本地联调" description="本地联调布局未向生产环境发布。" />;
+  return ConnectedBoard ? <>
+    {internalDashboardPreviewEnabled && <aside className="dashboard-workbench__internal-preview" role="note" aria-label="内测数据说明">
+      <strong>内测环境</strong>
+      <span>页面同时包含真实数据、待验数结果和用于展示样式的演示数据；请以每个区块的数据来源标记为准。</span>
+    </aside>}
+    <Suspense fallback={<StatePanel kind="loading" title="正在打开看板" description="正在载入既有看板。" />}><ConnectedBoard query={query} board={board} platforms={platforms} /></Suspense>
+  </> : <StatePanel kind="empty" title="当前构建未开启内测看板" description="需要在受保护的内测部署中显式开启，不会默认把演示数据带入其他环境。" />;
 }

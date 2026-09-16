@@ -29,7 +29,7 @@ export function WatchDurationOverview({ models, exportDemo }: {
       <div className="watch-duration__summary" aria-label="观影时长数值摘要">
         {items.map(({ model, connected }) => {
           const available = model.result.status === "available" ? model.result : null;
-          const readable = model.metric.id === "M098" && available ? readableWatchDuration(available.value.raw, available.value.unit) : null;
+          const readable = ["M102", "M098"].includes(model.metric.id) && available ? readableWatchDuration(available.value.raw, available.value.unit) : null;
           return <DataOriginProvider key={model.metric.id} value={connected ? "pending" : "demo"}><section aria-label={`${model.metric.name}摘要`}>
             <div className="watch-duration__label"><span>{model.metric.name}</span><DataOriginBadge /></div>
             <div className="watch-duration__value"><strong>{readable ?? available?.value.display ?? "—"}</strong>{available && !readable && <span>{available.value.unit}</span>}</div>

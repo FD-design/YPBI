@@ -25,6 +25,8 @@
 .dashboard-workbench__reveal:hover { background: var(--color-surface-hover); color: var(--color-brand-700); }
 .dashboard-workbench__reveal svg { width: 16px; height: 16px; }
 .dashboard-workbench__content { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-5); scrollbar-gutter: stable; }
+.dashboard-workbench__internal-preview { display:flex; align-items:flex-start; gap:var(--space-3); margin:0 0 var(--space-4); padding:var(--space-3) var(--space-4); border:1px solid var(--color-warning-border, #f1c778); border-radius:var(--radius-control); background:var(--color-warning-surface, #fff8e8); color:var(--color-text-2); font-size:var(--font-size-body-sm); line-height:var(--line-height-body); }
+.dashboard-workbench__internal-preview strong { flex:none; color:var(--color-text-1); }
 .ypbi-v2 .dashboard-workbench__content > .v2-page,
 .ypbi-v2 .dashboard-workbench__content > .dashboard-reading-scope > .v2-page { width: 100%; max-width: none; margin: 0; }
 .dashboard-workbench__pending { display: grid; gap: var(--space-6); font-size: var(--font-size-body); }
@@ -39,4 +41,5 @@
   .dashboard-workbench { display: block; }
   .dashboard-workbench__content { height: 100%; padding: var(--space-3); scrollbar-gutter: auto; }
   .dashboard-workbench__reveal { min-height: 44px; }
+  .dashboard-workbench__internal-preview { display:grid; }
 }
