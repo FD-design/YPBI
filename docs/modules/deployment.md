@@ -1,5 +1,19 @@
 # 部署与运维模块
 
+## 2026-09-16 内测部署完成
+
+- 入口：https://187.77.129.207.nip.io 。源提交 d2d7ae80907c3aadb0e09ac13302043fad0b139a；PR #1 合并提交 3c828bff61b4ebfcc86df10fcb89bde677efd95f。
+- Linux/Bun 1.4.2 执行 verify:release，781 项通过；build:internal-preview 成功，来源标记检查通过。普通正式构建此前也通过隔离检查。
+- 运行时 `/opt/ypbi-runtime/bun-1.4.2`；systemd API 使用 ypbi 非特权账号。Caddy 直接提供 dist，API 经 127.0.0.1:5178 Nginx 到 127.0.0.1:3000。旧公网 5178 已关闭。切换 wildcard 监听为 loopback 时需 restart nginx，单纯 reload 在本机不能完成切换。
+- 独立账号库容器 ypbi-auth-db，持久卷 ypbi-auth-postgres，端口仅 127.0.0.1:55433；与 Plane、NewAV、遗留 workspace 隔离。新数据库使用受控服务器随机凭据，无明文进入 Git。
+- 备份位于 `/opt/config-driven-bi-backups/pre-v2-*`，包含旧代码、模板、配置与代理/服务文件，目录仅 root 可读。`data/workspace.json` 保留，未声称已迁移至 V2 编辑模型；旧模板编辑功能不是本次内测验收范围。
+- 两站新凭据通过服务器隐藏输入录入，经真实连接校验后保存；`BI_DAILY_DASHBOARD_QUERY_ENABLED=true`，`BI_V2_CORE_OVERVIEW_QUERY_ENABLED=false`。临时 Token 后续仍需维护者轮换。
+- 八个 reader：adi、huangchenyu、mate、yixi、liangmu、linda、danzhu、luchangan；初始密码按用户确认规则在交互终端输入，全部 must_change_password=true。账号值和会话仅在数据库，密码不在此记录。
+- 黑盒验证：HTTPS 页面200，health200，匿名 session401；临时验收账号登录200、首次改密200，PH 日看板多项查询200；TT 切换查询200，刷新保留TT；reader 请求维护状态被401拒绝。未观察到本轮浏览器 pageerror。两站凭据验证通过不代表20个平台所有接口已完成验数。
+- 截图保存于部署方 `D:/CodexArtifacts/ypbi-internal-preview-20260916.png`：包含真实待验数值和明确标记的演示指标。不得将截图视为九项正式指标验数证据。
+- NewAV HTTPS 200，未修改其应用、凭据或数据库。临时验收账号于验证后清理。
+- 本次没有修复上游缺失指标；跨端统一账号去重、水位、正式provider和passed证据仍按原计划补充。首期仅授权内部内测，不宣称完整正式数据上线。
+
 ### 原多平台 BI 代码审核交接（2026-09-16）
 
 个人分支已上传并创建 [PR #1](https://github.com/FD-design/YPBI/pull/1)，目标为 `main`。PR 未合并，服务器未部署；2026-09-16 的审核修改已在同一分支实施，待复审。
