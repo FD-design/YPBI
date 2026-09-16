@@ -70,7 +70,7 @@ function requestOriginMatches(originHeader: string | string[] | undefined, expec
   return typeof originHeader === "string" && originHeader === expectedOrigin;
 }
 
-async function authenticatedSession(
+export async function authenticatedSession(
   request: FastifyRequest,
   reply: FastifyReply,
   service: BiAuthService,

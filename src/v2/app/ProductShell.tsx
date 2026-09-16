@@ -99,11 +99,11 @@ export function ProductShell({ children, contextualNavigation = false, previewDa
     }
   };
 
-  const roleLabel = user.role === "maintainer" ? "维护者" : user.role === "analyst" ? "分析者" : "阅读者";
+  const roleLabel = user.role === "maintainer" ? "管理员" : "普通账号";
   const canMaintainDataSources = user.permissions.includes("bi:data-source-maintenance:enter");
   const navigationGroups = PRODUCT_NAVIGATION.map((group) => ({
     ...group,
-    items: (canMaintainDataSources ? group.items : group.items.filter((item) => item.id !== "sources")).map(item => ({ ...item, href: navigationHref(item.href), children: item.children?.map(child => ({ ...child, href: navigationHref(child.href) })) }))
+    items: group.items.filter(item => (item.id !== 'sources' || canMaintainDataSources) && (item.id !== 'team' || user.role === 'maintainer')).map(item => ({ ...item, href: navigationHref(item.href), children: item.children?.map(child => ({ ...child, href: navigationHref(child.href) })) }))
   })).filter((group) => group.items.length > 0);
   const closePasswordDialog = () => {
     setPasswordDialogOpen(false);

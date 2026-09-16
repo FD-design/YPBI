@@ -54,9 +54,11 @@ export type AuthUserMutationResult =
   | { outcome: "changed"; user: AuthUserRecord }
   | { outcome: "no_change"; user: AuthUserRecord }
   | { outcome: "conflict" }
+  | { outcome: "protected" }
   | { outcome: "not_found" };
 
 export interface AuthRepository {
+  listUsers(search: string, page: number): Promise<{ items: AuthUserRecord[]; total: number }>;
   findUserByNormalizedUsername(normalizedUsername: string): Promise<AuthUserRecord | null>;
   createUser(user: NewAuthUserRecord): Promise<AuthUserRecord>;
   recordLoginFailure(userId: string, now: Date, policy: LoginFailurePolicy): Promise<void>;
@@ -76,14 +78,16 @@ export interface AuthRepository {
     userId: string,
     expectedCredentialVersion: number,
     role: BiRole,
-    now: Date
+    now: Date,
+    protectLastAdmin?: boolean
   ): Promise<AuthUserMutationResult>;
   setUserStatusAndRevokeSessions(
     userId: string,
     expectedCredentialVersion: number,
     expectedStatus: AuthUserStatus,
     status: AuthUserStatus,
-    now: Date
+    now: Date,
+    protectLastAdmin?: boolean
   ): Promise<AuthUserMutationResult>;
   purgeExpiredSessions(now: Date): Promise<void>;
 }
@@ -111,6 +115,17 @@ export class MemoryAuthRepository implements AuthRepository {
   private readonly users = new Map<string, AuthUserRecord>();
   private readonly userIdByName = new Map<string, string>();
   private readonly sessions = new Map<string, AuthSessionRecord>();
+
+  async listUsers(search: string, page: number) {
+    const matching = [...this.users.values()].filter(user => `${user.username} ${user.displayName ?? ''}`.toLowerCase().includes(search.toLowerCase()))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || a.username.localeCompare(b.username));
+    return { items: matching.slice((page - 1) * 20, page * 20).map(cloneUser), total: matching.length };
+  }
+
+  private lastAdmin(user: AuthUserRecord) {
+    return user.role === 'maintainer' && user.status === 'active'
+      && [...this.users.values()].filter(item => item.role === 'maintainer' && item.status === 'active').length <= 1;
+  }
 
   async findUserByNormalizedUsername(normalizedUsername: string) {
     const id = this.userIdByName.get(normalizedUsername);
@@ -226,12 +241,14 @@ export class MemoryAuthRepository implements AuthRepository {
     userId: string,
     expectedCredentialVersion: number,
     role: BiRole,
-    now: Date
+    now: Date,
+    protectLastAdmin = false
   ) {
     const user = this.users.get(userId);
     if (!user) return { outcome: "not_found" } as const;
     if (user.credentialVersion !== expectedCredentialVersion) return { outcome: "conflict" } as const;
     if (user.role === role) return { outcome: "no_change", user: cloneUser(user) } as const;
+    if (protectLastAdmin && role !== 'maintainer' && this.lastAdmin(user)) return { outcome: 'protected' } as const;
     user.role = role;
     user.credentialVersion += 1;
     user.updatedAt = new Date(now);
@@ -244,7 +261,8 @@ export class MemoryAuthRepository implements AuthRepository {
     expectedCredentialVersion: number,
     expectedStatus: AuthUserStatus,
     status: AuthUserStatus,
-    now: Date
+    now: Date,
+    protectLastAdmin = false
   ) {
     const user = this.users.get(userId);
     if (!user) return { outcome: "not_found" } as const;
@@ -252,6 +270,7 @@ export class MemoryAuthRepository implements AuthRepository {
       return { outcome: "conflict" } as const;
     }
     if (user.status === status) return { outcome: "no_change", user: cloneUser(user) } as const;
+    if (protectLastAdmin && status === 'disabled' && this.lastAdmin(user)) return { outcome: 'protected' } as const;
     user.status = status;
     user.credentialVersion += 1;
     if (status === "active") {

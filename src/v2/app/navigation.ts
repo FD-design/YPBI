@@ -1,6 +1,6 @@
-import { ChartNoAxesCombined, Database, LayoutDashboard, Settings2, type LucideIcon } from "lucide-react";
+import { ChartNoAxesCombined, Database, LayoutDashboard, Settings2, Users, type LucideIcon } from "lucide-react";
 
-export type ProductNavigationAreaId = "dashboards" | "analysis" | "data" | "sources";
+export type ProductNavigationAreaId = "dashboards" | "analysis" | "data" | "sources" | "team";
 export type ProductRouteImplementationState = "available" | "reserved";
 
 export interface ProductSecondaryNavigationItem {
@@ -70,7 +70,8 @@ export const PRODUCT_NAVIGATION: ProductNavigationGroup[] = [
   {
     label: "管理",
     items: [
-      { id: "sources", label: "数据源维护", description: "连接配置、检测与运行状态", href: "/admin/data-sources", icon: Settings2 }
+      { id: "sources", label: "数据源维护", description: "连接配置、检测与运行状态", href: "/admin/data-sources", icon: Settings2 },
+      { id: "team", label: "账号管理", description: "团队账号与访问权限", href: "/admin/accounts", icon: Users }
     ]
   }
 ];

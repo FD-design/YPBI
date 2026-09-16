@@ -21,10 +21,11 @@ const expectedLeafRoutes = [
   "/analysis/saved",
   "/data/metrics",
   "/data/events",
-  "/admin/data-sources"
+  "/admin/data-sources",
+  "/admin/accounts"
 ];
 
-test("产品导航完整登记 10 个单义叶子路径，收藏归入公共概览", () => {
+test("产品导航完整登记 11 个单义叶子路径，收藏归入公共概览", () => {
   const childRoutes = productSecondaryNavigationItems().map((item) => item.href);
   const parentLeafRoutes = productNavigationItems().filter((item) => !item.children?.length).map((item) => item.href);
   const actual = [...childRoutes, ...parentLeafRoutes];

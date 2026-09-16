@@ -12,6 +12,7 @@ import { MetricAnalysisPage } from "../pages/MetricAnalysisPage";
 import { NotFoundPage, UnavailablePage } from "../pages/UnavailablePage";
 import { DataSourceMaintenancePage } from "../pages/DataSourceMaintenancePage";
 import { DailyDashboardPage } from "../pages/DailyDashboardPage";
+import { TeamAccountsPage } from '../pages/TeamAccountsPage';
 import {
   AuthenticationLoadingPage,
   AuthenticationUnavailablePage,
@@ -54,6 +55,7 @@ function routeContent(location: BrowserLocationSnapshot, user: AuthenticatedSess
   if (path === "/dashboards/public" || path === "/dashboards/mine") return <DailyDashboardPage />;
   if (import.meta.env.DEV && new URLSearchParams(location.search).get("local") === "workspace" && isPersonalPreviewPath(path) && PersonalWorkspacePreview) return <Suspense fallback={<StatePanel kind="loading" title="正在打开工作区" description="正在载入已有分析页面。"/>}><DemoDataProvider><PersonalWorkspacePreview/></DemoDataProvider></Suspense>;
   if (path === "/" || path === "/data/metrics") return <MetricCatalogPage />;
+  if (path === '/admin/accounts') return <TeamAccountsPage />;
   if (path === "/admin/data-sources") return user.permissions.includes("bi:data-source-maintenance:enter")
     ? <DataSourceMaintenancePage />
     : <div className="v2-page"><header className="v2-page-head"><div><span className="v2-eyebrow">访问控制</span><h1>无权访问管理中心</h1><p>数据源配置需要有效的 BI 账号和维护权限。</p></div></header><StatePanel kind="forbidden" title="当前账号没有维护权限" description="你仍可使用指标、分析与看板等已开放功能。" code="ADMIN_ACCESS_DENIED" /></div>;
