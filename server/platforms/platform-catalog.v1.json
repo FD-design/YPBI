@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "platform-catalog/v1",
+  "revision": 1,
+  "updatedAt": "2026-09-08T20:04:26+08:00",
+  "items": [
+    { "id": "HX-001", "pid": "PH", "name": "Pornhub", "siteId": "primary", "enabled": true, "order": 1 },
+    { "id": "HX-003", "pid": "TT", "name": "TikTok", "siteId": "primary", "enabled": true, "order": 2 },
+    { "id": "HX-021", "pid": "FBI", "name": "小红书", "siteId": "secondary", "enabled": true, "order": 3 },
+    { "id": "HX-009", "pid": "SH", "name": "色虎", "siteId": "primary", "enabled": true, "order": 4 },
+    { "id": "HX-024", "pid": "BZMH", "name": "PH·Prem", "siteId": "secondary", "enabled": true, "order": 5 },
+    { "id": "HX-035", "pid": "TJS", "name": "调教师", "siteId": "secondary", "enabled": true, "order": 6 },
+    { "id": "HX-016", "pid": "KB", "name": "快播", "siteId": "primary", "enabled": true, "order": 7 },
+    { "id": "HX-015", "pid": "PD", "name": "黄片网盘", "siteId": "primary", "enabled": true, "order": 8 },
+    { "id": "HX-006", "pid": "HJ", "name": "性欲社", "siteId": "primary", "enabled": true, "order": 9 },
+    { "id": "HX-004", "pid": "DYP", "name": "抖阴Pro", "siteId": "primary", "enabled": true, "order": 10 },
+    { "id": "HX-005", "pid": "DYS", "name": "抖阴Plus", "siteId": "primary", "enabled": true, "order": 11 },
+    { "id": "HX-026", "pid": "YK", "name": "X-chat", "siteId": "primary", "enabled": true, "order": 12 },
+    { "id": "HX-049", "pid": "BPS", "name": "白嫖社", "siteId": "secondary", "enabled": true, "order": 13 },
+    { "id": "HX-050", "pid": "HQW", "name": "好妻网", "siteId": "secondary", "enabled": true, "order": 14 },
+    { "id": "HX-022", "pid": "TJD", "name": "台姬店", "siteId": "secondary", "enabled": true, "order": 15 },
+    { "id": "HX-051", "pid": "MMV", "name": "魅魔vlog", "siteId": "secondary", "enabled": true, "order": 16 },
+    { "id": "HX-047", "pid": "AF", "name": "稚嫩学园", "siteId": "secondary", "enabled": true, "order": 17 },
+    { "id": "HX-018", "pid": "TFKJ", "name": "铁粉空间", "siteId": "secondary", "enabled": true, "order": 18 },
+    { "id": "HX-056", "pid": "JRTT", "name": "精日头条", "siteId": "secondary", "enabled": true, "order": 19 },
+    { "id": "HX-057", "pid": "YQ", "name": "91淫妻", "siteId": "secondary", "enabled": true, "order": 20 }
+  ]
+}

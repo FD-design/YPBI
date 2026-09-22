@@ -1,41 +1,110 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
+
+export type PlatformSiteId = "primary" | "secondary";
+
+const platformCatalogItemSchema = z.object({
+  id: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+  pid: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/),
+  name: z.string().trim().min(1).max(256),
+  siteId: z.enum(["primary", "secondary"]),
+  enabled: z.boolean(),
+  order: z.number().int().min(0).max(10_000)
+}).strict();
+
+const platformCatalogFileSchema = z.object({
+  schemaVersion: z.literal("platform-catalog/v1"),
+  revision: z.number().int().positive(),
+  updatedAt: z.iso.datetime({ offset: true }),
+  items: z.array(platformCatalogItemSchema).min(1).max(1_000)
+}).strict().superRefine((catalog, context) => {
+  for (const key of ["id", "pid", "order"] as const) {
+    const seen = new Set<string | number>();
+    catalog.items.forEach((item, index) => {
+      if (seen.has(item[key])) {
+        context.addIssue({
+          code: "custom",
+          message: `平台目录 ${key} 不能重复：${item[key]}`,
+          path: ["items", index, key]
+        });
+      }
+      seen.add(item[key]);
+    });
+  }
+});
+
 export interface PlatformDefinition {
+  id: string;
+  /** 兼容遗留服务端响应；值始终由 id 派生，不是第二份配置。 */
   hxId: string;
   name: string;
   pid: string;
-  upstreamSite: "primary" | "secondary";
+  siteId: PlatformSiteId;
+  /** 兼容遗留服务端响应；值始终由 siteId 派生，不是第二份配置。 */
+  upstreamSite: PlatformSiteId;
   enabled: boolean;
   order: number;
 }
 
-export const platformRegistry: readonly PlatformDefinition[] = [
-  { hxId: "HX-001", name: "Pornhub", pid: "PH", upstreamSite: "primary", enabled: true, order: 1 },
-  { hxId: "HX-003", name: "TikTok", pid: "TT", upstreamSite: "primary", enabled: true, order: 2 },
-  { hxId: "HX-021", name: "小红书", pid: "FBI", upstreamSite: "secondary", enabled: true, order: 3 },
-  { hxId: "HX-009", name: "色虎", pid: "SH", upstreamSite: "primary", enabled: true, order: 4 },
-  { hxId: "HX-024", name: "PH·Prem", pid: "BZMH", upstreamSite: "secondary", enabled: true, order: 5 },
-  { hxId: "HX-035", name: "调教师", pid: "TJS", upstreamSite: "secondary", enabled: true, order: 6 },
-  { hxId: "HX-016", name: "快播", pid: "KB", upstreamSite: "primary", enabled: true, order: 7 },
-  { hxId: "HX-015", name: "黄片网盘", pid: "PD", upstreamSite: "primary", enabled: true, order: 8 },
-  { hxId: "HX-006", name: "性欲社", pid: "HJ", upstreamSite: "primary", enabled: true, order: 9 },
-  { hxId: "HX-004", name: "抖阴Pro", pid: "DYP", upstreamSite: "primary", enabled: true, order: 10 },
-  { hxId: "HX-005", name: "抖阴Plus", pid: "DYS", upstreamSite: "primary", enabled: true, order: 11 },
-  { hxId: "HX-026", name: "X-chat", pid: "YK", upstreamSite: "primary", enabled: true, order: 12 },
-  { hxId: "HX-049", name: "白嫖社", pid: "BPS", upstreamSite: "secondary", enabled: true, order: 13 },
-  { hxId: "HX-050", name: "好妻网", pid: "HQW", upstreamSite: "secondary", enabled: true, order: 14 },
-  { hxId: "HX-022", name: "台姬店", pid: "TJD", upstreamSite: "secondary", enabled: true, order: 15 },
-  { hxId: "HX-051", name: "魅魔vlog", pid: "MMV", upstreamSite: "secondary", enabled: true, order: 16 },
-  { hxId: "HX-047", name: "稚嫩学园", pid: "AF", upstreamSite: "secondary", enabled: true, order: 17 },
-  { hxId: "HX-018", name: "铁粉空间", pid: "TFKJ", upstreamSite: "secondary", enabled: true, order: 18 },
-  { hxId: "HX-056", name: "精日头条", pid: "JRTT", upstreamSite: "secondary", enabled: true, order: 19 },
-  { hxId: "HX-057", name: "91淫妻", pid: "YQ", upstreamSite: "secondary", enabled: true, order: 20 }
-];
+export interface PlatformCatalogMetadata {
+  schemaVersion: "platform-catalog/v1";
+  revision: number;
+  updatedAt: string;
+}
 
-export function enabledSecondaryPlatformPids() {
-  return platformRegistry
-    .filter((platform) => platform.enabled && platform.upstreamSite === "secondary")
-    .map((platform) => platform.pid);
+export function parsePlatformCatalogFile(source: unknown) {
+  const parsed = platformCatalogFileSchema.safeParse(source);
+  if (!parsed.success) {
+    throw new Error(`平台目录配置错误：${z.prettifyError(parsed.error)}`);
+  }
+  return parsed.data;
+}
+
+const catalogPath = fileURLToPath(new URL("./platform-catalog.v1.json", import.meta.url));
+let rawCatalog: unknown;
+try {
+  rawCatalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+} catch (error) {
+  throw new Error("平台目录无法读取或不是有效 JSON", { cause: error });
+}
+const catalog = parsePlatformCatalogFile(rawCatalog);
+
+export const platformCatalogMetadata: Readonly<PlatformCatalogMetadata> = Object.freeze({
+  schemaVersion: catalog.schemaVersion,
+  revision: catalog.revision,
+  updatedAt: catalog.updatedAt
+});
+
+export const platformRegistry: readonly Readonly<PlatformDefinition>[] = Object.freeze(
+  catalog.items.map((item) => Object.freeze({
+    ...item,
+    hxId: item.id,
+    upstreamSite: item.siteId
+  }))
+);
+
+export function findEnabledPlatformByPid<T extends Pick<PlatformDefinition, "pid" | "enabled">>(
+  platforms: readonly T[],
+  pid: string
+) {
+  return platforms.find((platform) => platform.pid === pid && platform.enabled);
 }
 
 export function getPlatformByPid(pid: string) {
   return platformRegistry.find((platform) => platform.pid === pid);
+}
+
+export function getEnabledPlatformByPid(pid: string) {
+  return findEnabledPlatformByPid(platformRegistry, pid);
+}
+
+export function enabledPlatformsForSite(siteId: PlatformSiteId) {
+  return platformRegistry
+    .filter((platform) => platform.enabled && platform.siteId === siteId)
+    .sort((left, right) => left.order - right.order);
+}
+
+export function enabledSecondaryPlatformPids() {
+  return enabledPlatformsForSite("secondary").map((platform) => platform.pid);
 }

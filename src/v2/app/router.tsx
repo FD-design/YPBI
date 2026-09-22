@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from "react";
 
-const NAVIGATION_EVENT = "ypbi-v2:navigation";
+export const NAVIGATION_EVENT = "ypbi-v2:navigation";
 
 export interface BrowserLocationSnapshot {
   pathname: string;
@@ -35,7 +35,7 @@ export function useBrowserLocation() {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-export function navigate(to: string, options: { replace?: boolean; preserveScroll?: boolean } = {}) {
+export function navigate(to: string, options: { replace?: boolean; preserveScroll?: boolean; historyState?: unknown } = {}) {
   const target = new URL(to, window.location.origin);
   if (target.origin !== window.location.origin) {
     window.location.assign(target.href);
@@ -44,8 +44,8 @@ export function navigate(to: string, options: { replace?: boolean; preserveScrol
   const next = `${target.pathname}${target.search}${target.hash}`;
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   if (next === current) return;
-  if (options.replace) window.history.replaceState(null, "", next);
-  else window.history.pushState(null, "", next);
+  if (options.replace) window.history.replaceState(options.historyState ?? null, "", next);
+  else window.history.pushState(options.historyState ?? null, "", next);
   if (!options.preserveScroll) window.scrollTo({ top: 0, left: 0 });
   window.dispatchEvent(new Event(NAVIGATION_EVENT));
 }

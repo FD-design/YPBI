@@ -61,14 +61,42 @@ describe("PDaySumM016Source", () => {
       pid: "PH",
       dateRange: ["2026-09-02", "2026-09-02"]
     });
-    expect(result).toEqual([{ businessDate: "2026-09-02", pid: "PH", value: 21 }]);
+    expect(result).toEqual({
+      rows: [{ businessDate: "2026-09-02", pid: "PH", value: 21 }],
+      watermark: null
+    });
+  });
+
+  test("不会根据最大数据日期、总数或未确认字段推断可信水位", async () => {
+    const source = new PDaySumM016Source({
+      get: async () => ({
+        code: 200,
+        msg: {
+          pageData: [{
+            pid: "PH",
+            sumDate: "2026-09-03",
+            loginUserCount: 21,
+            completeThrough: "2026-09-03"
+          }],
+          total: 1,
+          completeThrough: "2026-09-03",
+          observedAt: "2026-09-04T00:10:00+08:00"
+        }
+      })
+    } as unknown as UpstreamClient);
+
+    const result = await source.queryDailyActiveUsers({
+      pid: "PH",
+      dateRange: ["2026-09-01", "2026-09-03"]
+    });
+    expect(result.watermark).toBeNull();
   });
 
   test("空值与空白字符串保持 no_value，不制造真实 0", async () => {
     for (const loginUserCount of [null, undefined, "", "   "]) {
       const result = await sourceForRows([{ pid: "PH", sumDate: "2026-09-01", loginUserCount }])
         .queryDailyActiveUsers({ pid: "PH", dateRange: ["2026-09-01", "2026-09-01"] });
-      expect(result[0].value).toBeNull();
+      expect(result.rows[0].value).toBeNull();
     }
   });
 
@@ -98,5 +126,28 @@ describe("PDaySumM016Source", () => {
     await expect(sourceForRows([{ pid: "PH", sumDate: "2026-09-01", loginUserCount: 1 }], 0)
       .queryDailyActiveUsers({ pid: "PH", dateRange: ["2026-09-01", "2026-09-01"] }))
       .rejects.toMatchObject({ reason: "invalid_total" } satisfies Partial<M016SourceDataError>);
+  });
+
+  test("真实接口 totalCount 保留分页截断校验，不把总行数当作数据完整水位", async () => {
+    for (const totalCount of [1, "1"]) {
+      const source = new PDaySumM016Source({ get: async () => ({ code: 200, msg: {
+        totalCount, pageData: [{ pid: "PH", sumDate: "2026-09-11", loginUserCount: 0 }]
+      } }) } as unknown as UpstreamClient);
+      expect(await source.queryDailyActiveUsers({ pid: "PH", dateRange: ["2026-09-11", "2026-09-11"] }))
+        .toEqual({ rows: [{ pid: "PH", businessDate: "2026-09-11", value: 0 }], watermark: null });
+    }
+    for (const [totals, reason] of [
+      [{ totalCount: 2 }, "truncated_page"],
+      [{ totalCount: 0 }, "invalid_total"],
+      [{ totalCount: 1, total: 2 }, "invalid_total"],
+      [{ totalCount: true }, "invalid_total"],
+      [{ totalCount: "invalid" }, "invalid_total"]
+    ] as const) {
+      const source = new PDaySumM016Source({ get: async () => ({ code: 200, msg: {
+        ...totals, pageData: [{ pid: "PH", sumDate: "2026-09-11", loginUserCount: 1 }]
+      } }) } as unknown as UpstreamClient);
+      await expect(source.queryDailyActiveUsers({ pid: "PH", dateRange: ["2026-09-11", "2026-09-11"] }))
+        .rejects.toMatchObject({ reason });
+    }
   });
 });

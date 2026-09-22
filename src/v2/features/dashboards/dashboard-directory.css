@@ -1,0 +1,30 @@
+.dashboard-directory { display: flex; flex-direction: column; min-height: 0; flex: 1; font-size: var(--font-size-body); }
+.dashboard-directory__search { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3); padding-left: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); min-height: 36px; }
+.dashboard-directory__search > svg { width: 16px; height: 16px; flex: none; color: var(--color-text-2); }
+.dashboard-directory__search input { min-width: 0; width: 100%; padding: var(--space-2) 0; border: 0; outline: none; background: transparent; color: var(--color-text-1); font: inherit; }
+.dashboard-directory__search input::-webkit-search-cancel-button { display: none; }
+.dashboard-directory__clear { position: relative; border: 0; background: none; min-width: 36px; height: 36px; display: grid; place-items: center; color: var(--color-text-2); cursor: pointer; }
+.dashboard-directory__clear svg { width: 16px; height: 16px; }
+.dashboard-directory__list { overflow: auto; overscroll-behavior: contain; min-height: 0; padding: 0 var(--space-2) var(--space-4); }
+.dashboard-directory__item { display: flex; align-items: center; position: relative; width: 100%; min-height: 36px; padding: 8px 12px; text-decoration: none; color: var(--color-text-1); border-radius: var(--radius-control); font-size: var(--font-size-body); }
+.dashboard-directory__item:hover { background: var(--color-surface-hover); }
+.dashboard-directory__item[aria-current="page"] { background: var(--color-brand-050); color: var(--color-brand-700); font-weight: var(--font-weight-semibold); }
+.dashboard-directory__name { flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.dashboard-directory__item > svg { flex: none; margin-left: 12px; }
+.dashboard-directory__full-name { display: none; position: absolute; z-index: 5; left: 4px; top: 100%; max-width: calc(100% - 8px); padding: 6px 8px; border-radius: var(--radius-control); background: var(--chart-tooltip-bg); color: var(--color-text-on-emphasis); font-size: var(--font-size-body-sm); font-weight: var(--font-weight-regular); line-height: var(--line-height-body); white-space: normal; overflow-wrap: anywhere; pointer-events: none; box-shadow: var(--shadow-overlay); }
+.dashboard-directory__item:hover .dashboard-directory__full-name, .dashboard-directory__item:focus-visible .dashboard-directory__full-name, .dashboard-directory__clear:hover .dashboard-directory__full-name, .dashboard-directory__clear:focus-visible .dashboard-directory__full-name { display: block; }
+.dashboard-directory__clear .dashboard-directory__full-name { left: auto; right: 0; max-width: none; width: max-content; }
+.dashboard-directory__item .dashboard-directory__full-name[data-above="true"] { top: auto; bottom: 100%; }
+.dashboard-directory__group { margin-top: var(--space-2); }
+.dashboard-directory__category { display: flex; align-items: center; gap: var(--space-1); min-height: 36px; width: 100%; padding: var(--space-2); font: inherit; color: var(--color-text-2); background: transparent; border: 0; cursor: pointer; text-align: left; }
+.dashboard-directory__category:hover:not(:disabled) { background: var(--color-surface-hover); }
+.dashboard-directory__category:disabled { cursor: default; }
+.dashboard-directory__category svg { width: 14px; height: 14px; flex: none; }
+.dashboard-directory__category small { margin-left: auto; font-size: var(--font-size-caption); font-weight: var(--font-weight-regular); }
+.dashboard-directory__children .dashboard-directory__item { padding-left: 28px; }
+.dashboard-directory__empty { padding: var(--space-5) var(--space-2); color: var(--color-text-2); font-size: var(--font-size-body); text-align: center; }
+.dashboard-directory__empty button { border: 0; padding: var(--space-2); font: inherit; color: var(--color-brand-700); background: none; cursor: pointer; }
+.ypbi-v2 .dashboard-directory__favorite-empty { margin: 0; padding: var(--space-2) var(--space-3); color: var(--color-text-3); font-size: var(--font-size-body-sm); font-weight: var(--font-weight-regular); line-height: var(--line-height-body); }
+@media (max-width: 767px) {
+  .dashboard-directory__search, .dashboard-directory__item, .dashboard-directory__category, .dashboard-directory__clear { min-height: var(--size-touch-target); }
+}

@@ -1,0 +1,15 @@
+.dashboard-metric-card.is-detailed { display: flex; flex-direction: column; min-height: 0; padding: var(--space-4); align-self:stretch; }
+.dashboard-metric-card.is-detailed > header { min-height: 48px; }
+.dashboard-metric-card__note { margin: 0; color: var(--color-text-2); font-size: var(--font-size-caption); line-height: var(--line-height-body); }
+.detailed-metric-trend { min-width: 0; width: 100%; margin-top: auto; padding-top:12px; }
+.dashboard-metric-card.is-detailed > .dashboard-metric-card__unavailable { flex:1; display:flex; align-items:center; justify-content:center; min-height:180px; }
+.dashboard-metric-card.is-detailed > header { grid-template-columns: minmax(0, 1fr) auto; }
+.dashboard-metric-card__tools { display: flex; align-items: center; gap: 4px; }
+.detailed-metric-trend { position: relative; }
+.detailed-metric-trend__view { height:220px; min-height:0; min-width:0; display:flex; flex-direction:column; }
+.detailed-metric-trend__view[data-long-series] { height:280px; }
+.detailed-metric-trend__view > .ui-result-table.is-compact { height:auto; flex:1; min-height:0; }
+.detailed-metric-trend__view > .dashboard-table-context { flex:none; max-height:64px; overflow:auto; }
+@media(pointer:coarse) { .detailed-metric-trend__view[data-long-series] { height:284px; } }
+.detailed-metric-trend__export { position: absolute; right: 0; bottom: 8px; z-index: 1; }
+.detailed-metric-trend:has(.detailed-metric-trend__export) .ui-chart-data-table__trigger { padding-right: 90px; }

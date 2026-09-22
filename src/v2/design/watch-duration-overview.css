@@ -1,0 +1,25 @@
+.watch-duration__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 24px; padding: 16px; }
+.watch-duration__summary { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; align-content: start; }
+.watch-duration__summary section { min-width: 0; }
+.watch-duration__label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--font-size-body); color: var(--color-text-2); }
+.watch-duration__value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 10px 0; font-variant-numeric: tabular-nums; }
+.watch-duration__value strong { font-size: var(--font-size-title-lg); line-height: 1.35; overflow-wrap: anywhere; }
+.watch-duration__value > span, .watch-duration__summary p, .watch-duration__types p { font-size: var(--font-size-body-sm); line-height: 1.6; color: var(--color-text-2); margin: 6px 0 0; }
+.watch-duration__summary small { font-size: var(--font-size-caption); color: var(--color-text-3); }
+.watch-duration__summary .watch-duration__status { color: var(--color-text-2); }
+.watch-duration__types { min-width: 0; border-left: 1px solid var(--color-border); padding-left: 24px; }
+.watch-duration__type-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.watch-duration__type-heading h3 { font-size: var(--font-size-body); font-weight: var(--font-weight-medium); margin: 0; }
+.watch-duration__type-heading > span { font-size: var(--font-size-caption); color: var(--color-text-3); }
+.watch-duration__type-table [role=row] { display: grid; grid-template-columns: 1.3fr repeat(3,1fr); gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--color-border); font-size: var(--font-size-body-sm); font-variant-numeric: tabular-nums; }
+.watch-duration__type-table [role=row] > :not(:first-child) { text-align: right; }
+.watch-duration__type-head { color: var(--color-text-3); }
+@container (max-width: 1000px) {
+  .watch-duration__layout { grid-template-columns: minmax(0,1fr); gap: 20px; }
+  .watch-duration__types { border-left: 0; border-top: 1px solid var(--color-border); padding: 16px 0 0; }
+}
+@media(max-width: 480px) {
+  .watch-duration__summary { grid-template-columns: minmax(0,1fr); gap: 16px; }
+  .watch-duration__value strong { font-size: var(--font-size-title); }
+  .watch-duration__type-table [role=row] { grid-template-columns: 1.3fr repeat(3,1fr); gap: 5px; }
+}

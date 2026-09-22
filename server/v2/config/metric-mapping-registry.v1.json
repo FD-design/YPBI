@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "metric-mapping-registry/v1",
+  "registryVersion": "2026-09-08.1",
+  "entries": [
+    {
+      "metricId": "M016",
+      "authorityVersion": "v0.23-draft",
+      "mappingVersion": "m016-pday-sum-v1",
+      "mapping": {
+        "status": "configured",
+        "sourceApiIds": [
+          "/api/admin/statistics/pDaySum"
+        ],
+        "capabilities": {
+          "grains": [
+            "day"
+          ],
+          "platformModes": [
+            "single_pid"
+          ],
+          "dimensions": [],
+          "filters": [],
+          "comparisons": []
+        }
+      },
+      "validation": {
+        "status": "not_started",
+        "mappingVersion": null,
+        "authorityVersion": null,
+        "validatedAt": null,
+        "evidenceId": null,
+        "evidenceSha256": null
+      }
+    }
+  ]
+}

@@ -8,16 +8,17 @@ import { buildApp } from "./app";
 import { loadEnv, type AppEnv } from "./config/env";
 import type { BiAuthService } from "./auth/service";
 import type { IdentityProvider } from "./identity/identity-provider";
+import { permissionsByRole } from "./auth/roles";
 
 const MAINTENANCE_PASSWORD = "Fake-maintenance-password-2026";
 const CURRENT_PRIMARY_TOKEN = "fake-current-primary-token-0001";
 const CANDIDATE_PRIMARY_TOKEN = "fake-candidate-primary-token-0002";
 const REJECTED_PRIMARY_TOKEN = "fake-rejected-primary-token-0003";
+const SECOND_PREVIEW_TOKEN = "fake-second-preview-token-0005";
 const PUBLIC_ORIGIN = "https://bi.example.test";
 const NORMAL_SESSION_TOKEN = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const NORMAL_CSRF_TOKEN = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
 const NORMAL_SESSION_COOKIE = `__Host-ypbi_session=${NORMAL_SESSION_TOKEN}`;
-const SECONDARY_PIDS = "FBI,BZMH,TJS,BPS,HQW,TJD,MMV,AF,TFKJ,JRTT,YQ";
 
 const maintainerIdentity: IdentityProvider = {
   resolve: async () => ({
@@ -86,11 +87,13 @@ async function createHarness(options: {
     UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
     UPSTREAM_SECONDARY_X_TOKEN: "fake-current-secondary-token-0004",
     UPSTREAM_SECONDARY_USER_NAME: "fake-secondary-user",
-    UPSTREAM_SECONDARY_PIDS: "FBI,TJD",
     UPSTREAM_CREDENTIALS_FILE: credentialsFile,
     WORKSPACE_FILE: join(directory, "workspace.json"),
     TOKEN_MAINTENANCE_KEY: options.maintenanceEnabled === false ? undefined : MAINTENANCE_PASSWORD,
     BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
+    BI_V2_CORE_OVERVIEW_QUERY_ENABLED: false,
+    BI_LOCAL_DASHBOARD_READING_ENABLED: false,
+    BI_TEST_DATA_PREVIEW_ENABLED: false,
     REQUEST_TIMEOUT_MS: 1_000,
     MAX_PLATFORM_CONCURRENCY: 1,
     ...options.envOverrides
@@ -122,19 +125,137 @@ const forwardedRequest = (clientIp: string, protocol = "https") => ({
   }
 });
 
+function maintenanceSetCookie(header: string | string[] | undefined) {
+  const cookies = Array.isArray(header) ? header : header ? [header] : [];
+  const matches = cookies.filter((value) => value.startsWith("bi_maintenance_session="));
+  expect(matches).toHaveLength(1);
+  return matches[0];
+}
+
+function previewSetCookie(header: string | string[] | undefined) {
+  const cookies = Array.isArray(header) ? header : header ? [header] : [];
+  const matches = cookies.filter((value) => value.startsWith("ypbi_data_preview="));
+  expect(matches).toHaveLength(1);
+  return matches[0];
+}
+
 async function login(app: FastifyInstance) {
   const response = await app.inject({
     method: "POST",
     url: "/api/bi/admin/auth/login",
     payload: { password: MAINTENANCE_PASSWORD }
   });
-  const setCookie = response.headers["set-cookie"];
   expect(response.statusCode).toBe(200);
-  expect(setCookie).toBeString();
-  return String(setCookie).split(";", 1)[0];
+  return maintenanceSetCookie(response.headers["set-cookie"]).split(";", 1)[0];
 }
 
 describe("数据源维护管理接口", () => {
+  test("临时测试 Token 验证后只进入当前用户内存会话，正式默认路径保持不变", async () => {
+    const { app, observedRequests, credentialsFile } = await createHarness({
+      envOverrides: {
+        BI_TEST_DATA_PREVIEW_ENABLED: true,
+        UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+        UPSTREAM_TEST_USER_NAME: "test-preview-user"
+      }
+    });
+    const maintenanceCookie = await login(app);
+    const ordinaryCookie = `ypbi_session=${NORMAL_SESSION_TOKEN}`;
+
+    const activation = await app.inject({
+      method: "POST",
+      url: "/api/bi/admin/data-preview/activate",
+      headers: { cookie: `${maintenanceCookie}; ${ordinaryCookie}` },
+      payload: { token: CANDIDATE_PRIMARY_TOKEN }
+    });
+
+    expect(activation.statusCode).toBe(200);
+    expect(activation.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
+    expect(activation.json().data).toMatchObject({ mode: "test", userName: "test-preview-user" });
+    expect(observedRequests).toHaveLength(2);
+    expect(observedRequests.every((request) => request.token === CANDIDATE_PRIMARY_TOKEN && request.userName === "test-preview-user")).toBe(true);
+    expect(observedRequests.every((request) => request.url.startsWith("https://test-upstream.example.test/api/admin/statistics/pDaySum"))).toBe(true);
+    expect(observedRequests.some((request) => request.url.includes("pid=PH"))).toBe(true);
+    expect(observedRequests.some((request) => request.url.includes("pid=FBI"))).toBe(true);
+    expect(existsSync(credentialsFile)).toBe(false);
+
+    const previewCookie = previewSetCookie(activation.headers["set-cookie"]).split(";", 1)[0];
+    const production = await app.inject({ method: "GET", url: "/api/bi/v2/data-environment", headers: { cookie: `${ordinaryCookie}; ${previewCookie}` } });
+    const testMode = await app.inject({ method: "GET", url: "/api/bi/v2/data-environment", headers: { cookie: `${ordinaryCookie}; ${previewCookie}`, "x-ypbi-data-environment": "test" } });
+    expect(production.json().data.mode).toBe("production");
+    expect(testMode.json().data).toMatchObject({ mode: "test", userName: "test-preview-user" });
+  });
+
+  test("测试会话绑定普通登录 Cookie，缺失或更换后绝不回退到正式数据", async () => {
+    const { app } = await createHarness({ envOverrides: {
+      BI_TEST_DATA_PREVIEW_ENABLED: true,
+      UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+      UPSTREAM_TEST_USER_NAME: "test-preview-user"
+    } });
+    const maintenanceCookie = await login(app);
+    const ordinaryCookie = `ypbi_session=${NORMAL_SESSION_TOKEN}`;
+    const activation = await app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate", headers: { cookie: `${maintenanceCookie}; ${ordinaryCookie}` }, payload: { token: CANDIDATE_PRIMARY_TOKEN } });
+    const previewCookie = previewSetCookie(activation.headers["set-cookie"]).split(";", 1)[0];
+
+    for (const cookie of [previewCookie, `ypbi_session=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB; ${previewCookie}`]) {
+      const response = await app.inject({ method: "GET", url: "/api/bi/v2/catalog/platforms", headers: { cookie, "x-ypbi-data-environment": "test" } });
+      expect(response.statusCode).toBe(409);
+      expect(response.json().error.code).toBe("DATA_PREVIEW_SESSION_REQUIRED");
+    }
+  });
+
+  test("同一浏览器重新验证测试 Token 后旧预览 Cookie 立即失效", async () => {
+    const { app } = await createHarness({ envOverrides: {
+      BI_TEST_DATA_PREVIEW_ENABLED: true,
+      UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+      UPSTREAM_TEST_USER_NAME: "test-preview-user"
+    } });
+    const maintenanceCookie = await login(app);
+    const ordinaryCookie = `ypbi_session=${NORMAL_SESSION_TOKEN}`;
+    const first = await app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate", headers: { cookie: `${maintenanceCookie}; ${ordinaryCookie}` }, payload: { token: CANDIDATE_PRIMARY_TOKEN } });
+    const firstPreviewCookie = previewSetCookie(first.headers["set-cookie"]).split(";", 1)[0];
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/bi/admin/data-preview/activate",
+      headers: { cookie: `${maintenanceCookie}; ${ordinaryCookie}; ${firstPreviewCookie}` },
+      payload: { token: SECOND_PREVIEW_TOKEN }
+    });
+    const secondPreviewCookie = previewSetCookie(second.headers["set-cookie"]).split(";", 1)[0];
+
+    const stale = await app.inject({ method: "GET", url: "/api/bi/v2/data-environment", headers: { cookie: `${ordinaryCookie}; ${firstPreviewCookie}`, "x-ypbi-data-environment": "test" } });
+    const current = await app.inject({ method: "GET", url: "/api/bi/v2/data-environment", headers: { cookie: `${ordinaryCookie}; ${secondPreviewCookie}`, "x-ypbi-data-environment": "test" } });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe("DATA_PREVIEW_SESSION_REQUIRED");
+    expect(current.statusCode).toBe(200);
+    expect(current.json().data.mode).toBe("test");
+    expect(second.body).not.toContain(SECOND_PREVIEW_TOKEN);
+  });
+
+  for (const role of ["reader", "analyst", "maintainer"] as const) {
+    test(`${role} 完成二次认证后可验证并更新共享 Token`, async () => {
+      const { app, observedRequests } = await createHarness({
+        identityProvider: { resolve: async () => ({ status: "authenticated", principal: {
+          subjectId: `maintenance-${role}`, roles: [role], permissions: permissionsByRole[role],
+          pidScope: "all", securityVersion: "1"
+        } }) }
+      });
+      const cookie = await login(app);
+      const response = await app.inject({ method: "PUT", url: "/api/bi/admin/data-sources/token",
+        headers: { cookie }, payload: { site: "primary", token: CANDIDATE_PRIMARY_TOKEN } });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data.configured).toBe(true);
+      expect(response.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
+      expect(observedRequests).toHaveLength(1);
+      expect(observedRequests[0].userName).toBe("fake-primary-user");
+    });
+  }
+
+  test("测试读取维护 Cookie 兼容单值和多值响应头且按名称定位", () => {
+    const cookie = "bi_maintenance_session=fake-cookie; Path=/api/bi/admin; HttpOnly; Secure; SameSite=Strict";
+    expect(maintenanceSetCookie(cookie)).toBe(cookie);
+    expect(maintenanceSetCookie(["another_session=fake-other; Path=/", cookie])).toBe(cookie);
+  });
+
   test("readiness 必须同时通过主站与备用站真实探针", async () => {
     const { app, observedRequests } = await createHarness();
 
@@ -199,7 +320,7 @@ describe("数据源维护管理接口", () => {
     expect(response.json().error.code).toBe("AUTHENTICATION_REQUIRED");
   });
 
-  test("非维护者即使知道维护密码也不能进入数据源维护", async () => {
+  test("未获得维护能力的身份即使知道维护密码也不能进入数据源维护", async () => {
     const { app } = await createHarness({
       identityProvider: {
         resolve: async () => ({
@@ -254,10 +375,10 @@ describe("数据源维护管理接口", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
-    expect(response.headers["set-cookie"]).toContain("bi_maintenance_session=");
-    expect(response.headers["set-cookie"]).toContain("HttpOnly");
-    expect(response.headers["set-cookie"]).toContain("Secure");
-    expect(response.headers["set-cookie"]).toContain("SameSite=Strict");
+    const cookie = maintenanceSetCookie(response.headers["set-cookie"]);
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("Secure");
+    expect(cookie).toContain("SameSite=Strict");
     expect(response.body).not.toContain(MAINTENANCE_PASSWORD);
   });
 
@@ -371,7 +492,7 @@ describe("数据源维护管理接口", () => {
     });
     expect(logout.statusCode).toBe(200);
     expect(logout.headers["cache-control"]).toBe("no-store");
-    expect(logout.headers["set-cookie"]).toContain("Max-Age=0");
+    expect(maintenanceSetCookie(logout.headers["set-cookie"])).toContain("Max-Age=0");
 
     const status = await app.inject({
       method: "GET",
@@ -573,7 +694,8 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
       ...forwardedRequest("198.51.100.23"),
       payload: { password: MAINTENANCE_PASSWORD }
     });
-    const cookie = String(loginResponse.headers["set-cookie"]).split(";", 1)[0];
+    expect(loginResponse.statusCode).toBe(200);
+    const cookie = maintenanceSetCookie(loginResponse.headers["set-cookie"]).split(";", 1)[0];
 
     const sameClient = await app.inject({
       method: "GET",
@@ -631,7 +753,8 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
       ...forwardedRequest("198.51.100.23"),
       payload: { password: MAINTENANCE_PASSWORD }
     });
-    const cookie = String(loginResponse.headers["set-cookie"]).split(";", 1)[0];
+    expect(loginResponse.statusCode).toBe(200);
+    const cookie = maintenanceSetCookie(loginResponse.headers["set-cookie"]).split(";", 1)[0];
 
     const response = await app.inject({
       method: "GET",
@@ -663,7 +786,8 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
       ...forwardedRequest("198.51.100.23"),
       payload: { password: MAINTENANCE_PASSWORD }
     });
-    const cookie = String(loginResponse.headers["set-cookie"]).split(";", 1)[0];
+    expect(loginResponse.statusCode).toBe(200);
+    const cookie = maintenanceSetCookie(loginResponse.headers["set-cookie"]).split(";", 1)[0];
 
     const insecureLogout = await app.inject({
       method: "POST",
@@ -688,7 +812,7 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
       headers: { ...forwardedRequest("198.51.100.23").headers, cookie: `${NORMAL_SESSION_COOKIE}; ${cookie}` }
     });
     expect(secureLogout.statusCode).toBe(200);
-    expect(secureLogout.headers["set-cookie"]).toContain("Max-Age=0");
+    expect(maintenanceSetCookie(secureLogout.headers["set-cookie"])).toContain("Max-Age=0");
 
     const expiredStatus = await app.inject({
       method: "GET",
@@ -724,6 +848,13 @@ describe("数据源维护可信代理与 HTTPS 边界", () => {
 });
 
 describe("生产环境配置", () => {
+  test("核心经营总览开关默认关闭且只接受明确 true 或 false", () => {
+    expect(loadEnv({ NODE_ENV: "development" }).BI_V2_CORE_OVERVIEW_QUERY_ENABLED).toBe(false);
+    expect(loadEnv({ NODE_ENV: "development", BI_V2_CORE_OVERVIEW_QUERY_ENABLED: "false" }).BI_V2_CORE_OVERVIEW_QUERY_ENABLED).toBe(false);
+    expect(loadEnv({ NODE_ENV: "development", BI_V2_CORE_OVERVIEW_QUERY_ENABLED: "true" }).BI_V2_CORE_OVERVIEW_QUERY_ENABLED).toBe(true);
+    expect(() => loadEnv({ NODE_ENV: "development", BI_V2_CORE_OVERVIEW_QUERY_ENABLED: "1" })).toThrow("环境变量配置错误");
+  });
+
   test("正式环境允许先启动登录与维护页，再由维护者录入首个 Token", () => {
     const env = loadEnv({
       NODE_ENV: "production",
@@ -731,7 +862,6 @@ describe("生产环境配置", () => {
       UPSTREAM_USER_NAME: "primary-user",
       UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
       UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
-      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
       TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
       BI_IDENTITY_MODE: "local",
       BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
@@ -752,7 +882,6 @@ describe("生产环境配置", () => {
       UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
       UPSTREAM_SECONDARY_X_TOKEN: "",
       UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
-      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
       TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
       BI_IDENTITY_MODE: "local",
       BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
@@ -799,7 +928,6 @@ describe("生产环境配置", () => {
       TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
       UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
       UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
-      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
       BI_IDENTITY_MODE: "local",
       BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
       BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
@@ -815,13 +943,11 @@ describe("生产环境配置", () => {
     })).toThrow("备用上游地址必须使用无凭据的 HTTPS URL");
   });
 
-  test("正式环境备用 PID 路由必须与当前平台注册表完整一致", () => {
+  test("正式环境由平台目录发现站2 PID 时要求完整配置站2连接", () => {
     const productionBase = {
       NODE_ENV: "production",
       UPSTREAM_API_BASE_URL: "https://primary.example.test",
       UPSTREAM_USER_NAME: "primary-user",
-      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
-      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
       TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
       BI_IDENTITY_MODE: "local",
       BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
@@ -829,10 +955,20 @@ describe("生产环境配置", () => {
       BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN
     } as const;
 
-    expect(() => loadEnv({ ...productionBase, UPSTREAM_SECONDARY_PIDS: "" }))
-      .toThrow("备用后台 PID 路由必须与当前平台注册表一致");
-    expect(() => loadEnv({ ...productionBase, UPSTREAM_SECONDARY_PIDS: "FBI" }))
-      .toThrow("备用后台 PID 路由必须与当前平台注册表一致");
+    expect(() => loadEnv(productionBase))
+      .toThrow("平台目录包含站2 PID，必须配置站2后台地址和用户名");
+  });
+
+  test("遗留备用 PID 环境变量不再参与路由，平台归属只有目录一个来源", () => {
+    const env = loadEnv({
+      NODE_ENV: "development",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
+      UPSTREAM_SECONDARY_PIDS: "PH"
+    });
+
+    expect("UPSTREAM_SECONDARY_PIDS" in env).toBe(false);
   });
 
   test("备用后台拒绝只有 Token 或地址与用户名缺一的歧义配置", () => {
@@ -844,8 +980,6 @@ describe("生产环境配置", () => {
       .toThrow("不能脱离对应地址和用户名");
     expect(() => loadEnv({ ...base, UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test" }))
       .toThrow("地址和用户名必须同时配置");
-    expect(() => loadEnv({ ...base, UPSTREAM_SECONDARY_PIDS: "FBI,TJD" }))
-      .toThrow("PID 路由前必须同时配置备用后台地址和用户名");
   });
 
   test("正式环境允许使用已确认的文件工作区，不强制引入 PostgreSQL", () => {
@@ -856,7 +990,6 @@ describe("生产环境配置", () => {
       UPSTREAM_X_TOKEN: CURRENT_PRIMARY_TOKEN,
       UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
       UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
-      UPSTREAM_SECONDARY_PIDS: SECONDARY_PIDS,
       TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
       BI_IDENTITY_MODE: "local",
       BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",

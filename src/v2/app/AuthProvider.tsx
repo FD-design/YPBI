@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   changeUserPassword,
   fetchUserSession,
@@ -12,7 +12,12 @@ import { V2_AUTHENTICATION_REQUIRED_EVENT } from "../api/authEvents";
 type AuthenticationState =
   | { status: "checking" }
   | { status: "anonymous" }
-  | { status: "authenticated"; session: AuthenticatedSession }
+  | {
+      status: "authenticated";
+      session: AuthenticatedSession;
+      authScopeSignature: string;
+      authScopeKey: string;
+    }
   | { status: "unavailable"; error: AuthRequestError };
 
 interface AuthenticationContextValue {
@@ -25,28 +30,72 @@ interface AuthenticationContextValue {
 
 const AuthenticationContext = createContext<AuthenticationContextValue | null>(null);
 
-export function AuthenticationProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AuthenticationState>({ status: "checking" });
+function sessionScopeSignature(session: AuthenticatedSession) {
+  const pidScope: unknown = session.user.pidScope;
+  return JSON.stringify([
+    session.user.subjectId,
+    session.user.role,
+    [...session.user.permissions].sort(),
+    Array.isArray(pidScope) ? [...pidScope].sort() : pidScope
+  ]);
+}
+
+function authenticatedState(
+  current: AuthenticationState,
+  session: AuthenticatedSession,
+  nextAuthScopeKey: string
+): AuthenticationState {
+  const authScopeSignature = sessionScopeSignature(session);
+  if (current.status === "authenticated" && current.authScopeSignature === authScopeSignature) {
+    return { ...current, session };
+  }
+  return { status: "authenticated", session, authScopeSignature, authScopeKey: nextAuthScopeKey };
+}
+
+export function AuthenticationProvider({
+  children,
+  developmentPreviewSession
+}: {
+  children: ReactNode;
+  developmentPreviewSession?: AuthenticatedSession;
+}) {
+  const fixedPreviewSession = import.meta.env.DEV ? developmentPreviewSession : undefined;
+  const [state, setState] = useState<AuthenticationState>(() => fixedPreviewSession
+    ? authenticatedState({ status: "checking" }, fixedPreviewSession, "development-design-preview")
+    : { status: "checking" });
   const [refreshKey, setRefreshKey] = useState(0);
+  const authEpoch = useRef(0);
+  const nextAuthScopeKey = useCallback(() => `auth-scope-${++authEpoch.current}`, []);
 
   useEffect(() => {
+    if (fixedPreviewSession) {
+      setState((current) => authenticatedState(current, fixedPreviewSession, "development-design-preview"));
+      return undefined;
+    }
     const controller = new AbortController();
     setState({ status: "checking" });
     fetchUserSession(controller.signal).then((session) => {
-      setState(session ? { status: "authenticated", session } : { status: "anonymous" });
+      if (!session) {
+        setState({ status: "anonymous" });
+        return;
+      }
+      const scopeKey = nextAuthScopeKey();
+      setState((current) => authenticatedState(current, session, scopeKey));
     }).catch((error: AuthRequestError) => {
       if (!controller.signal.aborted) setState({ status: "unavailable", error });
     });
     return () => controller.abort();
-  }, [refreshKey]);
+  }, [fixedPreviewSession, nextAuthScopeKey, refreshKey]);
 
   useEffect(() => {
+    if (fixedPreviewSession) return undefined;
     const handleAuthenticationRequired = () => setState({ status: "anonymous" });
     window.addEventListener(V2_AUTHENTICATION_REQUIRED_EVENT, handleAuthenticationRequired);
     return () => window.removeEventListener(V2_AUTHENTICATION_REQUIRED_EVENT, handleAuthenticationRequired);
-  }, []);
+  }, [fixedPreviewSession]);
 
   useEffect(() => {
+    if (fixedPreviewSession) return undefined;
     if (state.status !== "authenticated") return undefined;
     let controller: AbortController | null = null;
     const revalidateVisibleSession = () => {
@@ -54,9 +103,10 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
       controller = new AbortController();
       const currentController = controller;
       fetchUserSession(currentController.signal).then((session) => {
+        const scopeKey = session ? nextAuthScopeKey() : null;
         setState((current) => {
           if (current.status !== "authenticated") return current;
-          return session ? { status: "authenticated", session } : { status: "anonymous" };
+          return session ? authenticatedState(current, session, scopeKey!) : { status: "anonymous" };
         });
       }).catch(() => {
         // A transient revalidation failure must not erase an otherwise valid
@@ -75,7 +125,7 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", revalidateVisibleSession);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [state.status]);
+  }, [fixedPreviewSession, nextAuthScopeKey, state.status]);
 
   useEffect(() => {
     if (state.status !== "authenticated") return undefined;
@@ -91,23 +141,27 @@ export function AuthenticationProvider({ children }: { children: ReactNode }) {
   const retry = useCallback(() => setRefreshKey((value) => value + 1), []);
   const login = useCallback(async (username: string, password: string) => {
     const session = await loginUser(username, password);
-    setState({ status: "authenticated", session });
+    const scopeKey = nextAuthScopeKey();
+    setState((current) => authenticatedState(current, session, scopeKey));
     return session;
-  }, []);
+  }, [nextAuthScopeKey]);
   const logout = useCallback(async () => {
+    if (fixedPreviewSession) return;
     if (state.status !== "authenticated") {
       setState({ status: "anonymous" });
       return;
     }
     await logoutUser(state.session.csrfToken);
     setState({ status: "anonymous" });
-  }, [state]);
+  }, [fixedPreviewSession, state]);
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    if (fixedPreviewSession) throw new Error("DEVELOPMENT_PREVIEW_SESSION");
     if (state.status !== "authenticated") throw new Error("AUTHENTICATION_REQUIRED");
     const session = await changeUserPassword(currentPassword, newPassword, state.session.csrfToken);
-    setState({ status: "authenticated", session });
+    const scopeKey = nextAuthScopeKey();
+    setState((current) => authenticatedState(current, session, scopeKey));
     return session;
-  }, [state]);
+  }, [fixedPreviewSession, nextAuthScopeKey, state]);
 
   const value = useMemo(() => ({ state, retry, login, logout, changePassword }), [state, retry, login, logout, changePassword]);
   return <AuthenticationContext.Provider value={value}>{children}</AuthenticationContext.Provider>;

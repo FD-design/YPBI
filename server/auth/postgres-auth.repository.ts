@@ -356,11 +356,11 @@ export class PostgresAuthRepository implements AuthRepository {
       }
       const rows = await transaction.unsafe<UserRow[]>(
         `update bi_auth_users
-         set status = $1,
+         set status = $1::varchar,
              credential_version = credential_version + 1,
-             failed_login_count = case when $1 = 'active' then 0 else failed_login_count end,
-             failed_login_window_started_at = case when $1 = 'active' then null else failed_login_window_started_at end,
-             locked_until = case when $1 = 'active' then null else locked_until end,
+             failed_login_count = case when $1::varchar = 'active' then 0 else failed_login_count end,
+             failed_login_window_started_at = case when $1::varchar = 'active' then null else failed_login_window_started_at end,
+             locked_until = case when $1::varchar = 'active' then null else locked_until end,
              updated_at = $2
          where user_id = $3
            and credential_version = $4

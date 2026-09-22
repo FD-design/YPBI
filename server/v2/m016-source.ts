@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { V2MetricWatermark } from "../../contracts/bi-v2";
 import type { UpstreamClient } from "../upstream/client";
 import { toBeijingDate } from "../upstream/date";
 import { P_DAY_SUM_API } from "../upstream/overview.adapter";
@@ -42,6 +43,7 @@ function parseM016BusinessDate(value: string) {
 
 function parseOptionalTotal(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "number" && typeof value !== "string") throw new M016SourceDataError("invalid_total");
   const normalized = typeof value === "string" ? value.trim() : value;
   if (normalized === "") return null;
   const numeric = typeof normalized === "number" ? normalized : Number(normalized);
@@ -55,14 +57,19 @@ export interface M016SourceRow {
   value: number | null;
 }
 
+export interface M016SourceResult {
+  rows: M016SourceRow[];
+  watermark: V2MetricWatermark | null;
+}
+
 export interface M016Source {
-  queryDailyActiveUsers(input: { pid: string; dateRange: readonly [string, string] }): Promise<M016SourceRow[]>;
+  queryDailyActiveUsers(input: { pid: string; dateRange: readonly [string, string] }): Promise<M016SourceResult>;
 }
 
 export class PDaySumM016Source implements M016Source {
   constructor(private readonly client: UpstreamClient) {}
 
-  async queryDailyActiveUsers(input: { pid: string; dateRange: readonly [string, string] }): Promise<M016SourceRow[]> {
+  async queryDailyActiveUsers(input: { pid: string; dateRange: readonly [string, string] }): Promise<M016SourceResult> {
     const payload = await this.client.get(P_DAY_SUM_API, {
       page: "1",
       count: "500",
@@ -76,11 +83,16 @@ export class PDaySumM016Source implements M016Source {
     } catch {
       throw new M016SourceDataError("invalid_envelope");
     }
-    const total = parseOptionalTotal(envelope.msg.total);
+    const totalCount = parseOptionalTotal(envelope.msg.totalCount);
+    const legacyTotal = parseOptionalTotal(envelope.msg.total);
+    if (totalCount !== null && legacyTotal !== null && totalCount !== legacyTotal) {
+      throw new M016SourceDataError("invalid_total");
+    }
+    const total = totalCount ?? legacyTotal;
     if (total !== null && total !== envelope.msg.pageData.length) {
       throw new M016SourceDataError(total > envelope.msg.pageData.length ? "truncated_page" : "invalid_total");
     }
-    return envelope.msg.pageData.map((item) => {
+    const rows = envelope.msg.pageData.map((item) => {
       let row: z.infer<typeof rawM016RowSchema>;
       try {
         row = rawM016RowSchema.parse(item);
@@ -93,5 +105,6 @@ export class PDaySumM016Source implements M016Source {
         value: parseM016Value(row.loginUserCount)
       };
     });
+    return { rows, watermark: null };
   }
 }

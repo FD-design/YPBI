@@ -4,7 +4,8 @@ const readerPermissions = [
   "bi:read",
   "bi:export",
   "bi:favorite:write",
-  "bi:view-link:create"
+  "bi:view-link:create",
+  "bi:data-source-maintenance:enter"
 ] as const;
 
 const analystPermissions = [
@@ -20,8 +21,7 @@ export const permissionsByRole: Readonly<Record<BiRole, readonly string[]>> = {
   maintainer: [
     ...analystPermissions,
     "bi:official-dashboard:write",
-    "bi:maintenance-scope:write",
-    "bi:data-source-maintenance:enter"
+    "bi:maintenance-scope:write"
   ]
 };
 

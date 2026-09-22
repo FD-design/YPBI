@@ -1,13 +1,18 @@
-import { ArrowLeft, CalendarDays, RefreshCw } from "lucide-react";
+import { PaginatedTable } from "../../components/ui/PaginatedTable";
+import { AlertTriangle, ArrowLeft, CalendarDays, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { M016_METRIC_ID, type MetricCatalogItem, type PlatformCatalogItem, type V2MetricQuerySuccess } from "../../../contracts/bi-v2";
+import { M016_METRIC_ID, MAX_M016_QUERY_DAYS, type MetricCatalogItem, type PlatformCatalogItem, type V2MetricQuerySuccess } from "../../../contracts/bi-v2";
+import { DateRangePicker } from "../../components/ui/DateRangePicker";
 import { Chart, type ChartOption } from "../../components/Chart";
+import { metricHeadingUnit } from "../../components/metric-unit";
 import { MenuSelect } from "../../components/ui/MenuSelect";
-import { fetchMetricCatalog, fetchPlatformCatalog, queryMetric, V2RequestError } from "../api/client";
+import { fetchMetricCatalog, fetchMetricDefinitions, fetchPlatformCatalog, queryMetric, V2RequestError } from "../api/client";
 import { useV2Resource } from "../api/useV2Resource";
 import { defaultM016DateRange, validateDateRange } from "../app/dateRange";
 import { navigate, ProductLink, useBrowserLocation } from "../app/router";
 import { RefreshNotice, ResourceFailurePanel, StatePanel } from "../components/StatePanel";
+import { hideInternalReferenceCodes } from "../features/metrics/metric-presentation";
+import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
 
 interface MetricAnalysisData {
   metric: MetricCatalogItem;
@@ -42,6 +47,12 @@ function formatShanghaiTimestamp(value: string) {
   return `${formatted}（Asia/Shanghai）`;
 }
 
+function formatMetricWatermark(watermark: V2MetricQuerySuccess["meta"]["watermark"]) {
+  if (!watermark) return "暂未提供";
+  const sourceLabel = watermark.sourceKind === "upstream_explicit" ? "数据接口明确返回" : "已登记的完成状态 API";
+  return `完整至 ${watermark.completeThrough}（${watermark.timeZone}）· ${sourceLabel}`;
+}
+
 function seriesStatusLabel(status: V2MetricQuerySuccess["data"]["seriesStatus"]) {
   if (status === "available") return "可用";
   if (status === "partial") return "部分数据";
@@ -71,7 +82,7 @@ function resultChartOption(result: V2MetricQuerySuccess): ChartOption {
     },
     yAxis: {
       type: "value",
-      name: result.data.metric.unit,
+      name: metricHeadingUnit(result.data.metric.name, result.data.metric.unit),
       minInterval: 1,
       axisLabel: { color: "#6b7280" },
       splitLine: { lineStyle: { color: "#edf0f4" } }
@@ -109,17 +120,35 @@ export function MetricAnalysisPage({ metricId }: { metricId: string }) {
   const pidRequestKey = routeQuery.pid && routeQuery.pid !== defaultPidRef.current ? routeQuery.pid : "__default_pid__";
   const requestKey = `${metricId}|${pidRequestKey}|${routeQuery.start}|${routeQuery.end}`;
   const load = useCallback(async (signal: AbortSignal): Promise<MetricAnalysisData> => {
-    if (metricId !== M016_METRIC_ID) throw new V2RequestError(`首批版本尚未开放指标 ${metricId}`, { kind: "error", code: "UNSUPPORTED_V2_ROUTE", status: 422 });
+    if (metricId !== M016_METRIC_ID) throw new V2RequestError("该指标暂未开放分析", { kind: "error", code: "UNSUPPORTED_V2_ROUTE", status: 422 });
     const rangeError = validateDateRange(routeQuery.start, routeQuery.end);
     if (rangeError) throw new V2RequestError(rangeError, { kind: "error", code: "INVALID_DATE_RANGE", status: 400 });
-    const [metrics, platforms] = await Promise.all([fetchMetricCatalog(signal), fetchPlatformCatalog(signal)]);
+    const [definitions, metrics, platforms] = await Promise.all([
+      fetchMetricDefinitions(signal),
+      fetchMetricCatalog(signal),
+      fetchPlatformCatalog(signal)
+    ]);
+    const definition = definitions.items.find((item) => item.id === metricId);
+    if (!definition) throw new V2RequestError("指标定义目录暂未返回当前指标", { kind: "error", code: "METRIC_DEFINITION_NOT_FOUND", status: 404 });
+    if (definition.analysis.status !== "available") {
+      throw new V2RequestError("该指标尚未完成当前映射版本的真实验数，暂不能进入正式指标分析", { kind: "error", code: "METRIC_NOT_READY", status: 422 });
+    }
     const metric = metrics.find((item) => item.id === metricId);
-    if (!metric) throw new V2RequestError(`指标目录当前未返回 ${metricId}`, { kind: "error", code: "METRIC_NOT_IN_CATALOG", status: 404 });
+    if (!metric) throw new V2RequestError("指标目录暂未返回当前指标", { kind: "error", code: "METRIC_NOT_IN_CATALOG", status: 404 });
     if (!platforms.length) throw new V2RequestError("当前身份没有可查询的业务平台", { kind: "forbidden", code: "NO_ACCESSIBLE_PLATFORM", status: 403 });
-    const effectivePid = routeQuery.pid || (platforms.some((item) => item.pid === "PH") ? "PH" : platforms[0].pid);
+    const effectivePid = routeQuery.pid || platforms[0].pid;
     if (!routeQuery.pid) defaultPidRef.current = effectivePid;
     if (!platforms.some((item) => item.pid === effectivePid)) throw new V2RequestError(`平台 ${effectivePid} 不在当前可用目录中`, { kind: "forbidden", code: "PID_ACCESS_DENIED", status: 403 });
     const result = await queryMetric({ metricId: M016_METRIC_ID, pid: effectivePid, dateRange: [routeQuery.start, routeQuery.end], grain: "day" }, signal);
+    if (
+      result.meta.validationStatus !== "passed"
+      || result.meta.mappingVersion !== definition.ypbiMapping.mappingVersion
+      || !result.meta.watermark
+      || result.meta.watermark.pid !== effectivePid
+      || result.meta.watermark.completeThrough < result.data.dateRange[1]
+    ) {
+      throw new V2RequestError("查询结果没有同时绑定当前已验数映射和可信数据水位，暂不能作为正式分析结果", { kind: "error", code: "METRIC_NOT_READY", status: 409 });
+    }
     return { metric, platforms: [...platforms].sort((left, right) => left.order - right.order), effectivePid, result };
   }, [metricId, routeQuery.end, routeQuery.pid, routeQuery.start]);
   const { state, retry } = useV2Resource(requestKey, load);
@@ -170,7 +199,12 @@ export function MetricAnalysisPage({ metricId }: { metricId: string }) {
   const rows = state.status === "success" ? resultRows(state.data.result) : [];
   const hasAvailablePoints = state.status === "success" && state.data.result.data.points.length > 0;
   const busy = state.status === "loading" || (state.status === "success" && state.refreshing);
-  const pageTitle = state.status === "success" ? state.data.metric.name : `${metricId} 指标分析`;
+  const pageTitle = state.status === "success" ? state.data.metric.name : "指标分析";
+  const hasUnappliedQuery = state.status === "success" && (
+    draftPid !== state.data.effectivePid
+    || draftStart !== state.data.result.data.dateRange[0]
+    || draftEnd !== state.data.result.data.dateRange[1]
+  );
 
   return <div className="v2-page" data-page="metric-analysis">
     <header className="v2-page-head v2-page-head--analysis">
@@ -178,9 +212,9 @@ export function MetricAnalysisPage({ metricId }: { metricId: string }) {
         <ProductLink className="v2-back-link" href="/data/metrics"><ArrowLeft aria-hidden="true" />返回指标中心</ProductLink>
         <span className="v2-eyebrow">分析中心 / 指标分析</span>
         <h1>{pageTitle}</h1>
-        <p>首批只读分析；已应用的查询条件写入 URL，未指定时使用最近 7 个完整业务日。</p>
+        <p>单指标只读分析；只有当前已验数映射和可信数据水位同时成立才展示正式结果，图表与完整表始终来自同一次查询。</p>
       </div>
-      <button type="button" className="v2-button v2-button--secondary v2-page-refresh" aria-label={state.status === "success" && state.refreshing ? "正在刷新指标结果" : "刷新指标结果"} onClick={retry} disabled={busy}>
+      <button type="button" className="ui-button ui-button--secondary ui-button--lg v2-page-refresh" aria-label={state.status === "success" && state.refreshing ? "正在刷新指标结果" : "刷新指标结果"} onClick={retry} disabled={busy}>
         <RefreshCw className={state.status === "success" && state.refreshing ? "is-spinning" : ""} aria-hidden="true" />
         <span>{state.status === "success" && state.refreshing ? "刷新中" : "刷新结果"}</span>
       </button>
@@ -196,24 +230,30 @@ export function MetricAnalysisPage({ metricId }: { metricId: string }) {
         groups={[{ label: "可用平台", options: state.status === "success" ? state.data.platforms.map((platform) => ({ value: platform.pid, label: platform.name, meta: platform.pid })) : [] }]}
         onChange={setDraftPid}
       /></div>
-      <label><span>开始日期</span><input type="date" value={draftStart} onChange={(event) => setDraftStart(event.target.value)} /></label>
-      <label><span>结束日期</span><input type="date" value={draftEnd} onChange={(event) => setDraftEnd(event.target.value)} /></label>
-      <button type="submit" className="v2-button v2-button--primary" disabled={busy}><CalendarDays aria-hidden="true" />应用并查询</button>
+      <DateRangePicker value={{ start: draftStart, end: draftEnd }} onChange={(range) => { setDraftStart(range.start); setDraftEnd(range.end); }}
+        today={new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())}
+        maxDate={new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())} maxDays={MAX_M016_QUERY_DAYS} />
+      <button type="submit" className="ui-button ui-button--primary ui-button--lg" disabled={busy}><CalendarDays aria-hidden="true" />应用并查询</button>
       {formError && <p className="v2-form-error" role="alert">{formError}</p>}
     </form>
 
-    {state.status === "loading" && <StatePanel kind="loading" title="正在查询真实指标" description="正在校验身份、指标目录、平台范围和 M016 日粒度查询能力。" />}
+    {hasUnappliedQuery && <div className="v2-query-draft-notice" role="status">
+      <AlertTriangle aria-hidden="true" />
+      <p><b>查询条件尚未应用</b><span>下面仍显示上一次已应用条件的结果；点击“应用并查询”后才会更新。</span></p>
+    </div>}
+
+    {state.status === "loading" && <StatePanel kind="loading" title="正在查询真实指标" description="正在校验身份、指标目录、平台范围和日粒度查询能力。" />}
     {state.status === "failure" && <ResourceFailurePanel state={state} onRetry={retry} />}
     {state.status === "success" && <>
-      {state.refreshError && <RefreshNotice onRetry={retry}>刷新失败，当前仍显示上次成功查询：{state.refreshError.message}{state.refreshError.requestId ? `（请求 ID：${state.refreshError.requestId}）` : ""}</RefreshNotice>}
+      {state.refreshError && <RefreshNotice onRetry={retry}>刷新失败，当前仍显示上次成功查询：{hideInternalReferenceCodes(state.refreshError.message)}{state.refreshError.requestId ? `（请求 ID：${state.refreshError.requestId}）` : ""}</RefreshNotice>}
       <section className="v2-analysis-context" aria-label="查询上下文">
-        <div><span>指标</span><b>{state.data.metric.id} · {state.data.metric.name}</b><small>{state.data.metric.authority.version}</small></div>
+        <div><span>指标</span><b>{state.data.metric.name}</b><small>{state.data.metric.authority.version}</small></div>
         <div><span>平台</span><b>{state.data.result.data.scope.platformName}</b><small>{state.data.result.data.scope.pid}</small></div>
         <div><span>实际查询日期</span><b>{state.data.result.data.dateRange[0]} 至 {state.data.result.data.dateRange[1]}</b><small>Asia/Shanghai · 日粒度</small></div>
-        <div><span>数据状态</span><b>{seriesStatusLabel(state.data.result.data.seriesStatus)}</b><small>{state.data.result.meta.validationStatus === "pending_validation" ? "技术称已实现（待验数）" : state.data.result.meta.validationStatus}</small></div>
+        <div><span>数据状态</span><b>{seriesStatusLabel(state.data.result.data.seriesStatus)}</b><small>{state.data.result.meta.validationStatus === "passed" ? "真实验数已通过" : "技术称已实现（待验数）"}</small></div>
       </section>
 
-      {state.data.result.meta.warnings.length > 0 && <div className="v2-warning-list" role="status">{state.data.result.meta.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
+      {state.data.result.meta.warnings.length > 0 && <div className="v2-warning-list" role="status">{state.data.result.meta.warnings.map((warning) => <p key={warning}>{hideInternalReferenceCodes(warning)}</p>)}</div>}
       {state.data.result.data.seriesStatus === "partial" && <div className="v2-warning-list" role="status"><p>当前范围只有部分日期可用；缺失日期在图表中断开，并在结果表中保留真实状态。</p></div>}
 
       {!hasAvailablePoints ? <StatePanel
@@ -222,16 +262,16 @@ export function MetricAnalysisPage({ metricId }: { metricId: string }) {
         description={state.data.result.data.seriesStatus === "no_values" ? "服务端返回了对应日期记录，但指标值均为空；页面不会把空值补成 0。" : "查询成功，但服务端在当前范围没有返回业务记录；页面不会把无记录补成 0。"}
         action={{ label: "重新查询", onClick: retry }}
       /> : <section className="v2-result-surface" aria-label="指标趋势">
-        <header><div><h2>{state.data.metric.name}趋势</h2><p>{state.data.result.data.scope.platformName} · {state.data.result.data.dateRange[0]} 至 {state.data.result.data.dateRange[1]}</p></div><span className="v2-status v2-status--warning">{state.data.metric.authority.statusLabel}</span></header>
+        <header><div><h2>{state.data.metric.name}趋势</h2><p>{state.data.result.data.scope.platformName} · {state.data.result.data.dateRange[0]} 至 {state.data.result.data.dateRange[1]}</p></div><span className="ui-status ui-status--warning">{state.data.metric.authority.statusLabel}</span></header>
         <Chart option={resultChartOption(state.data.result)} theme="v13" ariaLabel={`${state.data.metric.name}日趋势，缺失日期断开`} style={{ width: "100%", height: 360 }} />
       </section>}
 
       {rows.length > 0 && <section className="v2-table-surface v2-result-table" aria-label="完整查询结果">
-        <header><div><h2>完整结果表</h2><p>精确值与服务端逐日状态；不受图表展示范围影响。</p></div><span>{rows.length} 行</span></header>
-        <div className="v2-table-scroll"><table className="v2-table">
-          <thead><tr><th>业务日期</th><th className="is-number">{state.data.metric.name}（{state.data.metric.unit}）</th><th>数据状态</th></tr></thead>
-          <tbody>{rows.map((row) => <tr key={row.businessDate}><td data-label="业务日期">{row.businessDate}</td><td data-label={`${state.data.metric.name}（${state.data.metric.unit}）`} className="is-number">{row.value === null ? "—" : formatExact(row.value)}</td><td data-label="数据状态">{row.state === "available" ? <span className="v2-status v2-status--success">可用</span> : <span className="v2-status v2-status--neutral">{row.state === "no_record" ? "无记录" : "无值"}</span>}</td></tr>)}</tbody>
-        </table></div>
+        <header><div><h2>完整结果表</h2><p>精确值与服务端逐日状态；不受图表展示范围影响。</p></div><div className="ui-table-actions"><span>{rows.length} 行</span><PreviewExportControl name={`${state.data.metric.name}完整结果表`} scope="当前已应用查询的全部逐日聚合结果及数据状态，不受图表展示范围影响。" context={`${state.data.result.data.scope.platformName} · ${state.data.result.data.dateRange.join(" 至 ")}`} pending={hasUnappliedQuery} unavailableReason="正式导出服务尚未接入，暂不可下载。" /></div></header>
+        <PaginatedTable label="完整查询结果" tableClassName="v2-table" resetKey={JSON.stringify(state.data.result.data)} columnCount={3}
+          head={<tr><th>业务日期</th><th className="is-number">{state.data.metric.name}{metricHeadingUnit(state.data.metric.name, state.data.metric.unit) && <small className="metric-heading-unit">（{metricHeadingUnit(state.data.metric.name, state.data.metric.unit)}）</small>}</th><th>数据状态</th></tr>}
+          rows={rows.map((row) => <tr key={row.businessDate}><td data-label="业务日期">{row.businessDate}</td><td data-label={[state.data.metric.name, metricHeadingUnit(state.data.metric.name, state.data.metric.unit)].filter(Boolean).join(" · ")} className="is-number">{row.value === null ? "—" : formatExact(row.value)}</td><td data-label="数据状态">{row.state === "available" ? <span className="ui-status ui-status--success">可用</span> : <span className="ui-status ui-status--neutral">{row.state === "no_record" ? "无记录" : "无值"}</span>}</td></tr>)}
+        />
       </section>}
 
       <section className="v2-query-meta" aria-label="查询追溯信息">
@@ -239,8 +279,9 @@ export function MetricAnalysisPage({ metricId }: { metricId: string }) {
         <dl>
           <div><dt>查询 ID</dt><dd>{state.data.result.meta.queryId}</dd></div>
           <div><dt>请求完成时间</dt><dd>{formatShanghaiTimestamp(state.data.result.meta.fetchedAt)}</dd></div>
-          <div><dt>数据水位</dt><dd>{state.data.result.meta.watermark ?? "暂未提供"}</dd></div>
+          <div><dt>数据水位</dt><dd>{formatMetricWatermark(state.data.result.meta.watermark)}</dd></div>
           <div><dt>来源接口</dt><dd>{state.data.result.meta.sourceApiIds.length ? state.data.result.meta.sourceApiIds.join("、") : "未返回"}</dd></div>
+          <div><dt>映射状态</dt><dd>已绑定当前验数版本</dd></div>
         </dl>
       </section>
     </>}

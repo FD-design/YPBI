@@ -1,0 +1,13 @@
+.calculation-evidence { padding: 12px 0; color: var(--color-text-2); font-size: var(--font-size-body-sm); }
+.calculation-evidence > b { color: var(--color-text-1); }
+.calculation-evidence p { margin: 8px 0; overflow-wrap: anywhere; }
+.calculation-evidence small { color: var(--color-text-3); }
+.calculation-evidence dl { margin: 12px 0; display: grid; gap: 8px; }
+.calculation-evidence dl > div { display: flex; gap: 12px; justify-content: space-between; }
+.calculation-evidence dd { margin: 0; font-variant-numeric: tabular-nums; }
+.calculation-evidence__compact,.calculation-evidence__pending { margin: 8px 0; font-size: var(--font-size-body-sm); color: var(--color-text-3); overflow-wrap: anywhere; }
+.calculation-evidence__compact { margin:0; font-size:var(--font-size-body-sm); min-width:0; }
+.calculation-evidence__trigger { display:inline-flex; align-items:center; gap:5px; min-height:24px; padding:0; border:0; background:transparent; color:var(--color-text-3); font:inherit; cursor:pointer; }
+.calculation-evidence__trigger svg { width:13px; height:13px; }
+.calculation-evidence__trigger:hover { color:var(--color-brand-700); }
+.ui-result-table .calculation-table__name { min-width:140px; max-width:220px; white-space:normal; text-align:left; }

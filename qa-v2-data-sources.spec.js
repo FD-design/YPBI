@@ -30,6 +30,19 @@ test.beforeEach(async ({ page }) => {
       }
     })
   }));
+  await page.route("**/api/bi/v2/data-environment", (route) => {
+    const requestedMode = route.request().headers()["x-ypbi-data-environment"];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: requestedMode === "test"
+          ? { mode: "test", testAvailable: true, userName: "fake-test-user", expiresAt: "2099-09-08T01:30:00.000Z" }
+          : { mode: "production", testAvailable: true }
+      })
+    });
+  });
 });
 
 function sourceStatuses(primaryHint = "••••0001") {
@@ -41,6 +54,7 @@ function sourceStatuses(primaryHint = "••••0001") {
 
 async function installMaintenanceFixtures(page, options = {}) {
   let authorized = options.authorized ?? false;
+  let previewActive = options.previewActive ?? false;
   let rejectNextActionWith401 = false;
   let loginAttempts = 0;
   const requests = [];
@@ -80,6 +94,33 @@ async function installMaintenanceFixtures(page, options = {}) {
     if (url.pathname.endsWith("/data-sources/status")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: sourceStatuses() }) });
     }
+    if (url.pathname.endsWith("/data-preview/status")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          success: true,
+          data: {
+            enabled: options.previewEnabled ?? true,
+            active: previewActive,
+            userName: (options.previewEnabled ?? true) ? "fake-test-user" : null,
+            expiresAt: previewActive ? "2099-09-08T01:30:00.000Z" : null
+          }
+        })
+      });
+    }
+    if (url.pathname.endsWith("/data-preview/activate")) {
+      previewActive = true;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, data: { mode: "test", userName: "fake-test-user", expiresAt: "2099-09-08T01:30:00.000Z", checkedAt: "2026-09-08T01:00:00.000Z" } })
+      });
+    }
+    if (url.pathname.endsWith("/data-preview/deactivate")) {
+      previewActive = false;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { mode: "production" } }) });
+    }
     if (url.pathname.endsWith("/data-sources/test")) {
       if (options.proxyMisconfiguredOnAction) {
         return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ success: false, error: { code: "MAINTENANCE_PROXY_MISCONFIGURED", message: "数据源维护代理配置不完整" } }) });
@@ -104,11 +145,43 @@ async function installMaintenanceFixtures(page, options = {}) {
   };
 }
 
-test("维护登录后区分当前测试、候选验证和验证并保存", async ({ page }) => {
-  const fixture = await installMaintenanceFixtures(page);
+test("临时测试 Token 只创建当前会话并可明确切回正式数据", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page, { authorized: true });
   await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
 
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  const input = preview.getByLabel("测试 Token");
+  await input.fill("fake-preview-token-0001");
+  await preview.getByRole("button", { name: "验证并进入测试数据" }).click();
+
+  await expect(preview.getByText("测试模式中", { exact: true })).toBeVisible();
+  await expect(preview.getByText("测试数据", { exact: true })).toBeVisible();
+  await expect(page.locator(".v2-data-environment").getByText("测试数据", { exact: true })).toBeVisible();
+  await expect(input).toHaveCount(0);
+  const activation = fixture.requests.find((item) => item.pathname.endsWith("/data-preview/activate"));
+  expect(activation.body).toEqual({ token: "fake-preview-token-0001" });
+  const storedValues = await page.evaluate(() => ({
+    local: Object.values(localStorage),
+    session: Object.values(sessionStorage)
+  }));
+  expect(storedValues.local.some((value) => value.includes("fake-preview-token-0001"))).toBe(false);
+  expect(storedValues.session.some((value) => value.includes("fake-preview-token-0001"))).toBe(false);
+
+  await preview.getByRole("button", { name: "结束测试会话" }).click();
+  await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
+  await expect(preview.getByText("正式数据", { exact: true })).toBeVisible();
+  expect(fixture.requests.filter((item) => item.pathname.endsWith("/data-preview/deactivate"))).toHaveLength(1);
+});
+
+test("维护登录后区分当前测试、候选验证和验证并保存", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page);
+  await page.goto(`${baseUrl}/dashboards/public?design=dashboard-center`);
+  await page.getByRole("link",{name:"连接真实数据",exact:true}).click();
+  await expect(page).toHaveURL(`${baseUrl}/admin/data-sources`);
+  await expect(page.getByRole("button",{name:"账号菜单，QA 维护者"})).toBeVisible();
+
   await expect(page.getByRole("heading", { name: "进入受保护配置" })).toBeVisible();
+  await expect(page.getByRole("region", {name:"真实数据接入步骤"})).toContainText("连接通过不等于所有指标可用");
   await page.getByLabel("维护密码").fill(fakePassword);
   await page.getByRole("button", { name: "进入维护页面" }).click();
   await expect(page.getByRole("heading", { name: "站1", exact: true })).toBeVisible();
@@ -143,12 +216,20 @@ test("维护登录后区分当前测试、候选验证和验证并保存", async
   expect(fixture.requests.filter((item) => item.method === "PUT")).toHaveLength(0);
 
   await saveButton.click();
+  await page.mouse.click(5, 5);
+  await expect(dialog).not.toBeVisible();
+  await expect(tokenInput).toHaveValue(fakeCandidate);
+  await expect(saveButton).toBeFocused();
+  expect(fixture.requests.filter((item) => item.method === "PUT")).toHaveLength(0);
+
+  await saveButton.click();
   await page.getByRole("dialog", { name: "确认替换站1当前 Token？" }).getByRole("button", { name: "确认验证并保存" }).click();
   await expect(primaryCard.getByText("候选 Token 已验证、保存并立即生效")).toBeVisible();
   await expect(primaryCard.getByText("••••0002", { exact: true })).toBeVisible();
   await expect(tokenInput).toHaveValue("");
   expect(fixture.requests.filter((item) => item.method === "PUT")).toHaveLength(1);
-  await page.screenshot({ path: "/private/tmp/ypbi-v2-data-sources-desktop.png", fullPage: true });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "/private/tmp/ypbi-v2-data-sources-desktop.png" });
 
   const desktopCards = await page.locator(".v2-source-card").evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect()));
   expect(Math.abs(desktopCards[0].top - desktopCards[1].top)).toBeLessThan(1);
@@ -160,8 +241,8 @@ test("维护登录后区分当前测试、候选验证和验证并保存", async
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024);
 
   await page.goto(`${baseUrl}/admin/data-sources/`, { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("navigation", { name: "当前位置" })).toContainText("数据源维护");
-  await expect(page.getByRole("link", { name: "返回经典版" })).toHaveAttribute("href", "/?workspace=dataSources&ui=v13");
+  await expect(page.getByRole("navigation", { name: "产品主导航" }).getByRole("link", { name: "数据源维护", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("link", { name: "返回经典版" })).toHaveCount(0);
 });
 
 test("维护会话失效后清空两站候选 Token 并返回登录", async ({ page }) => {

@@ -27,13 +27,19 @@ import { SpecialAdapter } from "./upstream/special.adapter";
 import { MetadataAdapter } from "./upstream/metadata.adapter";
 import { ContentAdapter } from "./upstream/content.adapter";
 import { MaintenanceAuth, type MaintenanceSecurityContext } from "./security/maintenance-auth";
+import { DataPreviewSessions } from "./security/data-preview-session";
 import type { IdentityProvider, Principal } from "./identity/identity-provider";
 import { UnavailableIdentityProvider } from "./identity/identity-provider";
 import { resolveIdentity } from "./identity/resolve-identity";
 import { bindClientRequestAbort } from "./http/client-request-abort";
 import { PDaySumM016Source } from "./v2/m016-source";
 import { V2MetricQueryService } from "./v2/metric-query.service";
-import { v2BiPlugin, type V2MetricQueryExecutor } from "./v2/plugin";
+import { DailyDashboardService } from "./v2/daily-dashboard.service";
+import {
+  v2BiPlugin,
+  type V2CoreOverviewQueryExecutor,
+  type V2MetricQueryExecutor
+} from "./v2/plugin";
 import { biAuthPlugin, createPostgresAuthModule } from "./auth";
 import {
   LOCAL_BI_SESSION_COOKIE,
@@ -49,6 +55,7 @@ export interface BuildAppDependencies {
   authService?: BiAuthService;
   authHealthCheck?: () => Promise<void>;
   v2MetricQueryService?: V2MetricQueryExecutor;
+  v2CoreOverviewQueryService?: V2CoreOverviewQueryExecutor;
 }
 
 function rawPath(request: FastifyRequest) {
@@ -84,6 +91,9 @@ function maintenanceSecurityContext(principal: Principal): MaintenanceSecurityCo
 }
 
 export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies = {}) {
+  if (env.BI_V2_CORE_OVERVIEW_QUERY_ENABLED && !dependencies.v2CoreOverviewQueryService) {
+    throw new Error("BI_V2_CORE_OVERVIEW_QUERY_ENABLED=true 时必须注入核心经营总览真实查询执行器");
+  }
   const app = Fastify({
     logger: env.NODE_ENV === "test" ? false : {
       serializers: {
@@ -172,9 +182,18 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const metadata = new MetadataAdapter(upstream);
   const content = new ContentAdapter(upstream);
   const maintenanceAuth = new MaintenanceAuth(env.TOKEN_MAINTENANCE_KEY);
+  const dataPreviewSessions = new DataPreviewSessions();
   const sessionCookie: BiSessionCookieConfiguration = env.NODE_ENV === "production"
     ? PRODUCTION_BI_SESSION_COOKIE
     : LOCAL_BI_SESSION_COOKIE;
+  const requestCookieHeader = (request: FastifyRequest) => {
+    const rawCookie = request.headers.cookie;
+    return Array.isArray(rawCookie) ? rawCookie.join(";") : rawCookie;
+  };
+  const browserSessionId = (request: FastifyRequest) => readUniqueOpaqueCookie(
+    requestCookieHeader(request),
+    sessionCookie.name
+  );
   let authService = dependencies.authService;
   let identityProvider = dependencies.identityProvider;
   let authHealthCheck = dependencies.authHealthCheck;
@@ -241,8 +260,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       });
     }
     if (
-      !resolution.principal.roles.includes("maintainer")
-      || !resolution.principal.permissions.includes("bi:data-source-maintenance:enter")
+      !resolution.principal.permissions.includes("bi:data-source-maintenance:enter")
     ) {
       return reply.code(403).send({
         success: false,
@@ -325,6 +343,81 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     try { return { success: true, data: await upstream.updateCredential(parsed.data.site, parsed.data.token) }; }
     catch (error) { if (error instanceof UpstreamError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } }); throw error; }
   });
+  const previewTokenSchema = z.object({ token: z.string().trim().min(16).max(4096) }).strict();
+  const previewEnabled = Boolean(
+    env.BI_TEST_DATA_PREVIEW_ENABLED
+    && env.UPSTREAM_TEST_API_BASE_URL
+    && env.UPSTREAM_TEST_USER_NAME
+  );
+  app.get("/api/bi/admin/data-preview/status", async (request, reply) => {
+    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    const principal = adminPrincipals.get(request)!;
+    const securityContext = maintenanceSecurityContext(principal);
+    const ordinarySession = browserSessionId(request);
+    const resolution = securityContext && ordinarySession
+      ? dataPreviewSessions.resolve({
+          ip: request.ip,
+          context: securityContext,
+          browserSessionId: ordinarySession,
+          cookieHeader: requestCookieHeader(request)
+        })
+      : { status: "missing" as const };
+    reply.header("cache-control", "no-store");
+    return {
+      success: true,
+      data: {
+        enabled: previewEnabled,
+        active: resolution.status === "active",
+        userName: previewEnabled ? env.UPSTREAM_TEST_USER_NAME! : null,
+        expiresAt: resolution.status === "active" ? new Date(resolution.expiresAt).toISOString() : null
+      }
+    };
+  });
+  app.post("/api/bi/admin/data-preview/activate", async (request, reply) => {
+    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!previewEnabled) return reply.code(503).send({ success: false, error: { code: "DATA_PREVIEW_DISABLED", message: "测试数据模式尚未启用" } });
+    const parsed = previewTokenSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "测试 Token 格式不合法" } });
+    const principal = adminPrincipals.get(request)!;
+    const securityContext = maintenanceSecurityContext(principal);
+    const ordinarySession = browserSessionId(request);
+    if (!securityContext || !ordinarySession) {
+      return reply.code(401).send({ success: false, error: { code: "AUTHENTICATION_REQUIRED", message: "普通登录会话已失效，请重新登录" } });
+    }
+    try {
+      const verified = await upstream.verifyPreviewCredential(parsed.data.token);
+      dataPreviewSessions.revoke(requestCookieHeader(request));
+      const session = dataPreviewSessions.create({
+        ip: request.ip,
+        context: securityContext,
+        browserSessionId: ordinarySession,
+        baseUrl: env.UPSTREAM_TEST_API_BASE_URL!,
+        userName: env.UPSTREAM_TEST_USER_NAME!,
+        token: parsed.data.token
+      });
+      reply.header("set-cookie", dataPreviewSessions.sessionCookie(session.sessionId, sessionCookie.secure));
+      reply.header("cache-control", "no-store");
+      return {
+        success: true,
+        data: {
+          mode: "test",
+          userName: env.UPSTREAM_TEST_USER_NAME!,
+          expiresAt: new Date(session.expiresAt).toISOString(),
+          checkedAt: verified.checkedAt
+        }
+      };
+    } catch (error) {
+      if (error instanceof UpstreamError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
+      throw error;
+    }
+  });
+  app.post("/api/bi/admin/data-preview/deactivate", async (request, reply) => {
+    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    dataPreviewSessions.revoke(requestCookieHeader(request));
+    reply.header("set-cookie", dataPreviewSessions.clearCookie(sessionCookie.secure));
+    reply.header("cache-control", "no-store");
+    return { success: true, data: { mode: "production" } };
+  });
   app.get("/api/bi/ready", async (_request, reply) => {
     const readiness = {
       workspace: false,
@@ -359,7 +452,12 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     data: { metrics: Object.values(metrics), funnelEvents, maxPlatforms: 8, maxMetrics: MAX_METRICS_PER_QUERY }
   }));
   app.get("/api/bi/sources", async () => ({ success: true, data: apiCatalog }));
-  app.get("/api/bi/platforms", async () => ({ success: true, data: platformRegistry.filter((platform) => platform.enabled) }));
+  app.get("/api/bi/platforms", async () => ({
+    success: true,
+    data: platformRegistry
+      .filter((platform) => platform.enabled)
+      .map(({ hxId, name, pid, upstreamSite, enabled, order }) => ({ hxId, name, pid, upstreamSite, enabled, order }))
+  }));
   const workspaceSchema = z.object({ schemaVersion: z.literal(1), templates: z.array(z.json()).max(500), cardAssets: z.array(z.json()).max(2000) });
   app.get("/api/bi/workspace", async () => ({ success: true, data: await workspaceStore.get() }));
   app.put("/api/bi/workspace", async (request, reply) => {
@@ -473,6 +571,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       expectedOrigin: expectedPublicOrigin,
       onSecurityContextChanged: async (subjectId) => {
         maintenanceAuth.revokeSubject(subjectId);
+        dataPreviewSessions.revokeSubject(subjectId);
       }
     });
   } else {
@@ -498,7 +597,27 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   await app.register(v2BiPlugin, {
     prefix: "/api/bi/v2",
     identityProvider,
-    metricQueryService: v2MetricQueryService
+    metricQueryService: v2MetricQueryService,
+    dailyDashboardService: (env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1") || previewEnabled
+      ? new DailyDashboardService(upstream)
+      : undefined,
+    productionDailyDashboardEnabled: env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1",
+    dataEnvironmentResolver: {
+      testAvailable: previewEnabled,
+      resolveTest: (request, principal) => {
+        const securityContext = maintenanceSecurityContext(principal);
+        const ordinarySession = browserSessionId(request);
+        if (!securityContext || !ordinarySession) return { status: "invalid" };
+        return dataPreviewSessions.resolve({
+          ip: request.ip,
+          context: securityContext,
+          browserSessionId: ordinarySession,
+          cookieHeader: requestCookieHeader(request)
+        });
+      }
+    },
+    coreOverviewQueryEnabled: env.BI_V2_CORE_OVERVIEW_QUERY_ENABLED,
+    coreOverviewQueryService: dependencies.v2CoreOverviewQueryService
   });
 
   return app;

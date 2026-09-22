@@ -40,6 +40,8 @@ function failureKind(status: number, code: string): AuthFailureKind {
 }
 
 function invalidResponse(status: number) {
+  if (status === 404) return new AuthRequestError("当前连接的后台未提供新版登录接口，请检查后台版本和连接地址。", { kind:"unavailable", code:"AUTH_ENDPOINT_UNAVAILABLE", status });
+  if (status >= 500) return new AuthRequestError("登录后台暂时不可用，请确认服务已启动后重新检查。", { kind:"unavailable", code:"AUTH_BACKEND_UNAVAILABLE", status });
   return new AuthRequestError("登录服务返回了无法识别的内容", {
     kind: "error",
     code: "INVALID_AUTH_RESPONSE",

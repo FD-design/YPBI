@@ -9,7 +9,12 @@ export const biUsernameSchema = z.string()
   .max(64)
   .regex(/^[A-Za-z0-9._-]+$/, "账号只能包含英文字母、数字、点、下划线和连字符");
 
-export const biPasswordSchema = z.string().min(12).max(256);
+export const BI_PASSWORD_MIN_LENGTH = 6;
+export const BI_PASSWORD_MAX_LENGTH = 256;
+
+export const biPasswordSchema = z.string()
+  .min(BI_PASSWORD_MIN_LENGTH)
+  .max(BI_PASSWORD_MAX_LENGTH);
 
 export const biLoginRequestSchema = z.object({
   username: biUsernameSchema,

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   AdminRequestError,
+  activateDataPreview,
+  deactivateDataPreview,
+  fetchDataPreviewStatus,
   fetchDataSourceStatus,
   loginMaintenance,
   testDataSource,
@@ -24,6 +27,27 @@ const statuses = [
 ] as const;
 
 describe("V2 数据源维护客户端", () => {
+  test("测试数据会话使用独立接口，响应与浏览器请求均不回显或持久化 Token", async () => {
+    const observed: Array<{ path: string; body: string; csrfToken: string | null }> = [];
+    globalThis.fetch = (async (input, init) => {
+      observed.push({ path: input.toString(), body: String(init?.body ?? ""), csrfToken: new Headers(init?.headers).get("x-csrf-token") });
+      if (input.toString().endsWith("/status")) return jsonResponse({ success: true, data: { enabled: true, active: false, userName: "test-user", expiresAt: null } });
+      if (input.toString().endsWith("/activate")) return jsonResponse({ success: true, data: { mode: "test", userName: "test-user", expiresAt: "2026-09-08T01:30:00.000Z", checkedAt: "2026-09-08T01:00:00.000Z" } });
+      return jsonResponse({ success: true, data: { mode: "production" } });
+    }) as typeof fetch;
+
+    await fetchDataPreviewStatus();
+    const activated = await activateDataPreview("temporary-test-token-0001", CSRF_TOKEN);
+    await deactivateDataPreview(CSRF_TOKEN);
+
+    expect(activated).toMatchObject({ mode: "test", userName: "test-user" });
+    expect(observed).toEqual([
+      { path: "/api/bi/admin/data-preview/status", body: "", csrfToken: null },
+      { path: "/api/bi/admin/data-preview/activate", body: JSON.stringify({ token: "temporary-test-token-0001" }), csrfToken: CSRF_TOKEN },
+      { path: "/api/bi/admin/data-preview/deactivate", body: "", csrfToken: CSRF_TOKEN }
+    ]);
+  });
+
   test("状态请求禁止缓存、携带同源会话并只接受闭合脱敏响应", async () => {
     let request: { input: string; init?: RequestInit } | undefined;
     globalThis.fetch = (async (input, init) => {

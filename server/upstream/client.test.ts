@@ -4,6 +4,7 @@ import { UpstreamClient, UpstreamError } from "./client";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdir, mkdtemp, readFile, readdir, rm, unlink } from "node:fs/promises";
+import { runWithUpstreamRequestProfile } from "./request-profile";
 
 const env: AppEnv = {
   NODE_ENV: "test",
@@ -15,9 +16,11 @@ const env: AppEnv = {
   UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.com",
   UPSTREAM_SECONDARY_X_TOKEN: "secondary-token",
   UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
-  UPSTREAM_SECONDARY_PIDS: "FBI,TJD",
   UPSTREAM_CREDENTIALS_FILE: join(tmpdir(), "bi-upstream-client-test-unused.json"),
   WORKSPACE_FILE: join(tmpdir(), "bi-workspace-client-test-unused.json"),
+  BI_V2_CORE_OVERVIEW_QUERY_ENABLED: false,
+  BI_LOCAL_DASHBOARD_READING_ENABLED: false,
+  BI_TEST_DATA_PREVIEW_ENABLED: false,
   REQUEST_TIMEOUT_MS: 1000,
   MAX_PLATFORM_CONCURRENCY: 1
 };
@@ -38,7 +41,7 @@ describe("UpstreamClient business errors", () => {
     expect(requestHeaders).toEqual({ "x-token": "secondary-token", name: "secondary-user" });
   });
 
-  test("未列入备用平台的 PID 继续使用主后台", async () => {
+  test("平台目录中归属站1的 PID 使用主后台", async () => {
     let requestUrl = "";
     let requestHeaders: RequestInit["headers"];
     const client = new UpstreamClient(env, async (input, init) => {
@@ -51,6 +54,44 @@ describe("UpstreamClient business errors", () => {
 
     expect(requestUrl).toStartWith("https://example.com/api/test");
     expect(requestHeaders).toEqual({ "x-token": "test-token", name: "primary-user" });
+  });
+
+  test("显式测试请求对主站和备用站 PID 使用同一临时测试凭据且请求结束后恢复正式路由", async () => {
+    const requests: Array<{ url: string; headers: RequestInit["headers"] }> = [];
+    const client = new UpstreamClient(env, async (input, init) => {
+      requests.push({ url: input.toString(), headers: init?.headers });
+      return new Response(JSON.stringify({ code: 200, msg: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    await runWithUpstreamRequestProfile({
+      environment: "test",
+      baseUrl: "https://test.example.com",
+      token: "temporary-test-token",
+      userName: "temporary-test-user",
+      cachePartition: "preview-session-1"
+    }, async () => {
+      await client.get("/api/test", { pid: "PH" });
+      await client.get("/api/test", { pid: "TJD" });
+    });
+    await client.get("/api/test", { pid: "PH" });
+
+    expect(requests[0]).toMatchObject({ url: "https://test.example.com/api/test?pid=PH", headers: { "x-token": "temporary-test-token", name: "temporary-test-user" } });
+    expect(requests[1]).toMatchObject({ url: "https://test.example.com/api/test?pid=TJD", headers: { "x-token": "temporary-test-token", name: "temporary-test-user" } });
+    expect(requests[2]).toMatchObject({ url: "https://example.com/api/test?pid=PH", headers: { "x-token": "test-token", name: "primary-user" } });
+  });
+
+  test("正式与测试请求缓存严格分区，不会复用另一环境的返回值", async () => {
+    let fetchCount = 0;
+    const client = new UpstreamClient(env, async () => {
+      fetchCount += 1;
+      return new Response(JSON.stringify({ code: 200, msg: { fetchCount } }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    await client.get("/api/test", { pid: "PH" });
+    await runWithUpstreamRequestProfile({ environment: "test", baseUrl: "https://example.com", token: "test-token", userName: "primary-user", cachePartition: "preview-session-1" }, () => client.get("/api/test", { pid: "PH" }));
+    await client.get("/api/test", { pid: "PH" });
+
+    expect(fetchCount).toBe(2);
   });
 
   test("主数据源未配置 Token 时失败关闭且绝不发出匿名请求", async () => {
@@ -73,8 +114,7 @@ describe("UpstreamClient business errors", () => {
       ...env,
       UPSTREAM_SECONDARY_API_BASE_URL: undefined,
       UPSTREAM_SECONDARY_USER_NAME: undefined,
-      UPSTREAM_SECONDARY_X_TOKEN: undefined,
-      UPSTREAM_SECONDARY_PIDS: "FBI"
+      UPSTREAM_SECONDARY_X_TOKEN: undefined
     }, async () => {
       fetchCount += 1;
       return new Response(JSON.stringify({ code: 200 }), { status: 200 });
@@ -83,6 +123,20 @@ describe("UpstreamClient business errors", () => {
     await expect(client.get("/api/test", { pid: "FBI" })).rejects.toMatchObject({
       code: "UPSTREAM_NOT_CONFIGURED",
       statusCode: 503
+    });
+    expect(fetchCount).toBe(0);
+  });
+
+  test("未知 PID 在网络请求前失败关闭且不会默认回落主后台", async () => {
+    let fetchCount = 0;
+    const client = new UpstreamClient(env, async () => {
+      fetchCount += 1;
+      return new Response(JSON.stringify({ code: 200 }), { status: 200 });
+    });
+
+    await expect(client.get("/api/test", { pid: "UNKNOWN" })).rejects.toMatchObject({
+      code: "UPSTREAM_PID_NOT_AVAILABLE",
+      statusCode: 422
     });
     expect(fetchCount).toBe(0);
   });

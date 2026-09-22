@@ -2,9 +2,11 @@ import type { AppEnv } from "../config/env";
 import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { enabledPlatformsForSite, getEnabledPlatformByPid, type PlatformSiteId } from "../platforms/registry";
+import { currentUpstreamRequestProfile } from "./request-profile";
 
-export type CredentialSite = "primary" | "secondary";
+export type CredentialSite = PlatformSiteId;
 interface PersistedCredentials { primary?: { token: string; updatedAt: string }; secondary?: { token: string; updatedAt: string } }
 
 export class UpstreamError extends Error {
@@ -44,13 +46,39 @@ export class UpstreamClient {
     const profile = this.profileForSite(site);
     const testToken = token ?? profile.token;
     if (!testToken) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
+    const probePlatform = enabledPlatformsForSite(site)[0];
+    if (!probePlatform) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", `站点 ${site} 当前没有可用业务 PID`, 503);
+    await this.verifyProfile({ ...profile, token: testToken }, probePlatform.pid);
+    return { site, valid: true, checkedAt: new Date().toISOString() };
+  }
+
+  async verifyPreviewCredential(token: string) {
+    if (!this.env.BI_TEST_DATA_PREVIEW_ENABLED || !this.env.UPSTREAM_TEST_API_BASE_URL || !this.env.UPSTREAM_TEST_USER_NAME) {
+      throw new UpstreamError("DATA_PREVIEW_DISABLED", "测试数据预览尚未启用", 503);
+    }
+    const probePids = [...new Set(
+      (["primary", "secondary"] as const)
+        .map((site) => enabledPlatformsForSite(site)[0]?.pid)
+        .filter((pid): pid is string => Boolean(pid))
+    )];
+    if (!probePids.length) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "当前没有可用于测试的业务 PID", 503);
+    const profile = {
+      baseUrl: this.env.UPSTREAM_TEST_API_BASE_URL,
+      userName: this.env.UPSTREAM_TEST_USER_NAME,
+      token
+    };
+    await Promise.all(probePids.map((pid) => this.verifyProfile(profile, pid)));
+    return { valid: true as const, checkedAt: new Date().toISOString() };
+  }
+
+  private async verifyProfile(profile: { baseUrl: string; token?: string; userName?: string }, pid: string) {
+    if (!profile.token) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
     const end = new Date();
     const start = new Date(end); start.setDate(end.getDate() - 1);
     const url = new URL("/api/admin/statistics/pDaySum", profile.baseUrl);
-    const params = { page: "1", count: "1", pid: site === "primary" ? "PH" : "FBI", sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`, sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59` };
+    const params = { page: "1", count: "1", pid, sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`, sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59` };
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    await this.fetchJson(url, testToken, profile.userName);
-    return { site, valid: true, checkedAt: new Date().toISOString() };
+    await this.fetchJson(url, profile.token, profile.userName);
   }
 
   updateCredential(site: CredentialSite, token: string) {
@@ -82,15 +110,17 @@ export class UpstreamClient {
   }
 
   async get(path: string, params: Record<string, string>, inboundToken?: string): Promise<unknown> {
-    if (!this.env.UPSTREAM_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "尚未配置真实后台 API 地址", 503);
+    const requestProfile = currentUpstreamRequestProfile();
     const profile = this.selectProfile(params.pid);
-    const token = inboundToken || profile.token;
+    const token = requestProfile?.token ?? inboundToken ?? profile.token;
     if (!token) {
       throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源 Token 尚未配置", 503);
     }
     const url = new URL(path, profile.baseUrl);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    const cacheKey = `${token}\u0000${url.toString()}`;
+    const partition = requestProfile?.cachePartition
+      ?? `production:${createHash("sha256").update(`${profile.userName ?? ""}\u0000${token}`).digest("hex")}`;
+    const cacheKey = `${partition}\u0000${url.toString()}`;
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     if (cached) this.responseCache.delete(cacheKey);
@@ -118,22 +148,11 @@ export class UpstreamClient {
   }
 
   private selectProfile(pid?: string) {
-    const secondaryPids = new Set(this.env.UPSTREAM_SECONDARY_PIDS.split(",").map((value) => value.trim()).filter(Boolean));
-    if (pid && secondaryPids.has(pid)) {
-      if (!this.env.UPSTREAM_SECONDARY_API_BASE_URL || !this.env.UPSTREAM_SECONDARY_USER_NAME) {
-        throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "该 PID 的备用数据源路由尚未完整配置", 503);
-      }
-      return {
-        baseUrl: this.env.UPSTREAM_SECONDARY_API_BASE_URL,
-        token: this.credentials.secondary?.token ?? this.env.UPSTREAM_SECONDARY_X_TOKEN,
-        userName: this.env.UPSTREAM_SECONDARY_USER_NAME
-      };
-    }
-    return {
-      baseUrl: this.env.UPSTREAM_API_BASE_URL!,
-      token: this.credentials.primary?.token ?? this.env.UPSTREAM_X_TOKEN,
-      userName: this.env.UPSTREAM_USER_NAME
-    };
+    const platform = pid ? getEnabledPlatformByPid(pid) : undefined;
+    if (pid && !platform) throw new UpstreamError("UPSTREAM_PID_NOT_AVAILABLE", "所选业务 PID 不存在或已停用", 422);
+    const requestProfile = currentUpstreamRequestProfile();
+    if (requestProfile) return requestProfile;
+    return this.profileForSite(platform?.siteId ?? "primary");
   }
 
   private profileForSite(site: CredentialSite) {

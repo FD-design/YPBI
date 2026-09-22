@@ -1,0 +1,34 @@
+/* V2 进入反馈只影响合成属性，关闭与业务状态不依赖动画。 */
+@keyframes ui-reveal {
+  from { opacity: .65; }
+  to { opacity: 1; }
+}
+
+@keyframes ui-drawer-enter {
+  from { opacity: .8; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ypbi-v2 :is(.ui-menu-select__menu, .ui-filter-popover__panel, .v2-top-navigation__popover, .v2-user-popover, .core-review__description, .dashboard-directory__children, details[open] > :not(summary)),
+  .ui-date-panel[data-ui-scope="v2"][open], .ui-toast {
+    animation: ui-reveal var(--motion-fast) var(--motion-easing);
+  }
+
+  .ypbi-v2 dialog[open] {
+    animation: ui-reveal var(--motion-default) var(--motion-easing);
+  }
+
+  .ypbi-v2 :is(.dashboard-workbench__mobile-directory[open], .dashboard-workbench__directory > .dashboard-workbench__directory-inner:not([hidden]), .v2-sidebar[data-overlay="true"].is-open) {
+    animation: ui-drawer-enter var(--motion-overlay) var(--motion-easing);
+  }
+
+  .ypbi-v2 .v2-nav-backdrop[data-overlay="true"].is-open {
+    animation: ui-reveal var(--motion-fast) var(--motion-easing);
+  }
+}
+
+:root[data-ui-motion-paused="true"] .ypbi-v2 :is(.is-spinning, .ui-status--loading svg),
+:root[data-ui-motion-paused="true"] .ui-loading-indicator {
+  animation-play-state: paused;
+}

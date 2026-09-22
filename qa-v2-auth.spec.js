@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 const baseUrl = process.env.YPBI_BASE_URL ?? "http://127.0.0.1:5173";
+const metricDefinitions = JSON.parse(readFileSync(
+  new URL("./server/v2/generated/metric-definitions.json", import.meta.url),
+  "utf8"
+));
 const initialPassword = "qa-initial-password-001";
 const replacementPassword = "qa-replacement-password-002";
 const csrfOne = "a".repeat(43);
@@ -8,14 +13,22 @@ const csrfTwo = "b".repeat(43);
 
 test.use({ viewport: { width: 1280, height: 800 }, channel: "chrome" });
 
-function sessionData({ role = "reader", mustChangePassword = false, csrfToken = csrfOne } = {}) {
+function sessionData({
+  subjectId = "00000000-0000-4000-8000-000000000001",
+  username = "qa.user",
+  displayName = "QA 用户",
+  role = "reader",
+  permissions = role === "maintainer" ? ["bi:read", "bi:data-source-maintenance:enter"] : ["bi:read"],
+  mustChangePassword = false,
+  csrfToken = csrfOne
+} = {}) {
   return {
     user: {
-      subjectId: "00000000-0000-4000-8000-000000000001",
-      username: "qa.user",
-      displayName: "QA 用户",
+      subjectId,
+      username,
+      displayName,
       role,
-      permissions: role === "maintainer" ? ["bi:read", "bi:data-source-maintenance:enter"] : ["bi:read"],
+      permissions,
       pidScope: "all"
     },
     expiresAt: "2099-09-08T00:00:00.000Z",
@@ -31,28 +44,12 @@ function authError(code = "AUTHENTICATION_REQUIRED", message = "请先登录", r
 function metricCatalog() {
   return {
     success: true,
-    data: {
-      items: [{
-        id: "M016",
-        code: "daily_active_user_count",
-        name: "日活跃用户数",
-        definition: "当天打开并登录产品的去重用户数",
-        unit: "人",
-        valueType: "integer",
-        authority: {
-          document: "全站指标体系.md",
-          version: "v0.23-draft",
-          validationStatus: "pending_validation",
-          statusLabel: "技术称已实现（待验数）"
-        },
-        capabilities: { grains: ["day"], platformMode: "single_pid", dimensions: [], filters: [], comparisons: [] }
-      }]
-    }
+    data: metricDefinitions
   };
 }
 
 async function installMetricCatalog(page, responder = () => ({ status: 200, body: metricCatalog() })) {
-  await page.route("**/api/bi/v2/catalog/metrics", async (route) => {
+  await page.route("**/api/bi/v2/catalog/metric-definitions", async (route) => {
     const response = responder();
     await route.fulfill({ status: response.status, contentType: "application/json", body: JSON.stringify(response.body) });
   });
@@ -190,7 +187,7 @@ test("业务请求 401 全局清除旧页面并回登录，403 仅显示无权�
     : { status, body: authError(status === 401 ? "AUTHENTICATION_REQUIRED" : "PID_ACCESS_DENIED", status === 401 ? "登录已失效" : "当前范围无权访问") });
 
   await page.goto(`${baseUrl}/data/metrics`, { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("cell", { name: /日活跃用户数/ })).toBeVisible();
+  await expect(page.locator("#metric-open-M016")).toBeVisible();
   status = 403;
   await page.getByRole("button", { name: "刷新指标目录" }).click();
   await expect(page.getByRole("heading", { name: "当前范围无权访问" })).toBeVisible();
@@ -211,7 +208,7 @@ test("页面重新获得焦点时复核会话，失效后清除旧页面并回�
   await installMetricCatalog(page);
 
   await page.goto(`${baseUrl}/data/metrics`, { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("cell", { name: /日活跃用户数/ })).toBeVisible();
+  await expect(page.locator("#metric-open-M016")).toBeVisible();
   sessionValid = false;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
@@ -220,7 +217,58 @@ test("页面重新获得焦点时复核会话，失效后清除旧页面并回�
   expect(new URL(page.url()).searchParams.get("returnTo")).toBe("/data/metrics");
 });
 
-test("阅读者看不到管理导航，直接深链也不会请求维护接口", async ({ page }) => {
+for (const scenario of [
+  {
+    title: "焦点复核发现账号 A 切换为 B 时卸载旧结果并按 B 重新取数",
+    initialSession: sessionData(),
+    nextSession: sessionData({
+      subjectId: "00000000-0000-4000-8000-000000000002",
+      username: "qa.second",
+      displayName: "第二用户",
+      csrfToken: csrfTwo
+    }),
+    expectedAccountName: "第二用户"
+  },
+  {
+    title: "焦点复核发现同账号权限范围变化时卸载旧结果并重新取数",
+    initialSession: sessionData({ role: "maintainer" }),
+    nextSession: sessionData({ role: "reader" }),
+    expectedAccountName: "QA 用户"
+  }
+]) {
+  test(scenario.title, async ({ page }) => {
+    let currentSession = scenario.initialSession;
+    let catalogStatus = 200;
+    let catalogRequests = 0;
+    await page.route("**/api/bi/v2/auth/session", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, data: currentSession })
+    }));
+    await installMetricCatalog(page, () => {
+      catalogRequests += 1;
+      return catalogStatus === 200
+        ? { status: 200, body: metricCatalog() }
+        : { status: 403, body: authError("PID_ACCESS_DENIED", "当前账号无权读取该目录") };
+    });
+
+    await page.goto(`${baseUrl}/data/metrics`, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#metric-open-M016")).toBeVisible();
+    const requestsBeforeScopeChange = catalogRequests;
+
+    currentSession = scenario.nextSession;
+    catalogStatus = 403;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+
+    await expect(page.getByRole("button", { name: `账号菜单，${scenario.expectedAccountName}` })).toBeVisible();
+    await expect(page.locator("#metric-open-M016")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "当前范围无权访问" })).toBeVisible();
+    await expect(page.getByText("当前账号无权读取该目录", { exact: true })).toBeVisible();
+    await expect.poll(() => catalogRequests).toBeGreaterThan(requestsBeforeScopeChange);
+  });
+}
+
+test("缺少维护能力的会话不显示维护导航，直接深链也不会请求维护接口", async ({ page }) => {
   let adminRequests = 0;
   await page.route("**/api/bi/v2/auth/session", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: sessionData({ role: "reader" }) }) }));
   await page.route("**/api/bi/admin/**", (route) => { adminRequests += 1; return route.abort(); });

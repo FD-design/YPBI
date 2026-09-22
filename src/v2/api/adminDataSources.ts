@@ -64,8 +64,35 @@ const updateResponseSchema = z.object({
   data: dataSourceStatusSchema
 }).strict();
 
+const previewStatusResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    enabled: z.boolean(),
+    active: z.boolean(),
+    userName: z.string().max(256).nullable(),
+    expiresAt: z.iso.datetime().nullable()
+  }).strict()
+}).strict();
+
+const previewActivationResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    mode: z.literal("test"),
+    userName: z.string().min(1).max(256),
+    expiresAt: z.iso.datetime(),
+    checkedAt: z.iso.datetime()
+  }).strict()
+}).strict();
+
+const previewDeactivationResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({ mode: z.literal("production") }).strict()
+}).strict();
+
 export type DataSourceStatus = z.infer<typeof dataSourceStatusSchema>;
 export type CredentialTestResult = z.infer<typeof testResponseSchema>["data"];
+export type DataPreviewStatus = z.infer<typeof previewStatusResponseSchema>["data"];
+export type DataPreviewActivation = z.infer<typeof previewActivationResponseSchema>["data"];
 
 export class AdminRequestError extends Error {
   readonly kind: AdminFailureKind;
@@ -204,5 +231,27 @@ export async function updateDataSourceToken(site: CredentialSite, token: string,
     body: JSON.stringify({ site, token })
   });
   if (payload.data.site !== site) throw invalidResponse(200);
+  return payload.data;
+}
+
+export async function fetchDataPreviewStatus(signal?: AbortSignal) {
+  const payload = await requestJson("/api/bi/admin/data-preview/status", previewStatusResponseSchema, { signal });
+  return payload.data;
+}
+
+export async function activateDataPreview(token: string, csrfToken: string) {
+  const payload = await requestJson("/api/bi/admin/data-preview/activate", previewActivationResponseSchema, {
+    method: "POST",
+    headers: { "x-csrf-token": csrfToken },
+    body: JSON.stringify({ token })
+  });
+  return payload.data;
+}
+
+export async function deactivateDataPreview(csrfToken: string) {
+  const payload = await requestJson("/api/bi/admin/data-preview/deactivate", previewDeactivationResponseSchema, {
+    method: "POST",
+    headers: { "x-csrf-token": csrfToken }
+  });
   return payload.data;
 }

@@ -1,6 +1,11 @@
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
-import { biRoleSchema, biUsernameSchema } from "../../contracts/bi-auth";
+import {
+  BI_PASSWORD_MAX_LENGTH,
+  BI_PASSWORD_MIN_LENGTH,
+  biRoleSchema,
+  biUsernameSchema
+} from "../../contracts/bi-auth";
 import { createAuthMaintenanceDatabase } from "../auth/database";
 import { PostgresAuthRepository } from "../auth/postgres-auth.repository";
 import { BiAccountAdminService } from "../auth/service";
@@ -53,10 +58,12 @@ async function hiddenPassword(prompt: string) {
 }
 
 async function confirmedPassword() {
-  const first = await hiddenPassword("请输入新密码（12～256 个字符，不会回显）: ");
+  const first = await hiddenPassword(`请输入新密码（${BI_PASSWORD_MIN_LENGTH}～${BI_PASSWORD_MAX_LENGTH} 个字符，不会回显）: `);
   const second = await hiddenPassword("请再次输入新密码: ");
   if (first !== second) throw new Error("两次输入的密码不一致");
-  if (first.length < 12 || first.length > 256) throw new Error("密码长度必须为 12～256 个字符");
+  if (first.length < BI_PASSWORD_MIN_LENGTH || first.length > BI_PASSWORD_MAX_LENGTH) {
+    throw new Error(`密码长度必须为 ${BI_PASSWORD_MIN_LENGTH}～${BI_PASSWORD_MAX_LENGTH} 个字符`);
+  }
   return first;
 }
 

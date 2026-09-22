@@ -152,7 +152,8 @@ describe("PostgresAuthRepository 账号权限维护", () => {
 
     expect(updated).toMatchObject({ outcome: "changed", user: { status: "active", role: "maintainer", credentialVersion: 4 } });
     expect(harness.unsafeCalls[0].query).toContain("for update");
-    expect(harness.unsafeCalls[1].query).toContain("failed_login_count = case when $1 = 'active' then 0");
+    expect(harness.unsafeCalls[1].query).toContain("set status = $1::varchar");
+    expect(harness.unsafeCalls[1].query).toContain("failed_login_count = case when $1::varchar = 'active' then 0");
     expect(harness.unsafeCalls[1].query).toContain("and status = $5");
     expect(harness.unsafeCalls[1].values).toEqual([
       "active",

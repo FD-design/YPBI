@@ -1,0 +1,78 @@
+import {test,expect} from '@playwright/test';
+test.use({channel:'chrome'});
+const base=process.env.YPBI_BASE_URL??'http://127.0.0.1:5173';
+for(const [board,title,metric] of [['5.8','活跃结构','日活跃用户数'],['5.9','消费结构','观影用户数']])test(`${title}分组显隐、二维聚焦、恢复与三档视口`,async({page})=>{
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(`${base}/dashboards/public?design=dashboard-center&board=${board}`);
+  const panel=page.getByRole('article',{name:title,exact:true}), scope=panel.getByLabel('分析范围',{exact:true});
+  const groupSummary=panel.locator('.topic-preview__group-summary');
+  await expect(scope.getByRole('radiogroup',{name:'展示方式',exact:true}).getByRole('radio',{name:'分组对比',exact:true})).toBeChecked();
+  await expect(groupSummary.locator('section')).toHaveCount(4);
+  await panel.getByRole('group',{name:metric+'分组',exact:true}).getByRole('button',{name:'Android · 新用户',exact:true}).click();
+  await expect(groupSummary.locator('section')).toHaveCount(3);
+  await scope.getByRole('group',{name:'客户端分组',exact:true}).getByRole('button',{name:'iOS',exact:true}).click();
+  await expect(groupSummary.locator('section')).toHaveCount(1);
+  await scope.getByRole('button',{name:'恢复全部分组',exact:true}).click();
+  await expect(groupSummary.locator('section')).toHaveCount(4);
+  const cell=panel.getByRole('button',{name:/^Android · 新用户 · /});
+  const value=(await cell.textContent()).replace(/^Android\s*·\s*新用户\s*·\s*/,'').trim();
+  await cell.click();
+  await expect(panel.locator('.metric-summary__number strong')).toHaveText(value);
+  await expect(scope).toContainText('当前读取：Android · 新用户');
+  await expect(cell).toHaveAttribute('aria-pressed','true');
+  await expect(panel.getByRole('table',{name:title+'二维交叉表',exact:true}).getByRole('row')).toHaveCount(5);
+  await panel.getByRole('tab',{name:'表格',exact:true}).click();
+  await expect(panel.getByRole('region',{name:/表格视图$/})).toBeVisible();
+  await page.reload();
+  await expect(panel.getByRole('button',{name:/^Android · 新用户 · /})).toHaveAttribute('aria-pressed','true');
+  await expect(panel.locator('.metric-summary__number strong')).toHaveText(value);
+  await scope.getByRole('button',{name:'恢复总体',exact:true}).click();
+  await expect(scope.getByRole('radiogroup',{name:'展示方式',exact:true}).getByRole('radio',{name:'总体',exact:true})).toBeChecked();
+  await expect(scope).toContainText('当前读取：全部客户端 · 全部用户');
+  for(const width of [1280,1024,390]){
+    await page.setViewportSize({width,height:900});await panel.scrollIntoViewIfNeeded();
+    await expect(panel).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await panel.screenshot({path:`/private/tmp/ypbi-228-${board}-${width}.png`});
+  }
+  expect(errors).toEqual([]);
+});
+test('消费结构率、输入、对比、180天与原渠道获客保留',async({page})=>{
+  const range={start:'2026-03-13',end:'2026-09-08'},view={v:1,active:range,cohort:range,failure:range,compared:true,mixed:false,reading:{dimension:'cross',structureId:'M081',rankingId:'M101',search:'',descending:true,scope:{client:'ios',audience:'existing'}}};
+  await page.goto(`${base}/dashboards/public?design=dashboard-center&board=5.9&view=${encodeURIComponent(JSON.stringify(view))}`);
+  const panel=page.getByRole('article',{name:'消费结构',exact:true});
+  await expect(panel).toBeVisible({timeout:20_000});
+  await expect(panel.locator('.calculation-evidence').first()).toContainText('老用户',{timeout:15_000});
+  await expect(panel.locator('.calculation-evidence').first()).toContainText('活跃人天');
+  await panel.getByRole('tab',{name:'表格',exact:true}).click();
+  await expect(panel.getByRole('navigation').first()).toContainText('共 180 条');
+  await panel.getByRole('button',{name:'导出消费结构二维分析',exact:true}).first().click();
+  const downloaded=page.waitForEvent('download');
+  await page.getByRole('button',{name:'下载演示 XLSX',exact:true}).click();
+  expect((await downloaded).suggestedFilename()).toContain('演示数据');
+  await panel.getByRole('radio',{name:'获客类型',exact:true}).click();
+  await expect(panel).toContainText('自然新增');
+  await panel.getByRole('radio',{name:'来源渠道',exact:true}).click();
+  await expect(panel.getByRole('img',{name:'消费结构分类比较',exact:true})).toBeVisible();
+  await panel.getByRole('radio',{name:'客户端与新老用户',exact:true}).click();
+  await expect(panel.getByRole('button',{name:/^iOS · 老用户 · /})).toHaveAttribute('aria-pressed','true');
+});
+
+test('再激活使用同一指标的48/72小时观察窗口',async({page})=>{
+  await page.goto(`${base}/dashboards/public?design=dashboard-center&board=5.8`);
+  const section=page.getByRole('region',{name:'首次体验失败用户再激活',exact:true});
+  await expect(section).toBeVisible({timeout:20_000});
+  await expect(section.locator('.dashboard-metric-card')).toHaveCount(1);
+  await expect(section).toContainText('首次体验失败用户再次激活率');
+  await expect(section).toContainText('24小时迟到缓冲');
+  const window72=section.getByRole('radio',{name:'72小时'}),window48=section.getByRole('radio',{name:'48小时'});
+  await expect(window72).toHaveAttribute('aria-checked','true');
+  await expect(section).toContainText('72小时窗口');
+  await window48.click();
+  await expect(window48).toHaveAttribute('aria-checked','true');
+  await expect(section).toContainText('48小时窗口');
+  await expect(section).not.toContainText('48小时再次激活率');
+  await page.reload();
+  await expect(section.getByRole('radio',{name:'48小时'})).toHaveAttribute('aria-checked','true');
+  await section.screenshot({path:'/private/tmp/ypbi-234-reactivation.png'});
+});

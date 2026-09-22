@@ -1,17 +1,18 @@
-import { AlertTriangle, Ban, CircleUserRound, DatabaseZap, LoaderCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Ban, CircleUserRound, DatabaseZap, RefreshCw } from "lucide-react";
+import { LoadingIndicator } from "../../components/ui/LoadingIndicator";
 import type { ReactNode } from "react";
 import type { V2ResourceState } from "../api/useV2Resource";
+import { hideInternalReferenceCodes } from "../features/metrics/metric-presentation";
 
 type StateKind = "loading" | "identity_unavailable" | "unauthenticated" | "forbidden" | "error" | "empty";
 
 const ICONS = {
-  loading: LoaderCircle,
   identity_unavailable: DatabaseZap,
   unauthenticated: CircleUserRound,
   forbidden: Ban,
   error: AlertTriangle,
   empty: DatabaseZap
-} satisfies Record<StateKind, typeof AlertTriangle>;
+} satisfies Record<Exclude<StateKind, "loading">, typeof AlertTriangle>;
 
 export function StatePanel({
   kind,
@@ -30,16 +31,16 @@ export function StatePanel({
   action?: { label: string; onClick: () => void };
   compact?: boolean;
 }) {
-  const Icon = ICONS[kind];
+  const Icon = kind === "loading" ? null : ICONS[kind];
   return <section className={`v2-state v2-state--${kind}${compact ? " v2-state--compact" : ""}`} role={kind === "loading" ? "status" : kind === "error" ? "alert" : undefined} aria-live="polite">
-    <Icon className={kind === "loading" ? "is-spinning" : ""} aria-hidden="true" />
+    {Icon ? <Icon aria-hidden="true" /> : <LoadingIndicator />}
     <div>
-      <h2>{title}</h2>
-      <p>{description}</p>
+      <h2>{hideInternalReferenceCodes(title)}</h2>
+      <p>{hideInternalReferenceCodes(description)}</p>
       {code && <small>错误代码：{code}</small>}
       {requestId && <small>请求 ID：{requestId}</small>}
     </div>
-    {action && <button type="button" className="v2-button v2-button--secondary" onClick={action.onClick}><RefreshCw aria-hidden="true" />{action.label}</button>}
+    {action && <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={action.onClick}><RefreshCw aria-hidden="true" />{action.label}</button>}
   </section>;
 }
 

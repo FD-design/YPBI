@@ -1,0 +1,15 @@
+.ui-paginated-legend { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; min-height: 36px; font-size: var(--font-size-body-sm); color: var(--color-text-2); }
+.ui-paginated-legend__items { display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; gap: 4px; }
+.ui-paginated-legend__items > .ui-hint { flex: 1 1 148px; min-width: 0; max-width: 160px; }
+.ui-paginated-legend button { border: 0; border-radius: var(--radius-control); background: transparent; color: inherit; font: inherit; cursor: pointer; min-height: 32px; }
+.ui-paginated-legend__items button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; }
+.ui-paginated-legend__items button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-paginated-legend__items i { flex: none; width: 18px; height: 3px; }
+.ui-paginated-legend__items button[aria-pressed=true] { color: var(--color-text-1); }
+.ui-paginated-legend button:hover:not(:disabled) { background: var(--color-surface-subtle); }
+.ui-paginated-legend button:focus-visible { outline: 2px solid var(--color-brand-600); outline-offset: -2px; }
+.ui-paginated-legend__pages { display: flex; align-items: center; flex: none; gap: 2px; }
+.ui-paginated-legend__pages button { display: grid; place-items: center; width: 24px; padding: 0; }
+.ui-paginated-legend__pages button:disabled { color: var(--color-text-3); opacity: .4; cursor: default; }
+.ui-paginated-legend__pages svg { width: 14px; height: 14px; }
+.ui-paginated-legend__pages span { min-width: 30px; text-align: center; font-variant-numeric: tabular-nums; }

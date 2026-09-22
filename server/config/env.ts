@@ -4,6 +4,10 @@ import { enabledSecondaryPlatformPids } from "../platforms/registry";
 const emptyStringAsUndefined = (value: unknown) => (
   typeof value === "string" && value.trim() === "" ? undefined : value
 );
+const explicitBoolean = z.preprocess(
+  emptyStringAsUndefined,
+  z.enum(["true", "false"]).default("false").transform((value) => value === "true")
+);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -15,7 +19,6 @@ const envSchema = z.object({
   UPSTREAM_SECONDARY_API_BASE_URL: z.preprocess(emptyStringAsUndefined, z.url().optional()),
   UPSTREAM_SECONDARY_X_TOKEN: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
   UPSTREAM_SECONDARY_USER_NAME: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
-  UPSTREAM_SECONDARY_PIDS: z.string().default(""),
   UPSTREAM_CREDENTIALS_FILE: z.string().default("./data/upstream-credentials.json"),
   WORKSPACE_FILE: z.string().default("./data/workspace.json"),
   TOKEN_MAINTENANCE_KEY: z.preprocess(emptyStringAsUndefined, z.string().min(12).optional()),
@@ -23,6 +26,11 @@ const envSchema = z.object({
   BI_AUTH_DATABASE_URL: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
   BI_AUTH_CSRF_SECRET: z.preprocess(emptyStringAsUndefined, z.string().min(32).optional()),
   BI_PUBLIC_ORIGIN: z.preprocess(emptyStringAsUndefined, z.url().optional()),
+  BI_V2_CORE_OVERVIEW_QUERY_ENABLED: explicitBoolean,
+  BI_LOCAL_DASHBOARD_READING_ENABLED: explicitBoolean,
+  BI_TEST_DATA_PREVIEW_ENABLED: explicitBoolean,
+  UPSTREAM_TEST_API_BASE_URL: z.preprocess(emptyStringAsUndefined, z.url().optional()),
+  UPSTREAM_TEST_USER_NAME: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
   DATABASE_URL: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   MAX_PLATFORM_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(4)
@@ -35,13 +43,25 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   if (!parsed.success) {
     throw new Error(`环境变量配置错误：${z.prettifyError(parsed.error)}`);
   }
+  if (parsed.data.BI_LOCAL_DASHBOARD_READING_ENABLED && (parsed.data.NODE_ENV === "production" || parsed.data.HOST !== "127.0.0.1")) {
+    throw new Error("本地真实看板读取仅允许非生产环境监听127.0.0.1时启用");
+  }
+  const testPreviewEndpointConfigured = Boolean(parsed.data.UPSTREAM_TEST_API_BASE_URL);
+  const testPreviewUserConfigured = Boolean(parsed.data.UPSTREAM_TEST_USER_NAME);
+  if (testPreviewEndpointConfigured !== testPreviewUserConfigured) {
+    throw new Error("测试数据后台地址和用户名必须同时配置或同时省略");
+  }
+  if (parsed.data.BI_TEST_DATA_PREVIEW_ENABLED && !testPreviewEndpointConfigured) {
+    throw new Error("启用测试数据预览时必须配置测试后台地址和用户名");
+  }
   if (parsed.data.NODE_ENV === "production") {
     if (!parsed.data.UPSTREAM_API_BASE_URL) throw new Error("生产环境缺少 UPSTREAM_API_BASE_URL");
     if (!parsed.data.UPSTREAM_USER_NAME) throw new Error("生产环境缺少 UPSTREAM_USER_NAME");
     if (!parsed.data.TOKEN_MAINTENANCE_KEY) throw new Error("生产环境缺少 TOKEN_MAINTENANCE_KEY");
     for (const [label, value] of [
       ["主上游", parsed.data.UPSTREAM_API_BASE_URL],
-      ["备用上游", parsed.data.UPSTREAM_SECONDARY_API_BASE_URL]
+      ["备用上游", parsed.data.UPSTREAM_SECONDARY_API_BASE_URL],
+      ["测试预览上游", parsed.data.UPSTREAM_TEST_API_BASE_URL]
     ] as const) {
       if (!value) continue;
       const upstreamUrl = new URL(value);
@@ -84,24 +104,12 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   if (parsed.data.UPSTREAM_SECONDARY_X_TOKEN && !secondaryEndpointConfigured) {
     throw new Error("备用后台 Token 不能脱离对应地址和用户名单独配置");
   }
-  const secondaryPids = parsed.data.UPSTREAM_SECONDARY_PIDS
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (secondaryPids.length > 0 && !secondaryEndpointConfigured) {
-    throw new Error("配置备用后台 PID 路由前必须同时配置备用后台地址和用户名");
-  }
-  if (parsed.data.NODE_ENV === "production") {
-    if (!secondaryEndpointConfigured) {
-      throw new Error("生产环境当前平台目录包含备用后台 PID，必须配置备用后台地址和用户名");
-    }
-    const expectedSecondaryPids = enabledSecondaryPlatformPids();
-    const configured = new Set(secondaryPids);
-    const mappingMatches = configured.size === expectedSecondaryPids.length
-      && expectedSecondaryPids.every((pid) => configured.has(pid));
-    if (!mappingMatches) {
-      throw new Error(`生产环境备用后台 PID 路由必须与当前平台注册表一致：${expectedSecondaryPids.join(",")}`);
-    }
+  if (
+    parsed.data.NODE_ENV === "production"
+    && enabledSecondaryPlatformPids().length > 0
+    && !secondaryEndpointConfigured
+  ) {
+    throw new Error("生产环境当前平台目录包含站2 PID，必须配置站2后台地址和用户名");
   }
   return parsed.data;
 }

@@ -1,0 +1,3 @@
+.operations-example__cards { padding: 0 16px 16px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.v1-gallery__grid > .operations-example { grid-column: 1 / -1; }
+@media(max-width:767px) { .operations-example__cards { grid-template-columns: minmax(0,1fr); } }
