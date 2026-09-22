@@ -12,7 +12,7 @@
 - `main` 发布串行执行，上传前核对仍为最新提交，过期构建跳过。`DEPLOYED_COMMIT` 记录生效版本。公网检查包括 HTTPS 页面、health、匿名 session 返回 401。
 - 同事操作：同步 main → 修改、提交 → `git push origin main` → GitHub Actions 查看 `Deploy BI`。已有个人分支可自行合并到 main，不需要负责人审核。失败时查看失败步骤；恢复旧版可 revert 对应提交并推送。
 - 接收器更新不会自动覆盖 root 安装版本，需运维同步该文件；业务代码发布不需要此权限。
-- 验证进度：归档安全测试 4 项通过；首次 Actions 实跑与线上版本核对进行中。
+- 验证：归档安全测试 4 项通过，依赖审计无已知漏洞；[首次 Actions 实跑](https://github.com/FD-design/YPBI/actions/runs/35727155175) 全步骤成功，已自动部署 `191df19`。HTTPS 页面与 health 返回 200，匿名 session 返回 401；受限 SSH 对任意 Shell 命令的拒绝已实测。同事 `alexli802309-oss` 现有 Write 权限可直接发布。
 
 ## 2026-09-16 内测部署完成
 
