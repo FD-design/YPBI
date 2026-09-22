@@ -10,6 +10,7 @@
 - 只同步代码白名单，不触碰 `.env.local`、`data/`、账号 PostgreSQL 容器/卷、上游 Token、Caddy/Nginx 配置和 NewAV。代码备份在 `/var/lib/ypbi-deploy/backup-*`，成功后保留最近三份。
 - 重启失败或 API health 未恢复时自动还原上一份代码并再次检查；不自动逆转数据库 migration。涉及不可逆数据库变更仍须另行设计兼容迁移和数据库备份。
 - `main` 发布串行执行，上传前核对仍为最新提交，过期构建跳过。`DEPLOYED_COMMIT` 记录生效版本。公网检查包括 HTTPS 页面、health、匿名 session 返回 401。
+- SSH 连接超时等传输错误最多自动重试三轮；业务部署返回失败不盲目重试。2026-09-22 第二轮曾在连接阶段超时，未触碰线上，随后补充此策略。
 - 同事操作：同步 main → 修改、提交 → `git push origin main` → GitHub Actions 查看 `Deploy BI`。已有个人分支可自行合并到 main，不需要负责人审核。失败时查看失败步骤；恢复旧版可 revert 对应提交并推送。
 - 接收器更新不会自动覆盖 root 安装版本，需运维同步该文件；业务代码发布不需要此权限。
 - 验证：归档安全测试 4 项通过，依赖审计无已知漏洞；[首次 Actions 实跑](https://github.com/FD-design/YPBI/actions/runs/35727155175) 全步骤成功，已自动部署 `191df19`。HTTPS 页面与 health 返回 200，匿名 session 返回 401；受限 SSH 对任意 Shell 命令的拒绝已实测。同事 `alexli802309-oss` 现有 Write 权限可直接发布。

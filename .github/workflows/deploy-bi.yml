@@ -52,7 +52,14 @@ jobs:
           printf '%s\n' "$BI_DEPLOY_KEY" > "$HOME/.ssh/bi_deploy"
           printf '%s\n' "$BI_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           trap 'rm -f "$HOME/.ssh/bi_deploy"' EXIT
-          ssh -i "$HOME/.ssh/bi_deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "ypbi-deploy@$BI_DEPLOY_HOST" "deploy $GITHUB_SHA" < /tmp/bi-release.tar.gz
+          for attempt in 1 2 3; do
+            result=0
+            ssh -i "$HOME/.ssh/bi_deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=30 -o ConnectionAttempts=2 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "ypbi-deploy@$BI_DEPLOY_HOST" "deploy $GITHUB_SHA" < /tmp/bi-release.tar.gz || result=$?
+            if [ "$result" = 0 ]; then break; fi
+            if [ "$result" != 255 ] || [ "$attempt" = 3 ]; then exit "$result"; fi
+            echo 'SSH transport failed; retrying in 10 seconds.'
+            sleep 10
+          done
       - name: Check public entry
         run: |
           curl --fail --silent --show-error --retry 3 https://187.77.129.207.nip.io/ -o /dev/null
