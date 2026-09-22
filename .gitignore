@@ -24,3 +24,5 @@ coverage/
 # OS/editor metadata.
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc

@@ -14,14 +14,15 @@ import { normalizeDirectoryNavigation, type DirectoryNavigationState } from "../
 import { useBodyScrollLock } from "../../components/layout/useBodyScrollLock";
 import { useDialogBackdrop } from "../../components/ui/useDialogBackdrop";
 import "../features/dashboards/dashboard-workbench.css";
+import { internalPreviewEnabled } from "../app/internal-preview";
 
 type Board = DailyDashboardCatalog["items"][number];
 type Platforms = V2PlatformCatalogSuccess["data"]["items"];
-const ConnectedBoard = import.meta.env.DEV
+const ConnectedBoard = internalPreviewEnabled
   ? lazy(() => import("../design/ConnectedBoard"))
   : lazy(() => import("../features/dashboards/ConnectedDailyBoard"));
-const PersonalWorkspace = import.meta.env.DEV ? lazy(() => import("../design/PersonalWorkspacePreview")) : null;
-const ConnectedDirectoryState = import.meta.env.DEV ? lazy(() => import("../design/ConnectedDirectoryState")) : null;
+const PersonalWorkspace = internalPreviewEnabled ? lazy(() => import("../design/PersonalWorkspacePreview")) : null;
+const ConnectedDirectoryState = internalPreviewEnabled ? lazy(() => import("../design/ConnectedDirectoryState")) : null;
 const navigationKey = "ypbi.daily-dashboard.navigation";
 const dateAt = (offset: number) => new Date(Date.now() + 8 * 3600000 + offset * 86400000).toISOString().slice(0, 10);
 function href(query: DailyDashboardQuery, personal = false) {

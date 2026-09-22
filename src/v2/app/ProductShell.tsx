@@ -11,6 +11,7 @@ import { ReviewToolsMenuItem } from "../components/ReviewTools";
 import { ProductTopNavigation } from "./ProductTopNavigation";
 import "./product-shell-navigation.css";
 import { useDataEnvironment } from "./DataEnvironmentProvider";
+import { internalPreviewEnabled } from "./internal-preview";
 
 export function ProductShell({ children, contextualNavigation = false, previewDataSourceEntry = false, navigationHref = (href: string) => href }: { children: ReactNode; contextualNavigation?: boolean; previewDataSourceEntry?: boolean; navigationHref?: (href: string) => string }) {
   const { state, logout } = useAuthentication();
@@ -102,11 +103,13 @@ export function ProductShell({ children, contextualNavigation = false, previewDa
     }
   };
 
-  const roleLabel = user.role === "maintainer" ? "维护者" : user.role === "analyst" ? "分析者" : "阅读者";
+  const roleLabel = user.role === "maintainer" ? "管理员" : "普通账号";
   const canMaintainDataSources = user.permissions.includes("bi:data-source-maintenance:enter");
   const navigationGroups = PRODUCT_NAVIGATION.map((group) => ({
     ...group,
-    items: (canMaintainDataSources ? group.items : group.items.filter((item) => item.id !== "sources")).map(item => ({ ...item, href: navigationHref(item.href), children: item.children?.map(child => ({ ...child, href: navigationHref(child.href) })) }))
+    items: group.items
+      .filter((item) => (item.id !== "sources" || canMaintainDataSources) && (item.id !== "team" || user.role === "maintainer"))
+      .map(item => ({ ...item, href: navigationHref(item.href), children: item.children?.map(child => ({ ...child, href: navigationHref(child.href) })) }))
   })).filter((group) => group.items.length > 0);
   const closePasswordDialog = () => {
     setPasswordDialogOpen(false);
@@ -164,7 +167,7 @@ export function ProductShell({ children, contextualNavigation = false, previewDa
               ? <ProductLink href="/admin/data-sources">切换</ProductLink>
               : null}
         </div>
-        {import.meta.env.DEV && previewDataSourceEntry && <a className="ui-button ui-button--secondary ui-button--sm" href="/admin/data-sources" title="离开演示页，使用正式 BI 账号登录后连接后台数据">连接真实数据</a>}
+        {internalPreviewEnabled && previewDataSourceEntry && <a className="ui-button ui-button--secondary ui-button--sm" href="/admin/data-sources" title="离开演示页，使用正式 BI 账号登录后连接后台数据">连接真实数据</a>}
         <div className="v2-user-menu" ref={userMenuRef}>
           <button ref={userButtonRef} type="button" className="v2-user-trigger" aria-label={`账号菜单，${displayName}`} aria-haspopup="menu" aria-expanded={userMenuOpen} onClick={() => { setUserMenuOpen((value) => !value); setLogoutError(null); }} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); setUserMenuOpen(true); setLogoutError(null); } }}>
             <span className="v2-user-avatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span>
@@ -173,7 +176,7 @@ export function ProductShell({ children, contextualNavigation = false, previewDa
           </button>
           {userMenuOpen && <div className="v2-user-popover" role="menu">
             <div className="v2-user-summary"><UserRound aria-hidden="true"/><span><b>{displayName}</b><small>@{user.username} · {roleLabel}</small></span></div>
-            {import.meta.env.DEV && previewDataSourceEntry && <ReviewToolsMenuItem onSelect={() => setUserMenuOpen(false)} />}
+            {internalPreviewEnabled && previewDataSourceEntry && <ReviewToolsMenuItem onSelect={() => setUserMenuOpen(false)} />}
             <button type="button" role="menuitem" onClick={() => { setUserMenuOpen(false); setPasswordDialogOpen(true); }}><KeyRound aria-hidden="true"/>修改密码</button>
             <button type="button" role="menuitem" onClick={signOut} disabled={loggingOut}>{loggingOut ? <LoaderCircle className="is-spinning" aria-hidden="true"/> : <LogOut aria-hidden="true"/>}{loggingOut ? "正在退出" : "退出登录"}</button>
             {logoutError && <p role="alert">{logoutError.message}</p>}

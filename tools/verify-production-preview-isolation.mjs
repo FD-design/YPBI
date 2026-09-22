@@ -2,6 +2,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const DIST_ROOT = new URL("../dist/", import.meta.url);
+const internalPreviewBuild = process.env.VITE_INTERNAL_DASHBOARD_PREVIEW_ENABLED === "true";
+const INTERNAL_PREVIEW_REQUIRED_MARKERS = [
+  "developmentDesignPreviewSessionToken",
+  "dashboard-directory-preview",
+  "连接真实数据"
+];
 const FORBIDDEN_MARKERS = [
   "review-tools",
   "查看完整图表体验",
@@ -40,15 +46,30 @@ async function filesBelow(directoryUrl) {
 
 const files = await filesBelow(DIST_ROOT);
 const violations = [];
+const internalMarkersFound = new Set();
 for (const file of files) {
   if (!/\.(?:html|js|css|json|map)$/.test(file.pathname)) continue;
   const contents = await readFile(file, "utf8");
+  if (internalPreviewBuild) {
+    for (const marker of INTERNAL_PREVIEW_REQUIRED_MARKERS) {
+      if (contents.includes(marker)) internalMarkersFound.add(marker);
+    }
+    continue;
+  }
   for (const marker of FORBIDDEN_MARKERS) {
     if (contents.includes(marker)) violations.push(`${join("dist", file.pathname.split("/dist/")[1])}: ${marker}`);
   }
 }
 
-if (violations.length > 0) {
+if (internalPreviewBuild) {
+  const missing = INTERNAL_PREVIEW_REQUIRED_MARKERS.filter((marker) => !internalMarkersFound.has(marker));
+  if (missing.length > 0) {
+    console.error("Internal preview bundle is missing required review surfaces:\n" + missing.join("\n"));
+    process.exitCode = 1;
+  } else {
+    console.log(`Internal preview bundle verified (${files.length} files scanned).`);
+  }
+} else if (violations.length > 0) {
   console.error("Production bundle contains development preview artifacts:\n" + violations.join("\n"));
   process.exitCode = 1;
 } else {

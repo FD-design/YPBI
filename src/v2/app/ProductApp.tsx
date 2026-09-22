@@ -12,6 +12,7 @@ import { MetricAnalysisPage } from "../pages/MetricAnalysisPage";
 import { NotFoundPage, UnavailablePage } from "../pages/UnavailablePage";
 import { DataSourceMaintenancePage } from "../pages/DataSourceMaintenancePage";
 import { DailyDashboardPage } from "../pages/DailyDashboardPage";
+import { TeamAccountsPage } from "../pages/TeamAccountsPage";
 import {
   AuthenticationLoadingPage,
   AuthenticationUnavailablePage,
@@ -25,21 +26,22 @@ import type { AuthenticatedSession } from "../api/auth";
 import { DemoDataProvider } from "../components/DataOrigin";
 import { isPersonalPreviewPath, resolveDevelopmentPreview } from "../design/development-preview-route";
 import { DataEnvironmentProvider, useDataEnvironment } from "./DataEnvironmentProvider";
+import { internalPreviewEnabled } from "./internal-preview";
 
-const V1ChartStatesFixture = import.meta.env.DEV
+const V1ChartStatesFixture = internalPreviewEnabled
   ? lazy(() => import("../design/V1ChartStatesFixture"))
   : null;
-const DashboardDirectoryPreview = import.meta.env.DEV
+const DashboardDirectoryPreview = internalPreviewEnabled
   ? lazy(() => import("../design/DashboardDirectoryPreview"))
   : null;
-const DevelopmentDesignPreviewBoundary = import.meta.env.DEV
+const DevelopmentDesignPreviewBoundary = internalPreviewEnabled
   ? lazy(() => import("../design/DevelopmentDesignPreviewBoundary"))
   : null;
-const CatalogCenterPreview = import.meta.env.DEV ? lazy(() => import("../design/CatalogCenterPreview")) : null;
-const PersonalWorkspacePreview = import.meta.env.DEV ? lazy(() => import("../design/PersonalWorkspacePreview")) : null;
+const CatalogCenterPreview = internalPreviewEnabled ? lazy(() => import("../design/CatalogCenterPreview")) : null;
+const PersonalWorkspacePreview = internalPreviewEnabled ? lazy(() => import("../design/PersonalWorkspacePreview")) : null;
 
 function developmentDesignPreview(location: Pick<BrowserLocationSnapshot, "pathname" | "search" | "hash">) {
-  return import.meta.env.DEV ? resolveDevelopmentPreview(location) : null;
+  return internalPreviewEnabled ? resolveDevelopmentPreview(location) : null;
 }
 
 function routeContent(location: BrowserLocationSnapshot, user: AuthenticatedSession["user"]) {
@@ -53,8 +55,9 @@ function routeContent(location: BrowserLocationSnapshot, user: AuthenticatedSess
     return <Suspense fallback={<StatePanel kind="loading" title="正在加载图表体验页" description="此页面仅用于确认 V1 图表、表格与数据状态。" />}><V1ChartStatesFixture /></Suspense>;
   }
   if (path === "/dashboards/public" || path === "/dashboards/mine") return <DailyDashboardPage />;
-  if (import.meta.env.DEV && new URLSearchParams(location.search).get("local") === "workspace" && isPersonalPreviewPath(path) && PersonalWorkspacePreview) return <Suspense fallback={<StatePanel kind="loading" title="正在打开工作区" description="正在载入已有分析页面。"/>}><DemoDataProvider><PersonalWorkspacePreview/></DemoDataProvider></Suspense>;
+  if (internalPreviewEnabled && new URLSearchParams(location.search).get("local") === "workspace" && isPersonalPreviewPath(path) && PersonalWorkspacePreview) return <Suspense fallback={<StatePanel kind="loading" title="正在打开工作区" description="正在载入已有分析页面。"/>}><DemoDataProvider><PersonalWorkspacePreview/></DemoDataProvider></Suspense>;
   if (path === "/" || path === "/data/metrics") return <MetricCatalogPage />;
+  if (path === "/admin/accounts") return <TeamAccountsPage />;
   if (path === "/admin/data-sources") return user.permissions.includes("bi:data-source-maintenance:enter")
     ? <DataSourceMaintenancePage />
     : <div className="v2-page"><header className="v2-page-head"><div><span className="v2-eyebrow">访问控制</span><h1>无权访问管理中心</h1><p>数据源配置需要有效的 BI 账号和维护权限。</p></div></header><StatePanel kind="forbidden" title="当前账号没有维护权限" description="你仍可使用指标、分析与看板等已开放功能。" code="ADMIN_ACCESS_DENIED" /></div>;

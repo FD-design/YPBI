@@ -2,14 +2,20 @@
 
 > 本文件是所有修改的第一阅读入口。最后更新：2026-09-22。
 
+## 当前生产基线
+
+- 生产入口为 `https://187.77.129.207.nip.io`；向 `FD-design/YPBI` 的 `main` 推送会自动执行发布校验、内测构建、部署和公网健康检查。
+- 管理员可在 `/admin/accounts` 创建和维护团队账号；普通账号无管理入口，账号数据继续保存在独立 PostgreSQL 账号库。
+- 2.42 新增临时测试数据会话：生产 BI 默认继续读取正式数据，维护者可在当前登录会话内临时验证测试 Token；Token 不写入正式凭据文件，测试查询与正式缓存隔离。
+
 ## 项目概况
 
-本次交付：[原多平台 BI PR #1](https://github.com/FD-design/YPBI/pull/1)，个人分支已上传；未合并、未部署。待办与验证见[部署交接](modules/deployment.md#原多平台-bi-代码审核交接2026-09-16)。
+历史首轮交付见[原多平台 BI PR #1](https://github.com/FD-design/YPBI/pull/1)；当前线上状态、自动部署和回退机制以[部署运维](modules/deployment.md)为准。
 
 - 本地目录：`/Users/liyujing/claude code test/YPBI`
 - 本地运行状态（2026-09-15）：后端进程缺失导致会话代理 500，已按授权重新启动；前端入口与后端健康检查返回 200，匿名会话返回预期 401。退出原因尚未确认，尚无本地进程自动恢复；证据见部署模块。
 - VPS 目录：`/opt/config-driven-bi-demo`
-- 目标公网地址：`https://187.77.129.207.nip.io`（候选域名，尚未部署；正式入口必须使用 HTTPS 并先登录，不提供匿名 BI）
+- 生产公网地址：`https://187.77.129.207.nip.io`（HTTPS，必须登录，不提供匿名 BI）
 - 技术栈：React 19、TypeScript、Vite、ECharts、Fastify、PostgreSQL、Bun
 - GitHub 仓库：`https://github.com/FD-design/YPBI`
 - 代码审核交接（2026-09-16）：仓库写入权限已核实；`review/liyujing-bi-source-20260916` 为仅包含 BI 工程的独立提交分支，原分支与本地第三方样例保留。777 项单测、13 项合同测试、67 项工具测试、类型检查及前后端构建通过；V2 浏览器分批回归完成，接口模拟专项 55 项分批通过，长日期初跑超时及三档串行复验结果完整保留。本批交付范围是个人分支与 PR，未合并、未部署。构建前提、验收与上线分工见[部署模块](modules/deployment.md#原多平台-bi-代码审核交接2026-09-16)。

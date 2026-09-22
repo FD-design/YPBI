@@ -41,6 +41,7 @@ import {
   type V2MetricQueryExecutor
 } from "./v2/plugin";
 import { biAuthPlugin, createPostgresAuthModule } from "./auth";
+import { teamAccountPlugin } from "./auth/team-plugin";
 import {
   LOCAL_BI_SESSION_COOKIE,
   PRODUCTION_BI_SESSION_COOKIE,
@@ -48,7 +49,7 @@ import {
   type BiSessionCookieConfiguration
 } from "./auth/cookies";
 import { SessionIdentityProvider } from "./auth/session-identity-provider";
-import type { BiAuthService } from "./auth/service";
+import type { BiAccountAdminService, BiAuthService } from "./auth/service";
 
 export interface BuildAppDependencies {
   identityProvider?: IdentityProvider;
@@ -195,6 +196,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     sessionCookie.name
   );
   let authService = dependencies.authService;
+  let accountAdminService: BiAccountAdminService | undefined;
   let identityProvider = dependencies.identityProvider;
   let authHealthCheck = dependencies.authHealthCheck;
   let closeAuthModule: (() => Promise<void>) | undefined;
@@ -207,6 +209,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       sessionCookie
     });
     authService = authModule.authService;
+    accountAdminService = authModule.accountAdminService;
     identityProvider = authModule.identityProvider;
     authHealthCheck = authModule.health;
     closeAuthModule = authModule.close;
@@ -564,6 +567,13 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   });
 
   if (authService) {
+    if (accountAdminService) await app.register(teamAccountPlugin, {
+      prefix: "/api/bi/v2/team/accounts",
+      authService,
+      accounts: accountAdminService,
+      sessionCookie,
+      expectedOrigin: expectedPublicOrigin
+    });
     await app.register(biAuthPlugin, {
       prefix: "/api/bi/v2/auth",
       authService,

@@ -215,6 +215,20 @@ export class BiAccountAdminService {
     private readonly now: () => Date = () => new Date()
   ) {}
 
+  async listAccounts(search: string, page: number) {
+    const result = await this.repository.listUsers(search, page);
+    return { ...result, items: result.items.map((user) => ({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      role: user.role,
+      status: user.status,
+      mustChangePassword: user.mustChangePassword,
+      createdAt: user.createdAt.toISOString(),
+      pidScope: "all" as const
+    })), page, pageSize: 20 as const };
+  }
+
   async createAccount(input: CreateAccountInput) {
     const parsed = createAccountSchema.parse(input);
     const normalizedUsername = normalizeUsername(parsed.username);
@@ -243,7 +257,7 @@ export class BiAccountAdminService {
     );
   }
 
-  async disableAccount(username: string) {
+  async disableAccount(username: string, protectLastAdmin = false) {
     const user = await this.findAccount(username);
     if (!user) return null;
     const mutation = await this.repository.setUserStatusAndRevokeSessions(
@@ -251,7 +265,8 @@ export class BiAccountAdminService {
       user.credentialVersion,
       user.status,
       "disabled",
-      this.now()
+      this.now(),
+      protectLastAdmin
     );
     return this.resolveMutation(mutation);
   }
@@ -269,7 +284,7 @@ export class BiAccountAdminService {
     return this.resolveMutation(mutation);
   }
 
-  async setAccountRole(username: string, role: BiRole) {
+  async setAccountRole(username: string, role: BiRole, protectLastAdmin = false) {
     const parsedRole = biRoleSchema.parse(role);
     const user = await this.findAccount(username);
     if (!user) return null;
@@ -277,12 +292,14 @@ export class BiAccountAdminService {
       user.id,
       user.credentialVersion,
       parsedRole,
-      this.now()
+      this.now(),
+      protectLastAdmin
     );
     return this.resolveMutation(mutation);
   }
 
   private resolveMutation(mutation: Awaited<ReturnType<AuthRepository["setUserRoleAndRevokeSessions"]>>) {
+    if (mutation.outcome === "protected") throw new Error("LAST_ADMIN_PROTECTED");
     if (mutation.outcome === "conflict") throw new AccountAdminConflictError();
     if (mutation.outcome === "not_found") return null;
     return {

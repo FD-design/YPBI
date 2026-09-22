@@ -269,7 +269,7 @@ const sourceIdSchema = z.string().trim().min(1).max(256).refine(
   "来源必须是已登记 API 或服务端加工服务"
 );
 
-const coreOverviewWatermarkSchema = z.object({
+export const coreOverviewWatermarkSchema = z.object({
   type: z.literal("complete_through_business_date"),
   completeThrough: z.iso.date(),
   timeZone: z.literal(CORE_OVERVIEW_TIME_ZONE),

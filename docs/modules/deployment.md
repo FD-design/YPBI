@@ -1,5 +1,21 @@
 # 部署与运维模块
 
+## 2026-09-22 GitHub 自动部署
+
+- 仅原多平台 BI：向 `FD-design/YPBI` 的 `main` 推送即触发 `.github/workflows/deploy-bi.yml`，无 PR 审批或 environment 人工放行；协作者需要仓库 Write 权限。
+- 流程固定 Node 24 / Bun 1.4.2，锁定依赖并执行 `verify:release` 与 `build:internal-preview`；校验失败不会发送部署包。普通生产构建必须排除全部评审资源，明确的内测构建则必须包含受限评审入口，两类构建使用同一权威开关并分别校验。
+- GitHub Actions 通过 `BI_DEPLOY_KEY`、`BI_KNOWN_HOSTS` 和 `BI_DEPLOY_HOST` 连接专用 `ypbi-deploy` 账号。同事无需 VPS 密码；该账号拒绝交互 Shell、端口转发和任意命令，只能运行受限发布接收器。
+- 发布包只允许既定代码和构建文件，拒绝路径穿越、链接、运行数据和环境配置；不会覆盖 `.env.local`、`data/`、账号数据库、上游 Token、反向代理配置或 NewAV。
+- 重启或 health 检查失败时恢复上一版代码并再次检查，成功后保留最近三份备份。涉及不可逆数据库迁移时仍需另行设计兼容迁移与备份。
+- `main` 发布串行执行，过期构建会跳过；公网检查覆盖 HTTPS 页面、health 以及匿名 session 返回 401。SSH 传输类瞬时错误最多重试三轮，业务部署失败不盲目重试。
+- 同事发布流程：同步 `main`、完成修改和本地验证、提交、`git push origin main`，随后在 GitHub Actions 查看 `Deploy BI`。失败时按步骤日志定位；需要回退时 revert 对应提交并再次推送。
+
+## 2026-09-16 内测部署完成
+
+- 入口为 `https://187.77.129.207.nip.io`。Caddy 提供 HTTPS 静态资源，API 经 loopback 代理到非特权 `ypbi` 服务；独立账号库只监听 loopback，并与其他业务数据库隔离。
+- 生产保留两站凭据、真实日查询开关和核心正式查询门禁。账号、密码、Token、会话及维护密码不进入 Git；上线代码不覆盖生产私有配置。
+- 黑盒基线为 HTTPS 页面 200、health 200、匿名 session 401。正式指标仍按映射、采集、验数和数据水位逐项准入，不因连接成功自动变为正式可用。
+
 ### 原多平台 BI 代码审核交接（2026-09-16）
 
 个人分支已上传并创建 [PR #1](https://github.com/FD-design/YPBI/pull/1)，目标为 `main`。已验证的代码提交为 `3c3436122d7b24bafe347dc9bbf937a111ed9dc0`；随后仅同步交接状态。PR 未合并，服务器未部署。
@@ -157,8 +173,8 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 |---|---|
 | `UPSTREAM_X_TOKEN` | 可选的主上游初始 Token，敏感；允许省略并在维护页首次录入，运行时保存值优先 |
 | `UPSTREAM_SECONDARY_X_TOKEN` | 可选的第二上游初始 Token，敏感；不能脱离对应地址和用户名单独配置，运行时保存值优先 |
-| `BI_TEST_DATA_PREVIEW_ENABLED` | 临时测试数据模式开关，默认 `false`；只有完成生产黑盒验收后才设为 `true` |
-| `UPSTREAM_TEST_API_BASE_URL`、`UPSTREAM_TEST_USER_NAME` | 测试后台 HTTPS 地址与固定请求用户名，必须成组配置；Token 不写环境变量，由用户在维护页临时验证 |
+| `BI_TEST_DATA_PREVIEW_ENABLED` | 临时测试数据模式开关。本地和通用环境默认 `false`；当前唯一生产目标由仓库内非密配置开启，设为 `false` 可立即停用 |
+| `UPSTREAM_TEST_API_BASE_URL`、`UPSTREAM_TEST_USER_NAME` | 可覆盖生产发布默认值；默认测试地址为已确认的 HTTPS 后台，用户名复用站1配置。Token 不写环境变量或仓库，由用户在维护页临时验证 |
 | `UPSTREAM_CREDENTIALS_FILE` | 运行时人工轮换凭据文件，生产放在受保护的 `data` 下 |
 | `WORKSPACE_FILE` | 遗留工作区文件；未配置旧 `DATABASE_URL` 时使用 |
 | `DATABASE_URL` | 仅供遗留 workspace PostgreSQL；与账号库分离，可不配置 |

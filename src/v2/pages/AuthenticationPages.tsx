@@ -5,6 +5,7 @@ import { AuthRequestError } from "../api/auth";
 import { useAuthentication } from "../app/AuthProvider";
 import { navigate, ProductLink } from "../app/router";
 import { BrandLogo } from "../components/BrandLogo";
+import { internalPreviewEnabled } from "../app/internal-preview";
 
 const DEFAULT_RETURN_PATH = "/data/metrics";
 
@@ -54,7 +55,7 @@ export function AuthenticationUnavailablePage() {
     <div className="v2-auth-intro"><AlertTriangle aria-hidden="true"/><div><h1>暂时无法确认登录状态</h1><p>为避免错误开放业务数据，登录服务恢复前不会进入系统。</p></div></div>
     <ErrorMessage error={state.error}/>
     <button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={retry}>重新检查</button>
-    {import.meta.env.DEV && <ProductLink className="ui-button ui-button--secondary" href="/dashboards/public?design=dashboard-center">返回看板预览</ProductLink>}
+    {internalPreviewEnabled && <ProductLink className="ui-button ui-button--secondary" href="/dashboards/public?design=dashboard-center">返回看板预览</ProductLink>}
   </section></main></div>;
 }
 

@@ -109,6 +109,16 @@ async function queryWithAbort<T>(
 export class PostgresAuthRepository implements AuthRepository {
   constructor(private readonly sql: Sql) {}
 
+  async listUsers(search: string, page: number) {
+    const filter = search.toLowerCase();
+    const rows = await this.sql.unsafe<UserRow[]>(`select ${userColumns} from bi_auth_users
+      where position($1 in lower(username || ' ' || coalesce(display_name, ''))) > 0
+      order by created_at desc, username asc limit 20 offset $2`, [filter, (page - 1) * 20]);
+    const count = await this.sql`select count(*)::int as total from bi_auth_users
+      where position(${filter} in lower(username || ' ' || coalesce(display_name, ''))) > 0`;
+    return { items: rows.map(mapUser), total: Number(count[0].total) };
+  }
+
   async findUserByNormalizedUsername(normalizedUsername: string) {
     const rows = await this.sql.unsafe<UserRow[]>(
       `select ${userColumns} from bi_auth_users where normalized_username = $1`,
@@ -290,9 +300,11 @@ export class PostgresAuthRepository implements AuthRepository {
     userId: string,
     expectedCredentialVersion: number,
     role: BiRole,
-    now: Date
+    now: Date,
+    protectLastAdmin = false
   ) {
     return this.sql.begin(async (transaction) => {
+      if (protectLastAdmin) await transaction`select pg_advisory_xact_lock(724916)`;
       const currentRows = await transaction.unsafe<UserRow[]>(
         `select ${userColumns}
          from bi_auth_users
@@ -307,6 +319,10 @@ export class PostgresAuthRepository implements AuthRepository {
       }
       if (current.role === role) {
         return { outcome: "no_change", user: current } satisfies AuthUserMutationResult;
+      }
+      if (protectLastAdmin && current.role === "maintainer" && current.status === "active" && role !== "maintainer") {
+        const count = await transaction`select count(*)::int as total from bi_auth_users where role = 'maintainer' and status = 'active'`;
+        if (Number(count[0].total) <= 1) return { outcome: "protected" } satisfies AuthUserMutationResult;
       }
       const rows = await transaction.unsafe<UserRow[]>(
         `update bi_auth_users
@@ -333,9 +349,11 @@ export class PostgresAuthRepository implements AuthRepository {
     expectedCredentialVersion: number,
     expectedStatus: AuthUserStatus,
     status: AuthUserStatus,
-    now: Date
+    now: Date,
+    protectLastAdmin = false
   ) {
     return this.sql.begin(async (transaction) => {
+      if (protectLastAdmin) await transaction`select pg_advisory_xact_lock(724916)`;
       const currentRows = await transaction.unsafe<UserRow[]>(
         `select ${userColumns}
          from bi_auth_users
@@ -353,6 +371,10 @@ export class PostgresAuthRepository implements AuthRepository {
       }
       if (current.status === status) {
         return { outcome: "no_change", user: current } satisfies AuthUserMutationResult;
+      }
+      if (protectLastAdmin && current.role === "maintainer" && current.status === "active" && status === "disabled") {
+        const count = await transaction`select count(*)::int as total from bi_auth_users where role = 'maintainer' and status = 'active'`;
+        if (Number(count[0].total) <= 1) return { outcome: "protected" } satisfies AuthUserMutationResult;
       }
       const rows = await transaction.unsafe<UserRow[]>(
         `update bi_auth_users

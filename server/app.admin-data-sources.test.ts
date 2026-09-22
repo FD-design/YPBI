@@ -871,6 +871,27 @@ describe("生产环境配置", () => {
 
     expect(env.UPSTREAM_X_TOKEN).toBeUndefined();
     expect(env.UPSTREAM_SECONDARY_X_TOKEN).toBeUndefined();
+    expect(env.BI_TEST_DATA_PREVIEW_ENABLED).toBe(true);
+    expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://douyin.yah96.com");
+    expect(env.UPSTREAM_TEST_USER_NAME).toBe("primary-user");
+  });
+
+  test("生产测试数据入口可以由环境开关立即停用", () => {
+    const env = loadEnv({
+      NODE_ENV: "production",
+      UPSTREAM_API_BASE_URL: "https://primary.example.test",
+      UPSTREAM_USER_NAME: "primary-user",
+      UPSTREAM_SECONDARY_API_BASE_URL: "https://secondary.example.test",
+      UPSTREAM_SECONDARY_USER_NAME: "secondary-user",
+      TOKEN_MAINTENANCE_KEY: MAINTENANCE_PASSWORD,
+      BI_IDENTITY_MODE: "local",
+      BI_AUTH_DATABASE_URL: "postgres://auth.example.test/ypbi",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-secret-with-more-than-32-bytes",
+      BI_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
+      BI_TEST_DATA_PREVIEW_ENABLED: "false"
+    });
+
+    expect(env.BI_TEST_DATA_PREVIEW_ENABLED).toBe(false);
   });
 
   test("从环境模板读取空白可选项时按未配置处理而不是启动报错", () => {

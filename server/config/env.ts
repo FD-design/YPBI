@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { enabledSecondaryPlatformPids } from "../platforms/registry";
+import { productionDataPreviewDefaults } from "./production-data-preview";
 
 const emptyStringAsUndefined = (value: unknown) => (
   typeof value === "string" && value.trim() === "" ? undefined : value
@@ -38,8 +39,18 @@ const envSchema = z.object({
 
 export type AppEnv = z.infer<typeof envSchema>;
 
+function productionSourceWithDataPreviewDefaults(source: NodeJS.ProcessEnv) {
+  if (source.NODE_ENV !== "production" || !source.UPSTREAM_USER_NAME?.trim()) return source;
+  return {
+    ...source,
+    BI_TEST_DATA_PREVIEW_ENABLED: source.BI_TEST_DATA_PREVIEW_ENABLED?.trim() || String(productionDataPreviewDefaults.enabled),
+    UPSTREAM_TEST_API_BASE_URL: source.UPSTREAM_TEST_API_BASE_URL?.trim() || productionDataPreviewDefaults.baseUrl,
+    UPSTREAM_TEST_USER_NAME: source.UPSTREAM_TEST_USER_NAME?.trim() || source.UPSTREAM_USER_NAME.trim()
+  };
+}
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const parsed = envSchema.safeParse(source);
+  const parsed = envSchema.safeParse(productionSourceWithDataPreviewDefaults(source));
   if (!parsed.success) {
     throw new Error(`环境变量配置错误：${z.prettifyError(parsed.error)}`);
   }

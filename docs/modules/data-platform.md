@@ -498,7 +498,7 @@ M101 以完整日五分钟点累计播放发起次数，M102 以渠道接口记�
 - VPS 的 IPv6 出口为 `2a02:4780:5e:fe72::1`，未授权时上游会拒绝；生产请求优先使用已加入白名单的 IPv4。
 - BI 只调用已登记接口；分析链路当前使用读取请求，不修改原后台数据。
 - 文档和日志不得输出 Token。
-- 临时测试数据使用独立服务端内存会话，不写 `UPSTREAM_CREDENTIALS_FILE`，不改变主/备用站正式凭据。测试后台地址与用户名由 `UPSTREAM_TEST_API_BASE_URL`、`UPSTREAM_TEST_USER_NAME` 配置，功能由默认关闭的 `BI_TEST_DATA_PREVIEW_ENABLED` 控制。
+- 临时测试数据使用独立服务端内存会话，不写 `UPSTREAM_CREDENTIALS_FILE`，不改变主/备用站正式凭据。当前生产目标从仓库内非密配置取得已确认的测试后台地址并复用站1用户名；环境变量 `UPSTREAM_TEST_API_BASE_URL`、`UPSTREAM_TEST_USER_NAME` 可以覆盖，`BI_TEST_DATA_PREVIEW_ENABLED=false` 可立即停用。Token 始终由用户在维护页临时验证。
 - 测试会话绑定账号安全版本、普通登录 Cookie 与可信来源 IP；正式和测试查询缓存使用不同分区。测试意图失效时失败关闭，不能自动使用正式 Token 补查。
 
 ## 三个已复验接口

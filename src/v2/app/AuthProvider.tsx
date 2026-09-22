@@ -8,6 +8,7 @@ import {
   type AuthRequestError
 } from "../api/auth";
 import { V2_AUTHENTICATION_REQUIRED_EVENT } from "../api/authEvents";
+import { internalPreviewEnabled } from "./internal-preview";
 
 type AuthenticationState =
   | { status: "checking" }
@@ -59,7 +60,7 @@ export function AuthenticationProvider({
   children: ReactNode;
   developmentPreviewSession?: AuthenticatedSession;
 }) {
-  const fixedPreviewSession = import.meta.env.DEV ? developmentPreviewSession : undefined;
+  const fixedPreviewSession = internalPreviewEnabled ? developmentPreviewSession : undefined;
   const [state, setState] = useState<AuthenticationState>(() => fixedPreviewSession
     ? authenticatedState({ status: "checking" }, fixedPreviewSession, "development-design-preview")
     : { status: "checking" });
