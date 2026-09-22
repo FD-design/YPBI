@@ -1,5 +1,9 @@
 # 配置驱动 BI 项目索引
 
+## 2026-09-22 自动部署
+
+部署模块新增 GitHub Actions：`main` 推送后自动校验、构建和部署原多平台 BI，无人工审核。使用专用受限部署密钥，保留生产数据和凭证。实现入口 `.github/workflows/deploy-bi.yml`、`deploy/receive-release.py`；首次运行验收中，详见[部署运维](modules/deployment.md#2026-09-22-github-自动部署)。
+
 ## 2026-09-16 团队账号管理
 
 新增管理员专属 `/admin/accounts`，提供创建账号、普通/管理员权限、停用/启用及重置临时密码。普通账号无入口且服务端拒绝操作。实现、验证与部署状态见前端、后端及部署模块；所有账号数据仍在独立 PostgreSQL 账号库，密码不进 Git。

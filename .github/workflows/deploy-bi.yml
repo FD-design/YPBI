@@ -1,0 +1,61 @@
+name: Deploy BI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bi-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Validate release
+        run: bun run verify:release
+      - name: Build current internal preview
+        run: bun run build:internal-preview
+      - name: Validate deployment archive rules
+        run: python3 -m unittest discover -s deploy -p 'test_*.py'
+      - name: Package application code only
+        run: tar -czf /tmp/bi-release.tar.gz dist server src contracts tools package.json bun.lock vite.config.ts tsconfig.json index.html .bun-version
+      - name: Deploy latest main
+        env:
+          BI_DEPLOY_KEY: ${{ secrets.BI_DEPLOY_KEY }}
+          BI_KNOWN_HOSTS: ${{ secrets.BI_KNOWN_HOSTS }}
+          BI_DEPLOY_HOST: ${{ vars.BI_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          latest=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo 'A newer main exists; this release is skipped.'
+            exit 0
+          fi
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$BI_DEPLOY_KEY" > "$HOME/.ssh/bi_deploy"
+          printf '%s\n' "$BI_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          trap 'rm -f "$HOME/.ssh/bi_deploy"' EXIT
+          ssh -i "$HOME/.ssh/bi_deploy" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "ypbi-deploy@$BI_DEPLOY_HOST" "deploy $GITHUB_SHA" < /tmp/bi-release.tar.gz
+      - name: Check public entry
+        run: |
+          curl --fail --silent --show-error --retry 3 https://187.77.129.207.nip.io/ -o /dev/null
+          curl --fail --silent --show-error --retry 3 https://187.77.129.207.nip.io/api/bi/health
+          status=$(curl --silent --show-error -o /dev/null -w '%{http_code}' https://187.77.129.207.nip.io/api/bi/v2/auth/session)
+          test "$status" = '401'

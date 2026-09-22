@@ -1,5 +1,19 @@
 # 部署与运维模块
 
+## 2026-09-22 GitHub 自动部署
+
+- 仅原多平台 BI：向 `FD-design/YPBI` 的 `main` 推送即触发 `.github/workflows/deploy-bi.yml`，无 PR 审批、无 environment 人工放行；个人分支和 NewAV 分支不会上线。协作者需要仓库 Write 权限。
+- 流程固定 Node 24 / Bun 1.4.2，锁定依赖安装，执行 `verify:release`，再执行当前线上使用的 `build:internal-preview`。测试失败不会发送部署包。不改变正式指标准入和内测数据来源说明。
+- GitHub Secrets：`BI_DEPLOY_KEY`、`BI_KNOWN_HOSTS`；Variable：`BI_DEPLOY_HOST`。私钥只供 Actions 使用，同事无需 VPS 密码。
+- VPS 使用 `ypbi-deploy` 专用用户和强制命令 `/usr/local/bin/ypbi-deploy-receive`；拒绝交互 Shell、端口转发和其他命令。sudo 仅允许重启 `config-driven-bi-api.service`。运行 API 继续使用 `ypbi`；Caddy 直接托管 dist，已退役的 Vite Web 服务不参与发布。
+- 服务端接收器来自 `deploy/receive-release.py`，安装文件 root 所有。发布包仅含 dist/server/src/contracts/tools 与固定构建文件；拒绝路径穿越、链接、运行数据和环境配置。依赖安装禁用 lifecycle scripts，且不以 root 运行。
+- 只同步代码白名单，不触碰 `.env.local`、`data/`、账号 PostgreSQL 容器/卷、上游 Token、Caddy/Nginx 配置和 NewAV。代码备份在 `/var/lib/ypbi-deploy/backup-*`，成功后保留最近三份。
+- 重启失败或 API health 未恢复时自动还原上一份代码并再次检查；不自动逆转数据库 migration。涉及不可逆数据库变更仍须另行设计兼容迁移和数据库备份。
+- `main` 发布串行执行，上传前核对仍为最新提交，过期构建跳过。`DEPLOYED_COMMIT` 记录生效版本。公网检查包括 HTTPS 页面、health、匿名 session 返回 401。
+- 同事操作：同步 main → 修改、提交 → `git push origin main` → GitHub Actions 查看 `Deploy BI`。已有个人分支可自行合并到 main，不需要负责人审核。失败时查看失败步骤；恢复旧版可 revert 对应提交并推送。
+- 接收器更新不会自动覆盖 root 安装版本，需运维同步该文件；业务代码发布不需要此权限。
+- 验证进度：归档安全测试 4 项通过；首次 Actions 实跑与线上版本核对进行中。
+
 ## 2026-09-16 内测部署完成
 
 - 入口：https://187.77.129.207.nip.io 。源提交 d2d7ae80907c3aadb0e09ac13302043fad0b139a；PR #1 合并提交 3c828bff61b4ebfcc86df10fcb89bde677efd95f。
