@@ -3,9 +3,8 @@ import type { V2ResourceState } from "../api/useV2Resource";
 import { liveMetricModel, liveMetricUnit, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, type DetailColumn } from "./operating-detail-columns";
-import { DEMO_RANGE } from "./extended-board-model";
 import type { DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
-import { operatingDetailRows, operatingSummaryModels, type DetailRow, type DetailValue } from "./operating-detail-snapshot";
+import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
@@ -45,12 +44,12 @@ export function operatingLiveColumns(live: LiveDashboardReading | null): DetailC
   });
 }
 export function operatingLiveRows(live: LiveDashboardReading, resources: OperatingResources): DetailRow[] {
-  const date = live.query.dateRange[1], demoRows = operatingDetailRows(date);
+  const date = live.query.dateRange[1];
   return (live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]).map(platform => {
-    const resource = operatingResource(resources[platform.pid], platform.pid, date), demo = demoRows.find(row => row.pid === platform.pid);
-    const values = DETAIL_COLUMNS.map((column, index): DetailValue => {
+    const resource = operatingResource(resources[platform.pid], platform.pid, date);
+    const values = DETAIL_COLUMNS.map((column): DetailValue => {
       const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
-      if (!id || !live.metricIds.includes(id)) return demo?.values[index] ?? { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
+      if (!id || !live.metricIds.includes(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
       const series = resource?.status === "success" ? resource.data.data.series.find(series => series.metric.id === id) : undefined;
       const point = (day: string) => series?.points.find(point => point.date === day);
       const evidence = (day: string): DetailEvidence => {
@@ -68,8 +67,18 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
 }
 export function operatingLiveSummary(live: LiveDashboardReading, resources: OperatingResources, rows: DetailRow[], platform: string) {
   const date = live.query.dateRange[1], resource = operatingResource(resources[platform], platform, date);
-  // The independent all-platform snapshot is a dated demo, never a sum of PID users.
-  if (platform === "all") return operatingSummaryModels(rows, platform, DEMO_RANGE.end);
+  // Cross-PID people and ratios cannot be derived by summing platform rows. In a
+  // live session the all-platform choice must stay unavailable until upstream
+  // supplies an independent de-duplicated result; it must never fall back to a
+  // dated demonstration snapshot.
+  if (platform === "all") return OPERATING_SUMMARY_IDS.map(metricId => {
+    const column = summaryColumn(metricId);
+    return {
+      metric: { id: metricId, name: column.metric.name, definitionLabel: column.metric.definition, aggregationLabel: `${date} · 全部平台` },
+      result: { status: "unsupported" as const, label: "暂不支持全部平台汇总", contextLabel: date, retryable: false,
+        message: "真实数据模式下不合并多个 PID；请选择单个平台查看，或等待上游提供独立去重的大盘结果。" }
+    };
+  });
   return OPERATING_SUMMARY_IDS.map(metricId => {
     const column = summaryColumn(metricId), value = rows.find(row => row.pid === platform)?.values[DETAIL_COLUMNS.indexOf(column)];
     const original: DashboardMetricCardModel = { metric: { id:metricId, name:column.metric.name, definitionLabel:column.metric.definition, aggregationLabel:date }, result: value?.current != null ? { status:"available",completeness:"unknown",refresh:{status:"idle"},value:{raw:value.current,display:(value.current*(column.kind==="ratio"?100:1)).toLocaleString("zh-CN",{maximumFractionDigits:2}),unit:column.unit},comparison:null,trendKind:"line",trend:{current:[],comparison:null},validationLabel:"演示数据",watermarkLabel:"" } : {status:"unsupported",label:"待接口支持",contextLabel:date,retryable:false} };
@@ -86,7 +95,12 @@ export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn
   return [["数据日", "业务平台", "PID", ...columns.flatMap(column => periods.flatMap((_, i) => [column.metric.name + "｜" + labels[i] + "（" + column.unit + "）", column.metric.name + "｜" + labels[i] + "状态", column.metric.name + "｜" + labels[i] + "查询时间"]))],
     ...rows.map(row => [date, row.name, row.pid, ...row.values.flatMap((value, i) => periods.flatMap(period => {
       const evidence = value.evidence?.[period];
-      return [value[period] === null ? null : value[period]! * (columns[i].kind === "ratio" ? 100 : 1), evidence ? "待验数 · " + evidence.label + (evidence.stale ? " · 上次查询结果" : "") : "演示数据", evidence?.fetchedAt ?? null];
+      const status = evidence ? "待验数 · " + evidence.label + (evidence.stale ? " · 上次查询结果" : "")
+        : value.state === "unsupported" ? "待接口支持"
+        : value.state === "immature" ? "未成熟"
+        : value.state === "no_record" ? "无记录"
+        : "无可用结果";
+      return [value[period] === null ? null : value[period]! * (columns[i].kind === "ratio" ? 100 : 1), status, evidence?.fetchedAt ?? null];
     }))])];
 }
 
