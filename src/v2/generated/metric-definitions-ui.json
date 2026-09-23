@@ -1,8 +1,8 @@
 {
   "schemaVersion": "metric-definitions-ui/v1",
   "authorityDocument": "全站指标体系.md",
-  "authorityVersion": "v0.36-draft",
-  "sourceContentSha256": "c2fb60d69b7f107eb488f4c5afc4edef1848d42f4ebc45ff0e301fb60bddb306",
+  "authorityVersion": "v0.37-draft",
+  "sourceContentSha256": "de89529a7efde464b1b98c16ce773a4a2189035c9fdd7f52d816875636a8b1f7",
   "items": [
     {
       "id": "M001",

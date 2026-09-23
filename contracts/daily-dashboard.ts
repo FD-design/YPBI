@@ -30,6 +30,7 @@ export const dailyDashboardCatalogSchema = z.object({ success: z.literal(true), 
 export type DailyDashboardCatalog = z.infer<typeof dailyDashboardCatalogSchema>["data"];
 export const dailyPointSchema = z.object({
   date: z.iso.date(), state: z.enum(["available", "no_record", "no_value", "invalid_value", "zero_denominator", "immature", "source_failure"]),
+  sourceStatus: z.enum(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_INCOMPLETE", "FAILED"]).optional(),
   value: z.number().finite().nonnegative().nullable(),
   inputs: z.array(z.object({ key: shortText, value: z.number().finite().nonnegative().nullable() }).strict()).min(1).max(2)
 }).strict().superRefine((point, ctx) => {
@@ -55,7 +56,7 @@ const dailyDashboardDataFields = {
   query: dailyDashboardQuerySchema,
   queryId: z.string(), fetchedAt: z.iso.datetime(), timezone: z.literal("Asia/Shanghai"),
   validationStatus: z.literal("pending_validation"), completeness: z.literal("unknown"), watermark: z.null(),
-  sourceApiIds: z.array(shortText).min(1).max(5)
+  sourceApiIds: z.array(shortText).min(1).max(8)
 };
 const dailyDashboardV1DataSchema = z.object({ ...dailyDashboardDataFields,
   schemaVersion: z.literal("day-dashboard/v1"), series: z.array(dailySeriesSchema).min(1).max(100)

@@ -4,7 +4,7 @@
   "sourceSha256": "adb44069b39f39b0b0eb9ca6b6ff571538d405ecd9a77bc082da23cc2977e0a2",
   "version": "v0.81",
   "templateSource": "全站指标体系.md §4.3",
-  "templateSourceSha256": "de2461f848a567c91c99c5f3db9ba4be97736864e4ed49e64e3d876020d5e8a8",
+  "templateSourceSha256": "4f73810077d37bfbb8296894eaf2b08155409cf7f5f8dee51418e367fcadb2b3",
   "template": {
     "name": "渗透率",
     "definition": "活跃用户中实际访问或使用该模块的比例",

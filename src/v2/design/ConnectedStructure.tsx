@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { GroupedTrend, type GroupedTrendPoint } from "../features/dashboards/GroupedTrend";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
-import { liveCalculation, liveExportMetadata, liveStateLabel, liveValue, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveCalculation, liveExportMetadata, livePointStateLabel, liveValue, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
 import { CHART_PALETTE } from "../../theme/tokens";
 import { downloadPreviewWorkbook } from "./preview-workbook";
@@ -21,14 +21,14 @@ export function ConnectedStructureContent({ live, title, id, dimension, open }: 
   const points:GroupedTrendPoint[] = dates.map((date,index) => {
     const snapshot = (before=false) => ({
       values:Object.fromEntries(groups.map(group=>[group.id,series(group.id,before)?.points[index]?.value??null])),
-      states:Object.fromEntries(groups.map(group=>{const point=series(group.id,before)?.points[index],state=before?live.comparison?.state:live.state;return[group.id,!live.metricIds.includes(group.id)?"切片待接入":state?.status==="failure"?"读取失败":point?liveStateLabel[point.state]+(state?.status==="success"&&state.refreshError?" · 上次查询结果":""):"读取中"];})),
+      states:Object.fromEntries(groups.map(group=>{const point=series(group.id,before)?.points[index],state=before?live.comparison?.state:live.state;return[group.id,!live.metricIds.includes(group.id)?"切片待接入":state?.status==="failure"?"读取失败":point?livePointStateLabel(point)+(state?.status==="success"&&state.refreshError?" · 上次查询结果":""):"读取中"];})),
       basis:Object.fromEntries(groups.flatMap(group=>{const s=series(group.id,before),p=s?.points[index],basis=s&&p?liveCalculation(s,p):undefined;return basis?[[group.id,basis]]:[];}))
     });
     return {date,...snapshot(),comparison:previous?{date:previous.data.series[0].points[index].date,...snapshot(true)}:undefined};
   });
   const exported = <PreviewExportControl name={title} dataOrigin="live" pending={!live.canExport||live.controls.dirty||!result} context={live.query.dateRange.join(" 至 ")+" · 待验数"} scope="当前分组完整日期，含基数和状态" onDownloadPreview={()=>{
     if(!result||!live.canExport||live.controls.dirty)return;
-    downloadPreviewWorkbook(title,[{name:"数据说明",rows:liveExportMetadata(live)},{name:"分组明细",rows:[["周期","日期","分组","值（"+unit+"）","计算输入","状态","平台","查询时间"],...[{name:"当前",result},...(previous?[{name:"对比",result:previous}]:[])].flatMap(period=>groups.flatMap(group=>period.result.data.series.filter(s=>s.metric.id===group.id).flatMap(s=>s.points.map(point=>[period.name,point.date,group.label,point.value===null?null:point.value*(unit==="%"?100:1),s.metric.inputs.map((input,i)=>input.name+": "+(point.inputs[i].value??"—")+" "+input.unit).join(" / "),liveStateLabel[point.state]+" · 待验数"+((period.name==="当前"?live.state:live.comparison?.state)?.status==="success"&&((period.name==="当前"?live.state:live.comparison?.state) as {refreshError?:unknown}).refreshError?" · 上次查询结果":""),live.query.pid,period.result.data.fetchedAt]))))]}], "pending");
+    downloadPreviewWorkbook(title,[{name:"数据说明",rows:liveExportMetadata(live)},{name:"分组明细",rows:[["周期","日期","分组","值（"+unit+"）","计算输入","状态","平台","查询时间"],...[{name:"当前",result},...(previous?[{name:"对比",result:previous}]:[])].flatMap(period=>groups.flatMap(group=>period.result.data.series.filter(s=>s.metric.id===group.id).flatMap(s=>s.points.map(point=>[period.name,point.date,group.label,point.value===null?null:point.value*(unit==="%"?100:1),s.metric.inputs.map((input,i)=>input.name+": "+(point.inputs[i].value??"—")+" "+input.unit).join(" / "),livePointStateLabel(point)+" · 待验数"+((period.name==="当前"?live.state:live.comparison?.state)?.status==="success"&&((period.name==="当前"?live.state:live.comparison?.state) as {refreshError?:unknown}).refreshError?" · 上次查询结果":""),live.query.pid,period.result.data.fetchedAt]))))]}], "pending");
   }}/>;
   return <>{live.state.status==="failure"?<RefreshNotice onRetry={live.retry}>真实结构读取失败，请重试。</RefreshNotice>:live.state.status==="success"&&live.state.refreshError?<RefreshNotice onRetry={live.retry}>结构刷新失败，当前保留上次查询结果。</RefreshNotice>:null}<GroupedTrend title={title} groups={groups.map((group,i)=>({...group,color:CHART_PALETTE[i]}))} points={points} kind={unit==="%"?"line":"bar"} unit={unit} format={value=>liveValue(value,unit)+" "+unit} queryKey={JSON.stringify([live.query,id,dimension])} onOpen={open} exportAction={exported}
     summary={selected=><div className="topic-preview__group-summary">{groups.filter(group=>selected.includes(group.id)).map(group=>{

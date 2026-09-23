@@ -4,7 +4,7 @@ import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
 import { RetentionMatrix, type RetentionMatrixRow } from "../features/dashboards/RetentionMatrix";
 import { useV2Resource, type V2ResourceState } from "../api/useV2Resource";
 import { fetchDailyDashboard } from "../api/client";
-import { liveStateLabel, liveExportMetadata, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { livePointStateLabel, liveExportMetadata, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { topicMetric } from "./topic-preview-fixtures";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
@@ -32,7 +32,7 @@ export function connectedCohortRows(query: DailyDashboardQuery, state: V2Resourc
     return { date, base: read("M020")?.inputs[1]?.value ?? null, cells: windows.map(([id, days]) => {
       const point = read(id);
       return { id, rate: point?.value ?? null, count: read("M115.d"+days)?.value ?? (point?.state === "available" || point?.state === "zero_denominator" ? point.inputs[0].value : null), availableAt: shiftDate(date, days),
-        status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? liveStateLabel[point.state] + (state.refreshError ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
+        status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? livePointStateLabel(point) + (state.refreshError ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
     }) };
   });
 }

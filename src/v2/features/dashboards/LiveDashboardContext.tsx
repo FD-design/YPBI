@@ -38,6 +38,11 @@ export function liveExportMetadata(live: LiveDashboardReading) {
     ["数据性质", "真实接口候选结果，待验数；完整性未知，数据水位未返回"]];
 }
 export const liveStateLabel = { available: "已返回", no_record: "当日无记录", no_value: "字段未返回", invalid_value: "数据异常", zero_denominator: "分母为0", immature: "未成熟", source_failure: "来源读取失败" };
+export const livePointStateLabel = (point: LiveSeries["points"][number]) => point.sourceStatus === "PROCESSING" ? "计算中"
+  : point.sourceStatus === "NOT_MATURE" ? "待成熟"
+    : point.sourceStatus === "SOURCE_INCOMPLETE" ? "数据接入中"
+      : point.sourceStatus === "FAILED" ? "数据异常"
+        : liveStateLabel[point.state];
 export const liveValue = (value: number | null, unit: string) => value === null ? "—" : (unit === "%" ? value * 100 : value).toLocaleString("zh-CN", { maximumFractionDigits: ["人", "次"].includes(unit) ? 0 : unit.includes("/人") && Math.abs(value) > 0 && Math.abs(value) < .1 ? 4 : 2, minimumFractionDigits: unit === "%" ? 2 : 0 });
 export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number]): CalculationBasis | undefined {
   if (series.metric.inputs.length !== 2) return undefined;
@@ -66,7 +71,7 @@ export function liveDailyPoint(live: DailySources, metricId: string, date: strin
       && data.data.query.dateRange[0] <= period!.query.dateRange[0] && data.data.query.dateRange[1] >= period!.query.dateRange[1];
     const series = valid ? data.data.series.find(item => item.metric.id === metricId) : undefined;
     const point = series?.points.find(item => item.date === date);
-    const reason = period?.state.status === "failure" ? "该日查询失败" : period?.state.status === "loading" ? "该日读取中" : point ? liveStateLabel[point.state] : "该日未返回";
+    const reason = period?.state.status === "failure" ? "该日查询失败" : period?.state.status === "loading" ? "该日读取中" : point ? livePointStateLabel(point) : "该日未返回";
     const freshness = period?.state.status === "success" && period.state.refreshError ? `${date} 刷新失败，保留上次查询结果` : period?.state.status === "success" && period.state.refreshing ? `${date} 刷新中，保留上次查询结果` : undefined;
     return { date, value: point?.value ?? null, display: series ? liveValue(point?.value ?? null, series.metric.unit) : "—", reason, freshness,
       inputs: point?.inputs ?? [], fetchedAt: valid ? data.data.fetchedAt : "", unit: series?.metric.unit ?? "",
@@ -113,7 +118,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
       value: trendValue(point, unit), counterpart: trendValue(other, unit),
       differenceDisplay: point.value != null && other?.value != null ? difference(previousPeriod ? other.value : point.value, previousPeriod ? point.value : other.value, unit) : null,
       state: point.state === "available" || point.state === "no_record" ? point.state : "no_value" as const,
-      stateLabel: liveStateLabel[point.state], calculation: liveCalculation(current, point)
+      stateLabel: livePointStateLabel(point), calculation: liveCalculation(current, point)
     };
   });
   const direction = last.value != null && previous?.value != null ? last.value > previous.value ? "up" as const : last.value < previous.value ? "down" as const : "flat" as const : null;
@@ -140,7 +145,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
   };
   if (cohort && result.calculation) result.calculation.scope = `${live.query.dateRange.join(" 至 ")} · 注册日 · 仅汇总已结束观察且已返回的批次 · 待验数`;
   if (cohort && comparison?.status === "available") comparison.detail = "当前注册批次与上一等长周期对应批次的加权留存结果；逐批次数据见明细。";
-  if (last.value === null) return { metric, result: { status: last.state === "source_failure" ? "failed" : last.state === "no_record" ? "no_records" : "no_values", contextLabel: last.date, label: liveStateLabel[last.state], message: `主值 — · ${last.date}。期间其他日期见趋势和明细。`, retryable: last.state === "source_failure",
+  if (last.value === null) return { metric, result: { status: last.state === "source_failure" ? "failed" : last.state === "no_record" ? "no_records" : "no_values", contextLabel: last.date, label: livePointStateLabel(last), message: `主值 — · ${last.date}。期间其他日期见趋势和明细。`, retryable: last.state === "source_failure",
     history: observed || priorObserved ? result : undefined } };
   return { metric, result };
 }

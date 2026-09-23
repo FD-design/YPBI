@@ -2,7 +2,7 @@
   "marker": "EVENT_CATALOG_DEV_AUTHORITY_PROJECTION",
   "source": "H5全站埋点规范-协作主文档.md",
   "sourceSha256": "adb44069b39f39b0b0eb9ca6b6ff571538d405ecd9a77bc082da23cc2977e0a2",
-  "observationSha256": "3b9a09c1cd952d0eff619daba015204c524d19bfed8b2dd2a23a4665b03e32ed",
+  "observationSha256": "b3b747457d3ff297f6d6381cc03ceb6fae644b238f00dd763a0e5139c5df4c1f",
   "document": {
     "documentId": "h5_tracking_spec",
     "documentVersion": "v0.81",

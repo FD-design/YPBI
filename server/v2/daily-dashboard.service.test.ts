@@ -4,6 +4,7 @@ import { dailyDashboardMatchesQuery, dailyDashboardQuerySchema, dailyDashboardSu
 import { loadEnv } from "../config/env";
 import type { IdentityResolution } from "../identity/identity-provider";
 import { UpstreamError } from "../upstream/client";
+import { currentUpstreamRequestProfile } from "../upstream/request-profile";
 import { DailyDashboardService, dailyDashboardCatalog, dailyDashboardMatchesMapping, type DailyDashboardExecutor } from "./daily-dashboard.service";
 import { v2BiPlugin } from "./plugin";
 
@@ -33,10 +34,10 @@ describe("观影旧接口待验数接入", () => {
     expect(get("M102").metric.sourceNote).toContain("字段单位、完整性和区间去重分母待验数");
     expect(r.data).toMatchObject({validationStatus:"pending_validation",completeness:"unknown",watermark:null});
     expect(dailyDashboardMatchesMapping(r)).toBe(true);
-    expect((await make().execute({...q,boardId:"5.2"})).data.sourceApiIds).toHaveLength(5);
+    expect((await make().execute({...q,boardId:"5.2"})).data.sourceApiIds).toHaveLength(7);
     const playback=await make().execute({...q,boardId:"5.12"});
-    expect(playback.data.series.map(series=>series.metric.id)).toEqual(["M101"]);
-    expect(playback.data.sourceApiIds).toEqual(["/api/admin/home/pRealDayLine"]);
+    expect(playback.data.series.map(series=>series.metric.id)).toEqual(["M101","M034","M036","M097"]);
+    expect(playback.data.sourceApiIds).toEqual(["/api/admin/home/pRealDayLine","/api/admin/bi/v1/playback"]);
   });
   test("同源时长真零、缺失、非法值与零分母分开，实时失败不污染时长",async()=>{
     for(const [summary,state,value] of [[{totalUserWatchTime:0,watchUserCount:4},"available",0],[{watchUserCount:4},"no_value",null],[{totalUserWatchTime:-1,watchUserCount:4},"invalid_value",null],[{totalUserWatchTime:7200,watchUserCount:0},"zero_denominator",null]] as const){
@@ -46,6 +47,89 @@ describe("观影旧接口待验数接入", () => {
     const r=await make(undefined,true).execute(q);
     expect(r.data.series.find(s=>s.metric.id==="M101")!.points[0].state).toBe("source_failure");
     expect(r.data.series.find(s=>s.metric.id==="M102")!.points[0].value).toBe(2);
+  });
+});
+
+describe("bi-v1 播放指标接入", () => {
+  const date = "2026-09-21";
+  const playbackRows = [
+    ["M034", "default", 27, 27, 0, "count"], ["M036", "default", 27 / 89, 27, 89, "ratio"], ["M097", "default", 89, 89, 0, "count"],
+    ["M034", "long_video", 6, 6, 0, "count"], ["M036", "long_video", 6 / 9, 6, 9, "ratio"], ["M097", "long_video", 9, 9, 0, "count"]
+  ].map(([metricCode, videoType, value, numerator, denominator, unit]) => ({ metricCode, businessDate: date, dimensions: { pid: "PH", videoType }, value, numerator, denominator, unit, dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "effective_play_v2" }));
+  const make = (rows: Record<string, unknown>[] = playbackRows) => new DailyDashboardService({ get: async path => {
+    if (path.includes("/bi/v1/playback")) return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-22T10:00:00+08:00", watermark: "2026-09-22 10:00:00.000", rows } };
+    if (path.endsWith("pRealDayLine")) return { msg: [] };
+    if (path.endsWith("pDaySum")) return { msg: { pageData: [], totalCount: 0 } };
+    if (path.includes("channelStatByTypeV2")) return { msg: { pageData: [], totalData: [] } };
+    return { data: [], msg: { pageData: [], totalData: [], totalCount: 0 } };
+  } }, () => new Date("2026-09-23T00:00:00Z"));
+
+  test("按视频类型合计计数并用总分子总分母计算比率", async () => {
+    const result = await make().execute({ boardId: "5.12", pid: "PH", dateRange: [date, date] });
+    const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    expect(point("M034")).toMatchObject({ state: "available", sourceStatus: "READY", value: 33, inputs: [{ value: 33 }] });
+    expect(point("M097")).toMatchObject({ state: "available", sourceStatus: "READY", value: 98, inputs: [{ value: 98 }] });
+    expect(point("M036")).toMatchObject({ state: "available", sourceStatus: "READY", value: 33 / 98, inputs: [{ value: 33 }, { value: 98 }] });
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("未接通状态保留为状态，不补0且不污染旧接口指标", async () => {
+    const rows = ["M034", "M036", "M097"].map(metricCode => ({ metricCode, dimensions: { pid: "PH" }, value: null, numerator: 0, denominator: 0, unit: metricCode === "M036" ? "ratio" : "count", dataStatus: "SOURCE_INCOMPLETE", metricVersion: "bi-v1", ruleVersion: "" }));
+    const result = await make(rows).execute({ boardId: "5.9", pid: "PH", dateRange: [date, date] });
+    for (const id of ["M034", "M036", "M097"]) expect(result.data.series.find(series => series.metric.id === id)!.points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null });
+  });
+});
+
+describe("bi-v1 通用指标渐进替换", () => {
+  const date = "2026-09-05";
+  const query = { boardId: "5.8", pid: "PH", dateRange: [date, date] as [string, string] };
+  const response = (dataStatus: "READY" | "PROCESSING" | "SOURCE_INCOMPLETE") => ({ code: 200, msg: {
+    metricVersion: "bi-v1",
+    generatedAt: "2026-09-06T10:00:00+08:00",
+    watermark: "2026-09-06 10:00:00.000",
+    rows: [{
+      metricCode: "M016",
+      ...(dataStatus === "SOURCE_INCOMPLETE" ? {} : { businessDate: date }),
+      dimensions: { pid: "PH" },
+      value: dataStatus === "READY" ? 150 : null,
+      numerator: dataStatus === "READY" ? 150 : 0,
+      denominator: 0,
+      unit: "count",
+      dataStatus,
+      metricVersion: "bi-v1",
+      ruleVersion: dataStatus === "READY" ? "active-user-v1" : ""
+    }]
+  } });
+  const make = (mode: "ready" | "incomplete" | "processing" | "failure") => new DailyDashboardService({ get: async path => {
+    if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, loginUserCount: 100 })], totalCount: 1 } };
+    if (path.includes("reletionsStatPlus")) return { data: [] };
+    if (path === "/api/admin/bi/v1/metrics") {
+      if (mode === "failure") throw new UpstreamError("UPSTREAM_TIMEOUT", "timeout", 504);
+      return response(mode === "ready" ? "READY" : mode === "processing" ? "PROCESSING" : "SOURCE_INCOMPLETE");
+    }
+    return { msg: { pageData: [], totalData: [], totalCount: 0 } };
+  } }, () => new Date("2026-09-08T00:00:00Z"));
+
+  test("READY 使用新接口值，且保留分子输入与来源状态", async () => {
+    const result = await make("ready").execute(query);
+    expect(result.data.series.find(series => series.metric.id === "M016")!.points[0]).toMatchObject({
+      state: "available", sourceStatus: "READY", value: 150, inputs: [{ key: "loginUserCount", value: 150 }]
+    });
+    expect(result.data.sourceApiIds).toContain("/api/admin/bi/v1/metrics");
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("SOURCE_INCOMPLETE 与通用接口异常保留旧接口真值，不补0", async () => {
+    for (const mode of ["incomplete", "failure"] as const) {
+      const point = (await make(mode).execute(query)).data.series.find(series => series.metric.id === "M016")!.points[0];
+      expect(point).toMatchObject({ state: "available", value: 100, inputs: [{ value: 100 }] });
+      expect(point).not.toHaveProperty("sourceStatus");
+    }
+  });
+
+  test("新接口明确处于处理中时不伪装成旧值", async () => {
+    const point = (await make("processing").execute(query)).data.series.find(series => series.metric.id === "M016")!.points[0];
+    expect(point).toMatchObject({ state: "no_value", sourceStatus: "PROCESSING", value: null, inputs: [{ value: null }] });
   });
 });
 
@@ -276,6 +360,33 @@ async function appFor(identity: IdentityResolution = reader(), executor: DailyDa
   return app;
 }
 describe("日看板接口边界", () => {
+  test("测试数据环境把整张日看板查询置于临时测试后台配置", async () => {
+    let observed: ReturnType<typeof currentUpstreamRequestProfile>;
+    const app = Fastify(); apps.push(app);
+    await app.register(v2BiPlugin, {
+      prefix: "/api/bi/v2",
+      identityProvider: { resolve: async () => reader() },
+      metricQueryService: { execute: async () => { throw Error("formal must remain closed"); } },
+      dailyDashboardService: {
+        execute: async request => {
+          observed = currentUpstreamRequestProfile();
+          return service().execute(request);
+        }
+      },
+      dataEnvironmentResolver: {
+        testAvailable: true,
+        resolveTest: () => ({ status: "active", expiresAt: Date.now() + 60_000, profile: {
+          environment: "test", baseUrl: "https://test.example.com", token: "secret-test-token", userName: "test-user", cachePartition: "preview-daily-reading"
+        } })
+      }
+    });
+
+    const response = await app.inject({ method: "POST", url: "/api/bi/v2/queries/dashboards/daily-reading", headers: { "x-ypbi-data-environment": "test" }, payload: query });
+    expect(response.statusCode).toBe(200);
+    expect(observed).toMatchObject({ baseUrl: "https://test.example.com", userName: "test-user", cachePartition: "preview-daily-reading" });
+    expect(response.body).not.toContain("secret-test-token");
+  });
+
   for (const role of ["reader", "analyst", "maintainer"]) test(`${role}可读但不放宽正式查询`, async () => {
     const app = await appFor(reader(role));
     const response = await app.inject({ method: "POST", url: "/api/bi/v2/queries/dashboards/daily-reading", payload: query });

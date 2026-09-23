@@ -178,7 +178,7 @@ test("从权威 Markdown 生成完整且稳定的指标目录", () => {
 
   assert.equal(canonicalJson(first), canonicalJson(second));
   assert.deepEqual(first.snapshot.counts, { standard: 97, periodDerived: 3, total: 100 });
-  assert.equal(first.snapshot.authorityVersion, "v0.36-draft");
+  assert.equal(first.snapshot.authorityVersion, "v0.37-draft");
   assert.equal(first.snapshot.mappingRegistryVersion, "2026-09-08.1");
   assert.equal(first.categories.length, 5);
   assert.equal(first.categories.reduce((count, category) => count + category.children.length, 0), 20);

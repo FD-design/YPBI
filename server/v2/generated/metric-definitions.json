@@ -2,17 +2,17 @@
   "snapshot": {
     "schemaVersion": "metric-catalog/v1",
     "authorityDocument": "全站指标体系.md",
-    "authorityVersion": "v0.36-draft",
+    "authorityVersion": "v0.37-draft",
     "mappingRegistryVersion": "2026-09-08.1",
     "authorityStatus": "产品口径确认版；97项标准指标已全部完成定义、公式、去重和时间窗口核对",
-    "sourceUpdatedOn": "2026-09-22",
-    "sourceSha256": "de2461f848a567c91c99c5f3db9ba4be97736864e4ed49e64e3d876020d5e8a8",
+    "sourceUpdatedOn": "2026-09-23",
+    "sourceSha256": "29ce282dafe0ed3656abb27b59d72aa8034dc4ea3a5bae79e99fc4a2f98380c4",
     "counts": {
       "standard": 97,
       "periodDerived": 3,
       "total": 100
     },
-    "contentSha256": "c2fb60d69b7f107eb488f4c5afc4edef1848d42f4ebc45ff0e301fb60bddb306"
+    "contentSha256": "de89529a7efde464b1b98c16ce773a4a2189035c9fdd7f52d816875636a8b1f7"
   },
   "categories": [
     {
@@ -141,7 +141,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -203,7 +203,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -265,7 +265,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -327,7 +327,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -389,7 +389,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -451,7 +451,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -513,7 +513,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -575,7 +575,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -637,7 +637,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -699,7 +699,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -761,7 +761,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -823,7 +823,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -885,7 +885,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -947,7 +947,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -1009,7 +1009,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -1071,7 +1071,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1139,7 +1139,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1201,7 +1201,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1263,7 +1263,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1325,7 +1325,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1387,7 +1387,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1449,7 +1449,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1511,7 +1511,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1573,7 +1573,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -1635,7 +1635,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1697,7 +1697,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1759,7 +1759,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1821,7 +1821,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -1883,7 +1883,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -1945,7 +1945,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2007,7 +2007,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2069,7 +2069,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2131,7 +2131,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2193,7 +2193,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2255,7 +2255,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2317,7 +2317,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2379,7 +2379,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2441,7 +2441,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2503,7 +2503,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2565,7 +2565,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2627,7 +2627,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2689,7 +2689,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2751,7 +2751,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2813,7 +2813,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2875,7 +2875,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -2937,7 +2937,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -2999,7 +2999,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -3061,7 +3061,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -3123,7 +3123,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -3185,7 +3185,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -3247,7 +3247,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -3309,7 +3309,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -3371,7 +3371,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -3433,7 +3433,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -3495,7 +3495,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -3557,7 +3557,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -3619,7 +3619,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -3681,7 +3681,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -3743,7 +3743,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -3805,7 +3805,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -3867,7 +3867,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -3929,7 +3929,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -3991,7 +3991,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -4053,7 +4053,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -4115,7 +4115,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -4177,7 +4177,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "definition_pending_confirmation",
           "label": "现有接口口径待验数"
@@ -4239,7 +4239,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -4301,7 +4301,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -4363,7 +4363,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -4425,7 +4425,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "definition_pending_confirmation",
           "label": "现有接口口径待验数"
@@ -4487,7 +4487,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -4549,7 +4549,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -4611,7 +4611,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -4673,7 +4673,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -4735,7 +4735,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -4797,7 +4797,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -4859,7 +4859,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -4921,7 +4921,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -4983,7 +4983,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -5045,7 +5045,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5107,7 +5107,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5169,7 +5169,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -5231,7 +5231,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -5293,7 +5293,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5355,7 +5355,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5417,7 +5417,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "技术称已实现（待验数）"
@@ -5479,7 +5479,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5541,7 +5541,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5603,7 +5603,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5665,7 +5665,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5727,7 +5727,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5789,7 +5789,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5851,7 +5851,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5913,7 +5913,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -5975,7 +5975,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -6037,7 +6037,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tracking_draft",
           "label": "埋点草稿支持"
@@ -6099,7 +6099,7 @@
       },
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "platform_processing_required",
           "label": "需平台加工"
@@ -6156,7 +6156,7 @@
       "classification": null,
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "基础指标技术称已实现（待验数），派生结果待验数"
@@ -6215,7 +6215,7 @@
       "classification": null,
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "基础指标技术称已实现（待验数），派生结果待验数"
@@ -6274,7 +6274,7 @@
       "classification": null,
       "authority": {
         "document": "全站指标体系.md",
-        "version": "v0.36-draft",
+        "version": "v0.37-draft",
         "sourceBuildStatus": {
           "code": "tech_claimed_pending_validation",
           "label": "基础指标技术称已实现（待验数），派生结果待验数"

@@ -157,6 +157,7 @@ test("临时测试 Token 只创建当前会话并可明确切回正式数据", a
   await expect(preview.getByText("测试模式中", { exact: true })).toBeVisible();
   await expect(preview.getByText("测试数据", { exact: true })).toBeVisible();
   await expect(page.locator(".v2-data-environment").getByText("测试数据", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "开发接口就绪检查" })).toHaveCount(0);
   await expect(input).toHaveCount(0);
   const activation = fixture.requests.find((item) => item.pathname.endsWith("/data-preview/activate"));
   expect(activation.body).toEqual({ token: "fake-preview-token-0001" });

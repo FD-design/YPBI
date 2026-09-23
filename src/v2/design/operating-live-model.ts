@@ -1,6 +1,6 @@
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import type { V2ResourceState } from "../api/useV2Resource";
-import { liveMetricModel, liveMetricUnit, liveStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveMetricModel, liveMetricUnit, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, type DetailColumn } from "./operating-detail-columns";
 import { DEMO_RANGE } from "./extended-board-model";
@@ -9,6 +9,7 @@ import { operatingDetailRows, operatingSummaryModels, type DetailRow, type Detai
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
+  "M036:overall":"M036",
   "M026:老用户":"M026.old", "M081:老用户":"M081.old",
   "M112:overall":"M112", "M060:overall":"M060", "M114:overall":"M114",
   "M112:支付宝":"M112.alipay", "M060:支付宝":"M060.alipay", "M114:支付宝":"M114.alipay",
@@ -55,7 +56,7 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
       const evidence = (day: string): DetailEvidence => {
         const value = point(day);
         return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : value?.state ?? "no_value",
-          label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : value ? liveStateLabel[value.state] : "字段未返回",
+          label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : value ? livePointStateLabel(value) : "字段未返回",
           fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: resource?.status === "success" && Boolean(resource.refreshError),
           inputs: series?.metric.inputs.map((input, i) => ({ ...input, value: value?.inputs[i]?.value ?? null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote };
       };

@@ -7,7 +7,7 @@ import { useAuthentication } from "../app/AuthProvider";
 import { navigate, useBrowserLocation } from "../app/router";
 import { RefreshNotice } from "../components/StatePanel";
 import { DemoDataProvider } from "../components/DataOrigin";
-import { LiveDashboardContext, liveDailyReferenceRows, liveStateLabel } from "../features/dashboards/LiveDashboardContext";
+import { LiveDashboardContext, liveDailyReferenceRows, livePointStateLabel } from "../features/dashboards/LiveDashboardContext";
 import { DateRangePicker } from "../../components/ui/DateRangePicker";
 import { MenuSelect } from "../../components/ui/MenuSelect";
 import Core from "./CoreOverviewDesignFixture";
@@ -61,7 +61,7 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
       ...(compared ? [{ name: "日值比较基准", rows: [["指标", "参考", "平台", "日期", "结果（原始值）", "单位", "计算输入", "状态", "查询时间", "刷新状态"], ...dayReferences.map(point => [state.data!.data.series.find(series => series.metric.id === point.metricId)?.metric.name ?? point.metricId, point.label, query.pid, point.date, point.value, point.unit, point.calculation ? `${point.calculation.numerator.name}：${point.calculation.numerator.value ?? "—"} ${point.calculation.numerator.unit}；${point.calculation.denominator.name}：${point.calculation.denominator.value ?? "—"} ${point.calculation.denominator.unit}` : "", point.reason ?? "该日未返回", point.fetchedAt, point.freshness ?? "本次查询结果"])] }] : []),
       ...periods.flatMap(period => period.result.data.series.map(series => ({ name: period.name + "-" + series.metric.name, rows: [
         ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态"],
-        ...series.points.map(point => [point.date, point.value, ...point.inputs.map(input => input.value), liveStateLabel[point.state], period.result.data.fetchedAt, period.stale ? "上次查询结果" : "本次查询结果"])
+        ...series.points.map(point => [point.date, point.value, ...point.inputs.map(input => input.value), livePointStateLabel(point), period.result.data.fetchedAt, period.stale ? "上次查询结果" : "本次查询结果"])
       ] })))
     ], "pending");
   };

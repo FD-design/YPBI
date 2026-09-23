@@ -1,5 +1,15 @@
 # BI 后端 API 模块
 
+## 2026-09-23 bi-v1 指标渐进适配
+
+`server/upstream/bi-v1.adapter.ts` 负责播放专用结果，`server/upstream/bi-v1.metrics-adapter.ts` 负责开发文档登记的通用指标结果；两者都复用现有请求级 Token、PID 和环境路由。M034、M036、M097 按 `videoType` 聚合，M036 使用同批分子分母重算，不平均分类或每日比率。
+
+通用适配已登记当前页面存在直接对应关系的 M001、M003、M005、M006、M007、M016、M020～M023、M026、M060、M081、M112、M114。同名指标返回 READY 时成为该日权威值；SOURCE_INCOMPLETE、无记录或通用接口请求失败时继续使用原来已经接通的旧接口真值，避免新接口占位导致现有页面断数；PROCESSING、NOT_MATURE、FAILED 则按状态展示，不伪装成旧值。比率只使用同批总分子／总分母；通用映射只接受 PID 总体行，不在 BI 内相加未知维度，并严格校验日期、PID、单位、重复维度与安全数值。
+
+开发文档虽登记首批26项，但当前测试后台实查只有 M034/M036/M097 已接事实表并返回 READY，其余23项仍为上游占位。本批不新增诊断路由或数据源维护功能。没有现成页面位置、正式维度契约或仍明确标记为演示的数据，不因 Token 切换自动变成真实数据；需要先登记页面映射后才展示。
+
+测试 Token 不是单独给 `bi-v1` 使用。凡经 V2 查询编排进入 `UpstreamClient` 的请求，在测试数据模式下都由同一个请求级配置覆盖后台地址、用户名和 Token；开发修改测试后台旧接口后，已映射字段直接读取测试返回。正式模式仍按 PID 走正式站1/站2，测试和正式缓存不互相命中，也不相互回退。
+
 ## 团队账号管理（2026-09-16）
 
 `GET/POST /api/bi/v2/team/accounts` 提供列表和创建，`PUT /api/bi/v2/team/accounts/:username` 按 action 调整角色、状态或重置密码。普通账号、未完成首次改密的账号和匿名请求均被服务端拒绝；写入强制 CSRF、生产同源校验和每管理员每分钟 12 次限流。列表每页 20 项，只返回公开账号摘要。
@@ -148,10 +158,11 @@ V2 业务路由每次请求都通过 `IdentityProvider` 解析服务端会话，
 
 | 方法 | 路径 | 当前契约 |
 |---|---|---|
-| GET | `/api/bi/v2/catalog/metric-definitions` | 返回由权威 Markdown 生成并校验的完整指标定义、分类、源建设状态、YPBI 映射、验数和派生可分析状态；当前 98 个标准指标＋3 个周期派生指标 |
+| GET | `/api/bi/v2/catalog/metric-definitions` | 返回由权威 Markdown 生成并校验的完整指标定义、分类、源建设状态、YPBI 映射、验数和派生可分析状态；当前 97 个标准指标＋3 个周期派生指标 |
 | GET | `/api/bi/v2/catalog/metrics` | 兼容首个技术查询切片；仅当 M016 映射已配置、能力可投影且绑定当前权威版本时返回 M016，否则安全返回空目录；不代表正式选择器已经开放该指标 |
 | GET | `/api/bi/v2/catalog/platforms` | 返回服务端有效平台目录与 Principal PID 范围的交集 |
 | GET | `/api/bi/v2/data-environment` | 返回当前请求明确选择的正式/测试数据环境；测试会话无效时返回409，不回退正式数据 |
+| POST | `/api/bi/v2/queries/dashboards/daily-reading` | 返回指定看板、PID和日期范围的逐日结果；M034/M036/M097 读取播放事实，已登记同名指标在通用 bi-v1 READY 时优先展示，否则按状态或旧接口回退规则处理 |
 | POST | `/api/bi/v2/queries/metrics` | 兼容 M016 受控验数与后续正式查询；接受 `metricId + pid + dateRange + grain=day`，返回单 PID 日序列、逐日数据状态、映射版本和验数状态；未验数时只有具备数据源维护权限的维护者可对“已配置且绑定当前权威版本”的映射执行，其他不可用映射均失败关闭 |
 | POST | `/api/bi/v2/queries/dashboards/core-overview` | 核心经营总览 `core-overview/v1` 首屏只读批量契约；接受正式整体或一组 PID、最近共同完整周期或明确日期范围，以及固定 9 项指标的可选子集。当前 `BI_V2_CORE_OVERVIEW_QUERY_ENABLED=false` 且没有真实执行器，因此经过身份校验后返回 503，不提供业务值 |
 

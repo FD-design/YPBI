@@ -27,7 +27,7 @@ import { changeDirection } from "../../components/ui/change-presentation";
 import { ACQUISITION_IDS, DEFAULT_ACQUISITION_FILTERS, DETAIL_METRICS, acquisitionRows, acquisitionRangeLabel, acquisitionDailyCards, acquisitionMetric, fixtureComparison, fixtureSupports, fixtureValue, type AcquisitionFilters } from "./acquisition-preview-model";
 import "./acquisition-preview.css";
 import { AcquisitionVisuals } from "./AcquisitionVisuals";
-import { useLiveDashboard, liveExportMetadata, livePeriodStatus, liveStateLabel } from "../features/dashboards/LiveDashboardContext";
+import { useLiveDashboard, liveExportMetadata, livePeriodStatus, livePointStateLabel } from "../features/dashboards/LiveDashboardContext";
 import { downloadPreviewWorkbook } from "./preview-workbook";
 import { CalculationEvidence } from "../features/dashboards/CalculationEvidence";
 import { ChannelQuality, exportChannelQuality } from "./ChannelQuality";
@@ -123,7 +123,7 @@ function AcquisitionDetailSection({ dimension, filters, comparisonEnabled, mixed
   const exportType=()=>{
     if(!live||!live.canExport||pending||live.controls.dirty||live.state.status!=="success")return;
     const periods=[{label:"当前",result:live.state.data},...(live.comparison?.state.status==="success"&&live.comparison.state.data?[{label:"对比",result:live.comparison.state.data}]:[])];
-    downloadPreviewWorkbook("获客类型",[{name:"数据说明",rows:liveExportMetadata(live)},{name:"获客类型",rows:[["周期","日期","平台","获客类型","新增人数","状态","查询时间","刷新状态"],...periods.flatMap(period=>period.result.data.series.filter(s=>["M008.nature","M008.internal"].includes(s.metric.id)).flatMap(s=>s.points.map(p=>[period.label,p.date,live.query.pid,s.metric.name,p.value,liveStateLabel[p.state],period.result.data.fetchedAt,livePeriodStatus(live,period.label==="对比")])))]}], "pending");
+    downloadPreviewWorkbook("获客类型",[{name:"数据说明",rows:liveExportMetadata(live)},{name:"获客类型",rows:[["周期","日期","平台","获客类型","新增人数","状态","查询时间","刷新状态"],...periods.flatMap(period=>period.result.data.series.filter(s=>["M008.nature","M008.internal"].includes(s.metric.id)).flatMap(s=>s.points.map(p=>[period.label,p.date,live.query.pid,s.metric.name,p.value,livePointStateLabel(p),period.result.data.fetchedAt,livePeriodStatus(live,period.label==="对比")])))]}], "pending");
   };
   const rows = source.filter(row => row.name.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())).sort((a, b) => ((a.values[sortId] ?? -Infinity) - (b.values[sortId] ?? -Infinity)) * (sort.descending ? -1 : 1));
   const pageCount = Math.max(1, Math.ceil(rows.length / 50)), currentPage = Math.min(page, pageCount - 1);
