@@ -131,6 +131,40 @@ describe("bi-v1 通用指标渐进替换", () => {
     const point = (await make("processing").execute(query)).data.series.find(series => series.metric.id === "M016")!.points[0];
     expect(point).toMatchObject({ state: "no_value", sourceStatus: "PROCESSING", value: null, inputs: [{ value: null }] });
   });
+
+  test("核心总览批次中的未就绪脏值不压掉其他 READY 指标", async () => {
+    const metricRow = (metricCode: string, value: number, numerator = value, denominator = 0, unit: "count" | "ratio" = "count") => ({
+      metricCode, businessDate: date, dimensions: { pid: "PH" }, value, numerator, denominator, unit,
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1"
+    });
+    const result = await new DailyDashboardService({ get: async path => {
+      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
+        metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null,
+        rows: [
+          metricRow("M001", 400), metricRow("M003", 120), metricRow("M005", .3, 120, 400, "ratio"),
+          { ...metricRow("M006", 15, 15, 100, "ratio"), dataStatus: "SOURCE_INCOMPLETE", ruleVersion: "" },
+          { ...metricRow("M007", 15, 15, 100, "ratio"), dataStatus: "SOURCE_INCOMPLETE", ruleVersion: "" },
+          metricRow("M016", 11), metricRow("M026", 14), metricRow("M081", 1, 14, 14, "ratio")
+        ]
+      } };
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, loginUserCount: 1, watchUserCount: 1, totalVistCount: 1 })], totalCount: 1 } };
+      if (path.includes("reletionsStatPlus")) return { data: [] };
+      if (path.includes("channelStatByTypeV2")) return { msg: { pageData: [], totalData: [] } };
+      if (path.includes("/bi/v1/playback")) return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows: [] } };
+      if (path.endsWith("pRealDayLine")) return { msg: [] };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 } };
+    } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: "5.2", pid: "PH", dateRange: [date, date] });
+    const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    expect(point("M001")).toMatchObject({ state: "available", value: 400, sourceStatus: "READY" });
+    expect(point("M003")).toMatchObject({ state: "available", value: 120, sourceStatus: "READY" });
+    expect(point("M005")).toMatchObject({ state: "available", value: .3, sourceStatus: "READY" });
+    expect(point("M016")).toMatchObject({ state: "available", value: 11, sourceStatus: "READY" });
+    expect(point("M026")).toMatchObject({ state: "available", value: 14, sourceStatus: "READY" });
+    expect(point("M081")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
+    expect(point("M006")).not.toHaveProperty("sourceStatus");
+    expect(point("M007")).not.toHaveProperty("sourceStatus");
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
 });
 
 describe("多来源真实数据边界",()=>{

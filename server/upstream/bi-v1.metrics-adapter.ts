@@ -48,7 +48,7 @@ export interface BiV1MetricQuery {
 
 export interface BiV1MetricPoint {
   dataStatus: BiV1MetricDataStatus | null;
-  state: "available" | "no_record" | "no_value" | "immature" | "source_failure" | "zero_denominator";
+  state: "available" | "no_record" | "no_value" | "invalid_value" | "immature" | "source_failure" | "zero_denominator";
   value: number | null;
   numerator: number | null;
   denominator: number | null;
@@ -77,6 +77,13 @@ function unavailable(status: BiV1MetricDataStatus | null): BiV1MetricPoint {
   return { dataStatus: status, state, value: null, numerator: null, denominator: null, unit: null };
 }
 
+function invalidMetric(): BiV1MetricPoint {
+  // A malformed metric must not invalidate valid sibling metrics in the same
+  // batch. dataStatus stays null so the daily-dashboard upgrade path can keep
+  // an independently validated legacy value for this metric only.
+  return { dataStatus: null, state: "invalid_value", value: null, numerator: null, denominator: null, unit: null };
+}
+
 function safeInteger(value: number, label: string) {
   if (!Number.isSafeInteger(value)) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${label} 不是安全整数`, 502);
   return value;
@@ -99,22 +106,12 @@ export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, quer
   });
   const message = parseEnvelope(payload);
   const requested = new Set(metricCodes);
-  const unique = new Set<string>();
   for (const row of message.rows) {
     if (!requested.has(row.metricCode) || row.dimensions.pid !== query.pid) {
       throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
     }
     if (row.businessDate && (row.businessDate < query.startDate || row.businessDate > query.endDate)) {
       throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求日期外的数据", 502);
-    }
-    const key = `${row.businessDate ?? ""}\u0000${row.metricCode}\u0000${stableDimensions(row.dimensions)}`;
-    if (unique.has(key)) throw new UpstreamError("BI_V1_VALUE_CONFLICT", "bi-v1 返回了重复维度记录", 502);
-    unique.add(key);
-    if (row.dataStatus === "READY" && row.value === null && !(row.unit === "ratio" && row.denominator === 0)) {
-      throw new UpstreamError("BI_V1_VALUE_CONFLICT", "bi-v1 已就绪记录缺少业务值", 502);
-    }
-    if (row.dataStatus !== "READY" && row.value !== null) {
-      throw new UpstreamError("BI_V1_VALUE_CONFLICT", "bi-v1 未就绪记录不应返回业务值", 502);
     }
   }
   return message;
@@ -128,15 +125,21 @@ export function aggregateBiV1MetricDays(
   const globalStatuses = new Map<BiV1MetricCode, BiV1MetricDataStatus>();
   const rowsByDay = new Map<string, z.infer<typeof metricRowSchema>[]>();
   const unique = new Set<string>();
+  const invalidGlobalMetrics = new Set<BiV1MetricCode>();
+  const invalidMetricDays = new Set<string>();
   for (const row of message.rows) {
     if (!requested.includes(row.metricCode)) continue;
     if (row.dimensions.pid !== query.pid) throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 指标 PID 与请求不一致", 502);
     const uniqueKey = `${row.businessDate ?? ""}\u0000${row.metricCode}\u0000${stableDimensions(row.dimensions)}`;
-    if (unique.has(uniqueKey)) throw new UpstreamError("BI_V1_VALUE_CONFLICT", "bi-v1 返回了重复维度记录", 502);
+    if (unique.has(uniqueKey)) {
+      if (row.businessDate) invalidMetricDays.add(`${row.businessDate}\u0000${row.metricCode}`);
+      else invalidGlobalMetrics.add(row.metricCode);
+      continue;
+    }
     unique.add(uniqueKey);
     if (!row.businessDate) {
       const previous = globalStatuses.get(row.metricCode);
-      if (previous && previous !== row.dataStatus) throw new UpstreamError("BI_V1_VALUE_CONFLICT", "bi-v1 指标范围状态不一致", 502);
+      if (previous && previous !== row.dataStatus) invalidGlobalMetrics.add(row.metricCode);
       globalStatuses.set(row.metricCode, row.dataStatus);
       continue;
     }
@@ -151,37 +154,53 @@ export function aggregateBiV1MetricDays(
     const dayRows = rowsByDay.get(date) ?? [];
     const metrics: BiV1MetricDay["metrics"] = {};
     for (const code of requested) {
+      if (invalidGlobalMetrics.has(code) || invalidMetricDays.has(`${date}\u0000${code}`)) {
+        metrics[code] = invalidMetric();
+        continue;
+      }
       const rows = dayRows.filter((row) => row.metricCode === code);
       if (!rows.length) {
         metrics[code] = unavailable(globalStatuses.get(code) ?? null);
         continue;
       }
       if (rows.length !== 1 || Object.keys(rows[0].dimensions).some((key) => key !== "pid")) {
-        throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${code} 缺少可直接映射的总体行`, 502);
+        metrics[code] = invalidMetric();
+        continue;
       }
       const statuses = new Set(rows.map((row) => row.dataStatus));
       const units = new Set(rows.map((row) => row.unit));
-      if (statuses.size !== 1 || units.size !== 1) throw new UpstreamError("BI_V1_VALUE_CONFLICT", "bi-v1 同一指标状态或单位不一致", 502);
+      if (statuses.size !== 1 || units.size !== 1) {
+        metrics[code] = invalidMetric();
+        continue;
+      }
       const status = rows[0].dataStatus;
       if (status !== "READY") {
+        // Never consume a business value from a non-ready row. Some upstream
+        // versions currently violate that contract; the status remains the
+        // authority while valid sibling metrics continue to work.
         metrics[code] = unavailable(status);
         continue;
       }
-      const unit = rows[0].unit;
-      if (unit === "count") {
-        const value = safeInteger(rows[0].value!, `${code} 数值`);
-        if (rows[0].numerator !== value || rows[0].denominator !== 0) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${code} 计数分子分母不一致`, 502);
-        metrics[code] = { dataStatus: "READY", state: "available", value, numerator: value, denominator: 0, unit };
-        continue;
+      try {
+        const unit = rows[0].unit;
+        if (unit === "count") {
+          const value = safeInteger(rows[0].value!, `${code} 数值`);
+          if (rows[0].numerator !== value || rows[0].denominator !== 0) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${code} 计数分子分母不一致`, 502);
+          metrics[code] = { dataStatus: "READY", state: "available", value, numerator: value, denominator: 0, unit };
+          continue;
+        }
+        const numerator = safeInteger(rows[0].numerator, `${code} 分子`);
+        const denominator = safeInteger(rows[0].denominator, `${code} 分母`);
+        if (denominator === 0 ? rows[0].value !== null : rows[0].value === null || Math.abs(rows[0].value - numerator / denominator) > 1e-12) {
+          throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${code} 比率与分子分母不一致`, 502);
+        }
+        metrics[code] = denominator === 0
+          ? { dataStatus: "READY", state: "zero_denominator", value: null, numerator, denominator, unit }
+          : { dataStatus: "READY", state: "available", value: numerator / denominator, numerator, denominator, unit };
+      } catch (error) {
+        if (!(error instanceof UpstreamError)) throw error;
+        metrics[code] = invalidMetric();
       }
-      const numerator = safeInteger(rows[0].numerator, `${code} 分子`);
-      const denominator = safeInteger(rows[0].denominator, `${code} 分母`);
-      if (denominator === 0 ? rows[0].value !== null : Math.abs(rows[0].value! - numerator / denominator) > 1e-12) {
-        throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${code} 比率与分子分母不一致`, 502);
-      }
-      metrics[code] = denominator === 0
-        ? { dataStatus: "READY", state: "zero_denominator", value: null, numerator, denominator, unit }
-        : { dataStatus: "READY", state: "available", value: numerator / denominator, numerator, denominator, unit };
     }
     days.push({ date, metrics });
   }

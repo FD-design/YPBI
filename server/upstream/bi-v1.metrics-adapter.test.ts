@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { aggregateBiV1MetricDays, queryBiV1Metrics, type BiV1MetricCode } from "./bi-v1.metrics-adapter";
+import { aggregateBiV1MetricDays, queryBiV1Metrics, type BiV1MetricCode, type BiV1MetricDataStatus } from "./bi-v1.metrics-adapter";
 
-const makeRow = (metricCode: BiV1MetricCode, unit: "count" | "ratio", value: number | null, numerator: number, denominator: number, dimensions: Record<string, string> = {}) => ({
+const makeRow = (metricCode: BiV1MetricCode, unit: "count" | "ratio", value: number | null, numerator: number, denominator: number, dimensions: Record<string, string> = {}, dataStatus: BiV1MetricDataStatus = "READY") => ({
   metricCode,
   businessDate: "2026-09-21",
   dimensions: { pid: "PH", ...dimensions },
@@ -9,7 +9,7 @@ const makeRow = (metricCode: BiV1MetricCode, unit: "count" | "ratio", value: num
   numerator,
   denominator,
   unit,
-  dataStatus: "READY" as const,
+  dataStatus,
   metricVersion: "bi-v1" as const,
   ruleVersion: "rule-v1"
 });
@@ -66,10 +66,31 @@ describe("bi-v1 通用指标适配", () => {
     expect(params.metricCodes).toBe("M016");
   });
 
-  test("重复维度、坏计数和比率冲突均失败关闭", () => {
+  test("异常指标按指标隔离，不影响同批正常指标", () => {
     const count = makeRow("M003", "count", 1, 1, 0, { channel: "a" });
-    expect(() => aggregateBiV1MetricDays(message([count, count]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003"] })).toThrow();
-    expect(() => aggregateBiV1MetricDays(message([{ ...count, value: 1.5, numerator: 1.5 }]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003"] })).toThrow();
-    expect(() => aggregateBiV1MetricDays(message([makeRow("M005", "ratio", .5, 1, 3)]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M005"] })).toThrow();
+    const duplicate = aggregateBiV1MetricDays(message([count, count, makeRow("M016", "count", 2, 2, 0)]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003", "M016"] });
+    expect(duplicate[0].metrics.M003).toMatchObject({ state: "invalid_value", dataStatus: null, value: null });
+    expect(duplicate[0].metrics.M016).toMatchObject({ state: "available", value: 2 });
+
+    const badValues = aggregateBiV1MetricDays(message([
+      { ...makeRow("M003", "count", 1, 1, 0), value: 1.5, numerator: 1.5 },
+      makeRow("M005", "ratio", .5, 1, 3),
+      makeRow("M016", "count", 2, 2, 0)
+    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003", "M005", "M016"] });
+    expect(badValues[0].metrics.M003?.state).toBe("invalid_value");
+    expect(badValues[0].metrics.M005?.state).toBe("invalid_value");
+    expect(badValues[0].metrics.M016).toMatchObject({ state: "available", value: 2 });
+  });
+
+  test("未就绪指标携带错误业务值时只忽略该值，正常兄弟指标继续返回", async () => {
+    const payload = message([
+      makeRow("M001", "count", 120, 120, 0),
+      makeRow("M006", "ratio", 15, 15, 100, {}, "SOURCE_INCOMPLETE")
+    ]);
+    const client = { get: async () => ({ code: 200, msg: payload }) };
+    const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M001", "M006"] as const };
+    const result = aggregateBiV1MetricDays(await queryBiV1Metrics(client as never, query), query);
+    expect(result[0].metrics.M001).toMatchObject({ state: "available", value: 120, dataStatus: "READY" });
+    expect(result[0].metrics.M006).toMatchObject({ state: "no_value", value: null, dataStatus: "SOURCE_INCOMPLETE" });
   });
 });
