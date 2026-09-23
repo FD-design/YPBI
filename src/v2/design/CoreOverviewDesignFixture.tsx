@@ -362,10 +362,10 @@ function DetailComparisonLines({ current, baseline, kind, unit, label, date, onE
   </span>;
 }
 
-function DetailSnapshotDialog({ detail, date, onClose }: { detail: SelectedDetail; date: string; onClose: () => void }) {
+function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: SelectedDetail; date: string; live: boolean; onClose: () => void }) {
   const value = detail.row.values[detail.columnIndex];
   return <MetricReadingDialog title={detail.column.metric.name} onClose={onClose} content={<div className="core-review__snapshot-content">
-      <p>{detail.row.name} · {date} · {value.evidence ? "待验数" : "演示数据"}</p>
+      <p>{detail.row.name} · {date} · {value.evidence ? "待验数" : live ? "待接口支持" : "演示数据"}</p>
       <MetricSummary title="当日结果" value={operatingValueLabel(value, detail.column)} />
       {detail.column.sourceLabel && <p>日报原字段：{detail.column.sourceLabel}（{detail.column.sourceColumn} 列） · 单位：{detail.column.unit}</p>}
       {detail.column.periodDays && <p>注册日 {date} · D{detail.column.periodDays} 目标日 {retentionTargetDate(detail.column, date)}。目标日完整观察结束后方可读取留存结果。</p>}
@@ -396,7 +396,7 @@ function CoreOverviewDesignFixture() {
   const [activeChain, setActiveChain] = useState<ChainKey>("content");
   const [sort, setSort] = useState({ columnIndex: 0, direction: "desc" as "asc" | "desc" });
   const [detailComparison, setDetailComparison] = useState<DetailComparisonMode>("none");
-  const [detailPlatform, setDetailPlatform] = useState("all");
+  const [detailPlatform, setDetailPlatform] = useState(live?.query.pid ?? "all");
   const [adAudience,setAdAudience]=useState("all");
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [locatedColumn, setLocatedColumn] = useState("");
@@ -409,9 +409,15 @@ function CoreOverviewDesignFixture() {
     const fixedWidth = [...scroller.querySelectorAll("thead th")].slice(0, 2).reduce((total, th) => total + th.getBoundingClientRect().width, 0);
     scroller.scrollTo({ left: Math.max(0, scroller.scrollLeft + header.getBoundingClientRect().left - scroller.getBoundingClientRect().left - fixedWidth - 1) });
   };
+  const [selectedDetail, setSelectedDetail] = useState<SelectedDetail | null>(null);
   const [breakdownId, setBreakdownId] = useState<string | null>(null);
   useEffect(() => setBreakdownId(null), [detailPlatform, appliedFilters.end]);
-  const [selectedDetail, setSelectedDetail] = useState<SelectedDetail | null>(null);
+  useEffect(() => {
+    if (live?.query.pid) {
+      setDetailPlatform(live.query.pid);
+      setSelectedDetail(null);
+    }
+  }, [live?.query.pid]);
   const metrics = useMemo(() => coreDailyCards(mode, appliedFilters, appliedFilters.comparison !== "none").map(model => recovered.includes(model.metric.id) ? coreDailyCards("normal", appliedFilters, appliedFilters.comparison !== "none").find(item => item.metric.id === model.metric.id)! : model), [appliedFilters, mode, recovered]);
   const hasPendingFilters = !sameFilters(filters, appliedFilters);
   const detailDate = live?.query.dateRange[1] ?? appliedFilters.end;
@@ -481,15 +487,22 @@ function CoreOverviewDesignFixture() {
 
   const renderMetricCards = (models: typeof metrics, variant: "compact" | "value" = "compact") => models.map((model) => {
     const metricId = model.metric.id;
-    const detailConnected = variant === "value" && live && detailPlatform !== "all" && live.metricIds.includes(OPERATING_LIVE_IDS[metricId + ":overall"]);
-    return <DataOriginProvider key={metricId} value={detailConnected ? "pending" : "demo"}><DashboardMetricCard
+    const liveDetail = Boolean(live && variant === "value");
+    const detailConnected = Boolean(variant === "value" && live && detailPlatform !== "all" && live.metricIds.includes(OPERATING_LIVE_IDS[metricId + ":overall"]));
+    const origin = liveDetail ? detailConnected ? "pending" : null : "demo";
+    const sourceMessage = detailConnected
+      ? "当前为同一平台、数据日的真实日汇总，待验数。计算输入见同口径数据表。"
+      : liveDetail
+        ? "当前真实数据模式下，该范围暂未接入或不支持；页面不会使用演示数据替代。"
+        : "当前为本地演示数据。真实指标查询与分析跳转尚未接入。";
+    return <DataOriginProvider key={metricId} value={origin}><DashboardMetricCard
       key={metricId}
       model={model}
       variant={variant}
       onOpenBreakdown={variant === "value" && OPERATING_BREAKDOWNS[metricId] ? () => setBreakdownId(metricId) : undefined}
       breakdownDimensions={operatingDimensionLabel(metricId)}
       analysisHref={`/analysis/metrics/${metricId}`}
-      onOpenAnalysis={() => setReading({ title: model.metric.name, content: <><p>{model.metric.definitionLabel}</p><p>{detailConnected ? "当前为同一平台、数据日的真实日汇总，待验数。计算输入见同口径数据表。" : "当前为本地演示数据。真实指标查询与分析跳转尚未接入。"}</p></> })}
+      onOpenAnalysis={() => setReading({ title: model.metric.name, content: <><p>{model.metric.definitionLabel}</p><p>{sourceMessage}</p></> })}
       onOpenDefinition={() => setReading({ title: `${model.metric.name} · 指标说明`, content: <><p>{model.metric.definitionLabel}</p>{model.result.status==="available"&&model.result.calculation&&<CalculationEvidence basis={model.result.calculation}/>}</> })}
       onOpenComparison={() => setReading({ title: `${model.metric.name} · 周期对比`, content: model.result.status === "available" && model.result.comparison
         ? <ComparisonDetails comparison={model.result.comparison} onEmphasis={false} />
@@ -501,10 +514,10 @@ function CoreOverviewDesignFixture() {
 
   const exportSheets = (detailOnly = false): WorkbookSheet[] => {
     if (live && detailOnly) return [
-      { name: "00_导出说明", rows: [["数据日", detailDate], ["平台", detailScopeLabel], ["来源", "逐字段区分待验数与演示数据"], ["完整性", "未知"], ["数据水位", "未返回"], ["金额", "真实金额采用服务端返回单位，保留接口数值；各列单独标明单位，不跨PID汇总"], ["大盘摘要", detailPlatform === "all" ? "独立演示结果，不相加平台人数" : "同一平台日值"]] },
+      { name: "00_导出说明", rows: [["数据日", detailDate], ["平台", detailScopeLabel], ["来源", "逐字段区分待验数与待接口支持；不含演示数值"], ["完整性", "未知"], ["数据水位", "未返回"], ["金额", "真实金额采用服务端返回单位，保留接口数值；各列单独标明单位，不跨PID汇总"], ["大盘摘要", detailPlatform === "all" ? "上游未提供独立去重结果，数值留空" : "同一平台日值"]] },
       { name: "01_经营明细", rows: operatingLiveExportRows(sortedRows, detailColumns, detailDate) },
       { name: "02_数值摘要", rows: metricRows(detailModels, id => detailColumns.find(c => c.metric.id === id && !c.slice)?.unit ?? "人") },
-      { name: "03_字段说明", rows: [["指标", "单位", "数据来源", "定义"], ...detailColumns.map(column => [column.metric.name, column.unit, live.metricIds.includes(OPERATING_LIVE_IDS[detailColumnKey(column)]) ? "待验数" : "演示数据", column.metric.definition])] },
+      { name: "03_字段说明", rows: [["指标", "单位", "数据来源", "定义"], ...detailColumns.map(column => [column.metric.name, column.unit, live.metricIds.includes(OPERATING_LIVE_IDS[detailColumnKey(column)]) ? "待验数" : "待接口支持", column.metric.definition])] },
       { name: "04_计算输入", rows: operatingLiveCalculationRows(sortedRows, detailColumns) }
     ];
     const wideRows = operatingDetailExportRows(sortedRows, appliedFilters.end);
@@ -651,7 +664,7 @@ function CoreOverviewDesignFixture() {
           <MenuSelect label="变化参考" ariaLabel="经营明细变化参考" density="compact" value={detailComparison}
             groups={[{ label: "变化参考", options: [{ value: "none", label: "不显示" }, { value: "previousDay", label: "较昨日" }, { value: "previousWeek", label: "较上周同日" }] }]}
             onChange={(value) => setDetailComparison(value as DetailComparisonMode)} />
-          <PreviewExportControl name="经营明细" dataOrigin={live ? "mixed" : "demo"} scope="当前局部平台范围的全部明细列，以单张宽表导出；保留数值精度、逐列数据状态与计算输入。" context={`数据日 ${detailDate} · ${detailScopeLabel}`} pending={hasPendingFilters || Boolean(live && (!live.canExport || live.controls.dirty))} onDownloadPreview={() => { if (live && (!live.canExport || live.controls.dirty)) return; downloadPreviewWorkbook("经营明细", exportSheets(true), live ? "mixed" : "demo"); }} />
+          <PreviewExportControl name="经营明细" dataOrigin={live ? "live" : "demo"} scope="当前局部平台范围的全部明细列，以单张宽表导出；保留数值精度、逐列数据状态与计算输入。" context={`数据日 ${detailDate} · ${detailScopeLabel}`} pending={hasPendingFilters || Boolean(live && (!live.canExport || live.controls.dirty))} onDownloadPreview={() => { if (live && (!live.canExport || live.controls.dirty)) return; downloadPreviewWorkbook("经营明细", exportSheets(true), live ? "pending" : "demo"); }} />
         </div>
       </header>
       <div id="operating-summary-cards" className="core-review__detail-summary" role="group" aria-label="经营明细纯数值卡">
@@ -679,7 +692,7 @@ function CoreOverviewDesignFixture() {
               return <th key={detailColumnKey(column)} data-column-key={detailColumnKey(column)} scope="col" className={`is-number${column.slice ? " is-slice" : ""}${locatedColumn === detailColumnKey(column) ? " is-located" : ""}`} aria-sort={active ? (sort.direction === "desc" ? "descending" : "ascending") : "none"}>
                 <div className="core-review__comparison-heading">
                   <MetricDefinitionLabel metric={column.metric} onOpen={openMetricDefinition} dimensionLabel={column.slice} />
-                  {live && <DataOriginProvider value={live.metricIds.includes(OPERATING_LIVE_IDS[detailColumnKey(column)]) ? "pending" : "demo"}><DataOriginBadge /></DataOriginProvider>}
+                  {live && <DataOriginProvider value={live.metricIds.includes(OPERATING_LIVE_IDS[detailColumnKey(column)]) ? "pending" : null}><DataOriginBadge /></DataOriginProvider>}
                   {unit && <small className="metric-heading-unit">（{unit}）</small>}
                   {!column.pendingReason && <button
                     type="button"
@@ -714,12 +727,12 @@ function CoreOverviewDesignFixture() {
         </table>
       </div>
       <footer>
-        <span><CheckCircle2 aria-hidden="true" />{sortedRows.length} 个平台 · 73 个业务列 · {live ? "逐列区分待验数与演示数据" : "合成演示数据"} · 导出保留状态</span>
+        <span><CheckCircle2 aria-hidden="true" />{sortedRows.length} 个平台 · 73 个业务列 · {live ? "逐列展示待验数与接入状态" : "合成演示数据"} · 导出保留状态</span>
 
       </footer>
     </section>
 
-    {selectedDetail && <DetailSnapshotDialog detail={selectedDetail} date={detailDate} onClose={() => {
+    {selectedDetail && <DetailSnapshotDialog detail={selectedDetail} date={detailDate} live={Boolean(live)} onClose={() => {
       const trigger = selectedDetail.trigger;
       setSelectedDetail(null);
       window.requestAnimationFrame(() => restoreReadingFocus(trigger));

@@ -429,22 +429,30 @@ test("独立注册日期读取相应批次与对比期，不覆盖主指标日�
   await expect(retention.locator("tbody")).not.toContainText("2026-09-08");
 });
 
-test("真实和混合下载使用正确文件来源，经营明细包含全部计算输入", async({page})=>{
+test("真实经营明细不混入演示来源，下载保留全部计算输入", async({page})=>{
   await fixtures(page,{export:true});
   await page.goto(url());
   const local=page.locator(".core-review__detail");
+  await expect(local.getByRole("button",{name:"经营明细平台：Pornhub",exact:true})).toBeVisible();
+  await expect(local.locator(".dashboard-metric-card").first().locator(".dashboard-metric-card__value")).toContainText("108");
+  await expect(local.locator(".data-origin-badge--demo")).toHaveCount(0);
+  await local.getByRole("button",{name:"经营明细平台：Pornhub",exact:true}).click();
+  await page.getByRole("option",{name:"全部平台",exact:true}).click();
+  await expect(local).toContainText("暂不支持全部平台汇总");
+  await expect(local.locator(".data-origin-badge--demo")).toHaveCount(0);
   await local.getByRole("button",{name:"经营明细平台：全部平台",exact:true}).click();
   await page.getByRole("option",{name:"Pornhub",exact:true}).click();
-  await expect(local.locator(".dashboard-metric-card").first().locator(".dashboard-metric-card__value")).toContainText("108");
   await local.getByRole("button",{name:"导出经营明细",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"导出经营明细",exact:true});
-  await expect(dialog).toContainText("真实待验数与演示数据");
+  await expect(dialog).toContainText("真实后台结果，标记待验数");
   const event=page.waitForEvent("download");
   await dialog.getByRole("button",{name:"下载 XLSX",exact:true}).click();
   const file=await event;
-  expect(file.suggestedFilename()).toBe("经营明细-来源分列.xlsx");
+  expect(file.suggestedFilename()).toBe("经营明细-待验数.xlsx");
   const xml=readFileSync((await file.path())!,"utf8");
   for(const text of ["04_计算输入","输入指标","输入值","M081:overall","当日","昨日","上周同日","2026-09-01","108","88"])expect(xml).toContain(text);
+  expect(xml).toContain("待接口支持");
+  expect(xml).not.toContain("演示数据");
   expect(xml).not.toContain("小红书");
   await page.getByRole("button",{name:"导出核心经营总览",exact:true}).click();
   const realEvent=page.waitForEvent("download");
