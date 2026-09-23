@@ -136,7 +136,7 @@ function SourceConnectionGuide() {
       <li><b>验证并保存</b><span>先验证候选凭证，保存成功后由 BI 服务端自动用于该站点查询。</span></li>
       <li><b>核对指标接入</b><span>逐项核对字段、口径与数据范围。<ProductLink href="/data/metrics">查看指标接入状态</ProductLink></span></li>
     </ol>
-    <p>连接通过不等于所有指标可用；开发演示页保持演示数据，未接入的正式指标显示待接入。</p>
+    <p>连接通过不等于所有指标可用；切换数据环境后，已完成映射的页面读取对应后台数据，未接入指标明确显示待接入，不使用演示值补齐。</p>
   </section>;
 }
 
