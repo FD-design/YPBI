@@ -32,10 +32,11 @@ describe("bi-v1 通用指标适配", () => {
   });
 
   test("未知维度行不在 BI 内擅自求和", () => {
-    expect(() => aggregateBiV1MetricDays(message([
+    const result = aggregateBiV1MetricDays(message([
       makeRow("M003", "count", 12, 12, 0, { channel: "a" }),
       makeRow("M003", "count", 8, 8, 0, { channel: "b" })
-    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003"] })).toThrow();
+    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003"] });
+    expect(result[0].metrics.M003).toMatchObject({ state: "invalid_value", dataStatus: null, value: null });
   });
 
   test("SOURCE_INCOMPLETE 和缺日保持状态，不补0", () => {
