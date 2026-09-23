@@ -4,6 +4,7 @@ import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../../con
 import { liveMetricModel, liveDailyReferenceRows, liveValue, type LiveDashboardReading } from "./LiveDashboardContext";
 import type { DashboardMetricCardModel } from "./dashboard-metric-card-model";
 import { operatingLiveRows,operatingLiveSummary,operatingLiveCalculationRows,operatingLiveColumns,OPERATING_LIVE_IDS } from "../../design/operating-live-model";
+import { DETAIL_COLUMNS } from "../../design/operating-detail-columns";
 import { operatingDetailBreakdown } from "../../design/operating-detail-snapshot";
 import { connectedCohortRows } from "../../design/ConnectedCohorts";
 import { connectedPaymentPoints, connectedPaymentUnit } from "../../design/connected-payment-data";
