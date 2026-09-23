@@ -150,6 +150,7 @@ test("临时测试 Token 只创建当前会话并可明确切回正式数据", a
   await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
 
   const preview = page.getByRole("region", { name: "临时测试数据" });
+  await expect(preview).toContainText("24 小时到期或退出后删除");
   const input = preview.getByLabel("测试 Token");
   await input.fill("fake-preview-token-0001");
   await preview.getByRole("button", { name: "验证并进入测试数据" }).click();

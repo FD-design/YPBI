@@ -3,7 +3,7 @@ import type { MaintenanceSecurityContext } from "./maintenance-auth";
 import type { UpstreamRequestProfile } from "../upstream/request-profile";
 
 const PREVIEW_COOKIE = "ypbi_data_preview";
-const SESSION_TTL_MS = 30 * 60_000;
+const SESSION_TTL_MS = 24 * 60 * 60_000;
 const MAX_PREVIEW_SESSIONS = 500;
 
 interface PreviewSession {

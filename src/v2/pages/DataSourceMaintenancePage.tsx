@@ -453,7 +453,7 @@ export function DataSourceMaintenancePage() {
           <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={deactivatePreview} disabled={busy}>{operation.kind === "preview_deactivate" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <LogOut aria-hidden="true" />}{operation.kind === "preview_deactivate" ? "正在退出" : "结束测试会话"}</button>
         </div> : <div className="v2-token-editor">
           <label htmlFor="preview-token"><span>测试 Token</span><input id="preview-token" type="password" autoComplete="off" data-1p-ignore="true" data-lpignore="true" autoCapitalize="none" spellCheck={false} minLength={16} maxLength={4096} placeholder="粘贴测试后台 Token" value={previewToken} onChange={(event) => { setPreviewToken(event.target.value); setPreviewNotice({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" }); }} disabled={busy} /></label>
-          <small><EyeOff aria-hidden="true" />验证通过后原文只保存在服务端内存，30 分钟到期或退出后删除。</small>
+          <small><EyeOff aria-hidden="true" />验证通过后原文只保存在服务端内存，24 小时到期或退出后删除。</small>
           <div className="v2-preview-source__actions"><button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={activatePreview} disabled={busy || previewToken.trim().length < 16 || previewToken.trim().length > 4096}>{operation.kind === "preview_activate" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <TestTubeDiagonal aria-hidden="true" />}{operation.kind === "preview_activate" ? "正在验证" : "验证并进入测试数据"}</button></div>
         </div>}
       </>}

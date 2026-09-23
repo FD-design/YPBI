@@ -35,6 +35,8 @@ describe("DataPreviewSessions", () => {
       expect(active.profile).toMatchObject({ environment: "test", baseUrl: "https://test.example.com", userName: "test-user", token: "candidate-test-token" });
       expect(active.profile.cachePartition).not.toContain("candidate-test-token");
     }
+    expect(created.expiresAt).toBe(1_000 + 24 * 60 * 60_000);
+    expect(sessions.sessionCookie(created.sessionId, true)).toContain("Max-Age=86400");
     expect(sessions.sessionCookie(created.sessionId, true)).not.toContain("candidate-test-token");
   });
 
@@ -60,7 +62,9 @@ describe("DataPreviewSessions", () => {
     const cookie = cookiePair(sessions.sessionCookie(created.sessionId, false));
 
     expect(sessions.resolve({ ip: "127.0.0.1", context, browserSessionId: "ordinary-session-1", cookieHeader: `${cookie}; ${cookie}` }).status).toBe("missing");
-    now += 30 * 60_000 + 1;
+    now += 24 * 60 * 60_000 - 1;
+    expect(sessions.resolve({ ip: "127.0.0.1", context, browserSessionId: "ordinary-session-1", cookieHeader: cookie }).status).toBe("active");
+    now += 2;
     expect(sessions.resolve({ ip: "127.0.0.1", context, browserSessionId: "ordinary-session-1", cookieHeader: cookie }).status).toBe("expired");
 
     const second = createSession(sessions);

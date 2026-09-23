@@ -147,7 +147,7 @@
 | POST | `/api/bi/admin/data-sources/test` | 使用当前或候选 Token 验证连接，不保存候选值 |
 | PUT | `/api/bi/admin/data-sources/token` | 服务端先验证候选 Token，再原子替换运行凭据 |
 | GET | `/api/bi/admin/data-preview/status` | 返回临时测试数据功能和当前会话状态，不返回 Token |
-| POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的30分钟内存会话 |
+| POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的24小时内存会话 |
 | POST | `/api/bi/admin/data-preview/deactivate` | 删除当前服务端测试会话并清除预览 Cookie |
 
 候选验证失败不覆盖旧凭据。凭据文件使用 `0600`、独立临时文件和原子替换；两站并发更新在服务端串行化，成功后清上游缓存。当前探针只证明从指定站点目录中选出的首个启用 PID 与 `pDaySum` 可用，不等于该站全部 PID、接口和指标完成验数。
