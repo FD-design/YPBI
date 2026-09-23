@@ -3,7 +3,7 @@ import { DailyDashboardService } from "../../../../server/v2/daily-dashboard.ser
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../../contracts/daily-dashboard";
 import { liveMetricModel, liveDailyReferenceRows, liveValue, type LiveDashboardReading } from "./LiveDashboardContext";
 import type { DashboardMetricCardModel } from "./dashboard-metric-card-model";
-import { operatingLiveRows,operatingLiveSummary,operatingLiveCalculationRows,operatingLiveColumns,OPERATING_LIVE_IDS } from "../../design/operating-live-model";
+import { operatingLiveRows,operatingLiveSummary,operatingLiveCalculationRows,operatingLiveColumns,operatingLiveExportRows,OPERATING_LIVE_IDS } from "../../design/operating-live-model";
 import { DETAIL_COLUMNS } from "../../design/operating-detail-columns";
 import { operatingDetailBreakdown } from "../../design/operating-detail-snapshot";
 import { connectedCohortRows } from "../../design/ConnectedCohorts";
