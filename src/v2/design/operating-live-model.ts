@@ -8,14 +8,15 @@ import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
-  "M036:overall":"M036",
+  "M097:overall":"M097", "M034:overall":"M034", "M103:overall":"M103", "M036:overall":"M036",
   "M026:老用户":"M026.old", "M081:老用户":"M081.old",
   "M112:overall":"M112", "M060:overall":"M060", "M114:overall":"M114",
+  "M084:overall":"M084", "M086:overall":"M086", "M113:overall":"M113", "M090:overall":"M090",
   "M112:支付宝":"M112.alipay", "M060:支付宝":"M060.alipay", "M114:支付宝":"M114.alipay",
   "M112:微信":"M112.wechat", "M060:微信":"M060.wechat", "M114:微信":"M114.wechat",
-  "M003:overall":"M003", "M005:overall":"M005", "M006:overall":"M006", "M007:overall":"M007",
+  "M002:overall":"M002", "M003:overall":"M003", "M095:overall":"M095", "M005:overall":"M005", "M099:overall":"M099", "M006:overall":"M006", "M007:overall":"M007",
   "M008:自然新增":"M008.nature", "M008:内部导量":"M008.internal", "M058:自然新增":"M058.nature", "M058:内部导量":"M058.internal",
-  "M020:overall":"M020", "M021:overall":"M021", "M022:overall":"M022", "M115:overall:D1":"M115.d1", "M115:overall:D3":"M115.d3", "M115:overall:D7":"M115.d7",
+  "M020:overall":"M020", "M021:overall":"M021", "M022:overall":"M022", "M023:overall":"M023", "M115:overall:D1":"M115.d1", "M115:overall:D3":"M115.d3", "M115:overall:D7":"M115.d7", "M115:overall:D30":"M115.d30",
   "M016:overall":"M016", "M016:Android":"M016.android", "M016:iOS":"M016.ios", "M016:老用户":"M016.old",
   "display:M016:overall":"display:M016", "M008:overall":"M008", "M008:Android":"M008.android", "M008:iOS":"M008.ios", "display:M008:overall":"display:M008",
   "M026:overall":"M026", "M026:Android":"M026.android", "M026:iOS":"M026.ios", "M026:新用户":"M026.new",

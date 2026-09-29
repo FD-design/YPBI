@@ -25,10 +25,12 @@ describe("bi-v1 通用指标适配", () => {
   test("只消费可直接映射的总体计数与同批比率", () => {
     const result = aggregateBiV1MetricDays(message([
       makeRow("M003", "count", 20, 20, 0),
-      makeRow("M005", "ratio", 20 / 60, 20, 60)
-    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003", "M005"] });
+      makeRow("M005", "ratio", 20 / 60, 20, 60),
+      makeRow("M103", "ratio", 3 / 5, 3, 5)
+    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003", "M005", "M103"] });
     expect(result[0].metrics.M003).toMatchObject({ state: "available", value: 20, numerator: 20, denominator: 0, unit: "count" });
     expect(result[0].metrics.M005).toMatchObject({ state: "available", value: 20 / 60, numerator: 20, denominator: 60, unit: "ratio" });
+    expect(result[0].metrics.M103).toMatchObject({ state: "available", value: 3 / 5, numerator: 3, denominator: 5, unit: "ratio" });
   });
 
   test("未知维度行不在 BI 内擅自求和", () => {

@@ -105,8 +105,9 @@ test("完整图表体验复用纯数值变体并保留详细趋势、零值与�
 test("纯数值卡五类拆解和说明独立，详情关闭返回入口且宽表完整", async ({ page }) => {
   await page.goto(target);
   const local = section(page);
-  await expect(local.locator('thead th')).toHaveCount(77);
+  await expect(local.locator('thead th')).toHaveCount(95);
   const headers = await local.locator('thead th').allTextContents();
+  expect(headers).not.toEqual(expect.arrayContaining(['模式', '推广状态']));
   for (const name of ['日活跃用户数', '新增用户数', '观影用户数', '活跃用户观影率', '注册用户D1留存率']) {
     const trigger = local.getByRole('button', { name: new RegExp(`^${name}，按`) });
     await trigger.click();
@@ -166,7 +167,7 @@ test("摘要展开收起、新增拆解与搜索定位不裁剪宽表", async ({
   const scroller=await local.locator('.core-review__comparison-scroll').boundingBox();
   expect(position.x).toBeGreaterThanOrEqual(scroller.x + 215);
   expect(position.x + position.width).toBeLessThanOrEqual(scroller.x + scroller.width);
-  await expect(local.locator('thead th')).toHaveCount(77);
+  await expect(local.locator('thead th')).toHaveCount(95);
   await local.getByRole('button',{name:'收起',exact:true}).click();
   await expect(local.locator('.dashboard-metric-card.is-value')).toHaveCount(6);
 });

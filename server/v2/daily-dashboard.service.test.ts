@@ -5,7 +5,7 @@ import { loadEnv } from "../config/env";
 import type { IdentityResolution } from "../identity/identity-provider";
 import { UpstreamError } from "../upstream/client";
 import { currentUpstreamRequestProfile } from "../upstream/request-profile";
-import { DailyDashboardService, dailyDashboardCatalog, dailyDashboardMatchesMapping, type DailyDashboardExecutor } from "./daily-dashboard.service";
+import { DailyDashboardService, dailyDashboardCatalog, dailyDashboardMatchesMapping, dailyDashboardProjectionDocumentation, type DailyDashboardExecutor } from "./daily-dashboard.service";
 import { v2BiPlugin } from "./plugin";
 
 const query = { boardId: "5.2", pid: "PH", dateRange: ["2026-09-05", "2026-09-06"] as [string, string] };
@@ -141,10 +141,13 @@ describe("bi-v1 通用指标渐进替换", () => {
       if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
         metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null,
         rows: [
-          metricRow("M001", 400), metricRow("M003", 120), metricRow("M005", .3, 120, 400, "ratio"),
+          metricRow("M001", 400), metricRow("M002", 150), metricRow("M003", 120), metricRow("M095", 60),
+          metricRow("M005", .3, 120, 400, "ratio"), metricRow("M099", .4, 60, 150, "ratio"),
           { ...metricRow("M006", 15, 15, 100, "ratio"), dataStatus: "SOURCE_INCOMPLETE", ruleVersion: "" },
           { ...metricRow("M007", 15, 15, 100, "ratio"), dataStatus: "SOURCE_INCOMPLETE", ruleVersion: "" },
-          metricRow("M016", 11), metricRow("M026", 14), metricRow("M081", 1, 14, 14, "ratio")
+          metricRow("M016", 11), metricRow("M026", 14), metricRow("M081", 1, 14, 14, "ratio"), metricRow("M103", .5, 5, 10, "ratio"),
+          metricRow("M020", .8, 8, 10, "ratio"), metricRow("M021", .7, 7, 10, "ratio"),
+          metricRow("M022", .6, 6, 10, "ratio"), metricRow("M023", .5, 5, 10, "ratio")
         ]
       } };
       if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, loginUserCount: 1, watchUserCount: 1, totalVistCount: 1 })], totalCount: 1 } };
@@ -156,14 +159,57 @@ describe("bi-v1 通用指标渐进替换", () => {
     } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: "5.2", pid: "PH", dateRange: [date, date] });
     const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
     expect(point("M001")).toMatchObject({ state: "available", value: 400, sourceStatus: "READY" });
+    expect(point("M002")).toMatchObject({ state: "available", value: 150, sourceStatus: "READY" });
     expect(point("M003")).toMatchObject({ state: "available", value: 120, sourceStatus: "READY" });
+    expect(point("M095")).toMatchObject({ state: "available", value: 60, sourceStatus: "READY" });
     expect(point("M005")).toMatchObject({ state: "available", value: .3, sourceStatus: "READY" });
+    expect(point("M099")).toMatchObject({ state: "available", value: .4, sourceStatus: "READY" });
     expect(point("M016")).toMatchObject({ state: "available", value: 11, sourceStatus: "READY" });
     expect(point("M026")).toMatchObject({ state: "available", value: 14, sourceStatus: "READY" });
     expect(point("M081")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
-    expect(point("M006")).not.toHaveProperty("sourceStatus");
-    expect(point("M007")).not.toHaveProperty("sourceStatus");
+    expect(point("M103")).toMatchObject({ state: "available", value: .5, sourceStatus: "READY" });
+    expect(point("M115.d1")).toMatchObject({ state: "available", value: 8, sourceStatus: "READY" });
+    expect(point("M115.d3")).toMatchObject({ state: "available", value: 7, sourceStatus: "READY" });
+    expect(point("M115.d7")).toMatchObject({ state: "available", value: 6, sourceStatus: "READY" });
+    expect(point("M115.d30")).toMatchObject({ state: "available", value: 5, sourceStatus: "READY" });
+    expect(point("M006")).toMatchObject({ state: "no_value", value: null, sourceStatus: "SOURCE_INCOMPLETE" });
+    expect(point("M007")).toMatchObject({ state: "no_value", value: null, sourceStatus: "SOURCE_INCOMPLETE" });
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("支付首批新指标直接呈现 bi-v1 状态，不回退旧字段或伪造0", async () => {
+    const rows = [
+      { metricCode: "M113", businessDate: date, dimensions: { pid: "PH" }, value: 3, numerator: 3, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "order-fetch-user-v1" },
+      { metricCode: "M084", dimensions: { pid: "PH" }, value: null, numerator: 0, denominator: 0, unit: "count", dataStatus: "PROCESSING", metricVersion: "bi-v1", ruleVersion: "" },
+      { metricCode: "M086", dimensions: { pid: "PH" }, value: null, numerator: 0, denominator: 0, unit: "count", dataStatus: "SOURCE_INCOMPLETE", metricVersion: "bi-v1", ruleVersion: "" },
+      { metricCode: "M090", dimensions: { pid: "PH" }, value: null, numerator: 0, denominator: 0, unit: "ratio", dataStatus: "NOT_MATURE", metricVersion: "bi-v1", ruleVersion: "payment-credit-v1" }
+    ];
+    const result = await new DailyDashboardService({ get: async path => {
+      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows } };
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, orderFetchUserCount: 999, paymentSubmitCount: 999, creditedOrderCount: 999 })], totalCount: 1 } };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: "5.11", pid: "PH", dateRange: [date, date] });
+    const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    expect(point("M113")).toMatchObject({ state: "available", sourceStatus: "READY", value: 3, inputs: [{ key: "orderFetchUserCount", value: 3 }] });
+    expect(point("M084")).toMatchObject({ state: "no_value", sourceStatus: "PROCESSING", value: null });
+    expect(point("M086")).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null });
+    expect(point("M090")).toMatchObject({ state: "immature", sourceStatus: "NOT_MATURE", value: null });
+    const paymentBoard = dailyDashboardCatalog(true).data.items.find(item => item.id === "5.11")!;
+    expect(paymentBoard.metricIds).toEqual(expect.arrayContaining(["M084", "M086", "M090", "M113"]));
+    expect(paymentBoard.pendingMetricNames).not.toContain("拉单人数");
+    expect(dailyDashboardProjectionDocumentation().find(item => item.id === "M084")?.sourceApi).toBe("/api/admin/bi/v1/metrics");
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("支付首批新指标接口失败时显示来源失败，不读取旧接口同名脏字段", async () => {
+    const result = await new DailyDashboardService({ get: async path => {
+      if (path === "/api/admin/bi/v1/metrics") throw new UpstreamError("UPSTREAM_TIMEOUT", "timeout", 504);
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, orderFetchUserCount: 999, paymentSubmitCount: 999, creditedOrderCount: 999 })], totalCount: 1 } };
+      return { msg: { pageData: [], totalData: [], totalCount: 0, orderFetchUserCount: 999 }, data: [] };
+    } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: "5.11", pid: "PH", dateRange: [date, date] });
+    for (const id of ["M084", "M086", "M090", "M113"]) {
+      expect(result.data.series.find(series => series.metric.id === id)!.points[0]).toMatchObject({ state: "source_failure", value: null });
+    }
   });
 });
 

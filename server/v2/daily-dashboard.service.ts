@@ -30,9 +30,13 @@ const baseMappings = {
   M075: { fields: ["signInRate.raw.signed"], inputIds: ["M075"], inputNames: ["当日签到人数"], unit: "人", checkin: true },
   "M026.old": {referenceMetricId:"M026",name:"观影用户数（老用户）",fields:["oldUserWatchUserCount"],inputIds:["M026"],inputNames:["老用户观影人数"],unit:"人",channel:true},
   "M081.old": {referenceMetricId:"M081",name:"活跃用户观影率（老用户）",fields:["oldUserWatchUserCount","oldUserLoginUserCount"],inputIds:["M026","M016"],inputNames:["老用户观影人数","老用户活跃人数"],unit:"%",channel:true},
-  "M112": {"referenceMetricId":"M112","name":"拉单次数","fields":["totalAllCount"],"inputIds":["M112"],"inputNames":["拉单次数"],"unit":"次","payment":true,"biV1Metric":"M112"},
-  "M060": {"referenceMetricId":"M060","name":"充值成功次数","fields":["totalSurCount"],"inputIds":["M060"],"inputNames":["充值成功次数"],"unit":"次","payment":true,"biV1Metric":"M060"},
-  "M114": {"referenceMetricId":"M114","name":"充值成功率","fields":["totalSurCount","totalAllCount"],"inputIds":["M114","M114"],"inputNames":["同日充值成功次数","同日拉单次数"],"unit":"%","payment":true,"biV1Metric":"M114"},
+  "M112": {"referenceMetricId":"M112","name":"支付订单获取次数","fields":["totalAllCount"],"inputIds":["M112"],"inputNames":["支付订单获取次数"],"unit":"次","payment":true,"biV1Metric":"M112"},
+  "M113": {"referenceMetricId":"M113","name":"支付订单获取用户数","fields":["orderFetchUserCount"],"inputIds":["M113"],"inputNames":["支付订单获取用户数"],"inputUnits":["人"],"unit":"人","biV1Metric":"M113","biV1Only":true,"sourceNote":"来自 bi-v1 支付域；按登录账号去重。仅展示接口返回的真实状态和 READY 结果，不用支付订单获取次数或旧支付汇总推算。"},
+  "M060": {"referenceMetricId":"M060","name":"支付成功订单数","fields":["totalSurCount"],"inputIds":["M060"],"inputNames":["支付成功订单数"],"unit":"次","payment":true,"biV1Metric":"M060"},
+  "M114": {"referenceMetricId":"M114","name":"订单获取-支付成功转化率","fields":["totalSurCount","totalAllCount"],"inputIds":["M114","M114"],"inputNames":["同日支付成功订单数","同日支付订单获取次数"],"unit":"%","payment":true,"biV1Metric":"M114"},
+  "M084": {"referenceMetricId":"M084","name":"支付提交次数","fields":["paymentSubmitCount"],"inputIds":["M084"],"inputNames":["支付提交次数"],"inputUnits":["次"],"unit":"次","biV1Metric":"M084","biV1Only":true,"sourceNote":"来自 bi-v1 支付域；按有效支付提交请求计数。仅展示接口返回的真实状态和 READY 结果，不用拉单次数替代。"},
+  "M086": {"referenceMetricId":"M086","name":"充值到账订单数","fields":["creditedOrderCount"],"inputIds":["M086"],"inputNames":["充值到账订单数"],"inputUnits":["单"],"unit":"单","biV1Metric":"M086","biV1Only":true,"sourceNote":"来自 bi-v1 支付域；以正式到账成功终态为准。仅展示接口返回的真实状态和 READY 结果，不用第三方支付成功订单数替代。"},
+  "M090": {"referenceMetricId":"M090","name":"支付提交-充值到账转化率","fields":["creditedSubmitCount","matureSubmitCount"],"inputIds":["M086","M084"],"inputNames":["最终到账的支付提交请求数","已结束观察窗口的支付提交请求数"],"inputUnits":["次","次"],"unit":"%","biV1Metric":"M090","biV1Only":true,"sourceNote":"来自 bi-v1 支付域；按支付提交请求追踪最终到账，并保留观察中、超时和迟到到账状态。BI 不用同期阶段量自行相除。"},
   "M112.alipay": {"referenceMetricId":"M112","name":"拉单次数（支付宝）","fields":["aliTotalCount"],"inputIds":["M112"],"inputNames":["拉单次数（支付宝）"],"unit":"次","payment":true},
   "M060.alipay": {"referenceMetricId":"M060","name":"充值成功次数（支付宝）","fields":["aliTotalSucCount"],"inputIds":["M060"],"inputNames":["充值成功次数（支付宝）"],"unit":"次","payment":true},
   "M114.alipay": {"referenceMetricId":"M114","name":"充值成功率（支付宝）","fields":["aliTotalSucCount","aliTotalCount"],"inputIds":["M114","M114"],"inputNames":["同日充值成功次数（支付宝）","同日拉单次数（支付宝）"],"unit":"%","payment":true},
@@ -48,9 +52,12 @@ const baseMappings = {
   "M065.new": {"referenceMetricId":"M065","name":"VIP充值金额（新用户）","fields":["newUserVipChargeAmt"],"inputIds":["M065"],"inputNames":["新用户VIP充值金额"],"unit":AMOUNT_UNIT,"channel":true,"allowAboveOne":false},
   "M066.new": {"referenceMetricId":"M066","name":"金币充值金额（新用户）","fields":["newUserGoldChargeAmt"],"inputIds":["M066"],"inputNames":["新用户金币充值金额"],"unit":AMOUNT_UNIT,"channel":true,"allowAboveOne":false},
   "M003": {"referenceMetricId":"M003","name":"下载点击次数","fields":["totalDownCountNoDedup"],"inputIds":["M003"],"inputNames":["下载点击次数"],"unit":"次","channel":true,"allowAboveOne":false,"biV1Metric":"M003"},
+  "M002": {"referenceMetricId":"M002","name":"落地页访问IP数（去重）","fields":["landingVisitIpCount"],"inputIds":["M002"],"inputNames":["落地页访问IP数（去重）"],"inputUnits":["IP"],"unit":"IP","biV1Metric":"M002","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；使用接口返回的去重 IP 结果和完整性状态，不用访问次数或每日 IP 数推算跨日去重结果。"},
+  "M095": {"referenceMetricId":"M095","name":"落地页下载IP数（去重）","fields":["landingDownloadIpCount"],"inputIds":["M095"],"inputNames":["落地页下载IP数（去重）"],"inputUnits":["IP"],"unit":"IP","biV1Metric":"M095","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；按接口登记的业务日和下载目标去重规则读取，不由下载点击次数估算。"},
   "M005": {"referenceMetricId":"M005","name":"落地页访问-下载点击转化率","fields":["totalDownCountNoDedup","visiCountNoDedup"],"inputIds":["M005","M005"],"inputNames":["下载点击次数","落地页访问次数"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M005"},
-  "M006": {"referenceMetricId":"M006","name":"落地页下载点击-注册转化率","fields":["registerUserCount","totalDownCountByIp"],"inputIds":["M006","M006"],"inputNames":["注册用户数","下载 IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M006"},
-  "M007": {"referenceMetricId":"M007","name":"落地页访问-注册转化率","fields":["registerUserCount","ipStatTotalCount"],"inputIds":["M007","M007"],"inputNames":["注册用户数","访问 IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M007"},
+  "M099": {"referenceMetricId":"M099","name":"落地页访问-下载点击转化率（去重）","fields":["landingDownloadIpCount","landingVisitIpCount"],"inputIds":["M095","M002"],"inputNames":["落地页下载IP数（去重）","落地页访问IP数（去重）"],"inputUnits":["IP","IP"],"unit":"%","biV1Metric":"M099","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；仅采用同一业务日、同一查询范围的分子、分母和比率。多日统一 IP 去重未提供前，不把每日去重 IP 相加或平均每日比率。"},
+  "M006": {"referenceMetricId":"M006","name":"落地页下载点击-注册转化率","fields":["registerUserCount","totalDownCountByIp"],"inputIds":["M006","M006"],"inputNames":["注册用户数","下载 IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M006","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；缺少落地页到注册的稳定归因键时原样展示 SOURCE_INCOMPLETE，不回退旧字段、不补0。"},
+  "M007": {"referenceMetricId":"M007","name":"落地页访问-注册转化率","fields":["registerUserCount","ipStatTotalCount"],"inputIds":["M007","M007"],"inputNames":["注册用户数","访问 IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M007","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；缺少落地页到注册的稳定归因键时原样展示 SOURCE_INCOMPLETE，不回退旧字段、不补0。"},
   "M016.web": {"referenceMetricId":"M016","name":"日活跃用户数（Web）","fields":["webLoginUserCount"],"inputIds":["M016"],"inputNames":["Web 日活跃用户数"],"unit":"人"},
   "M008.web": {"referenceMetricId":"M008","name":"新增用户数（Web）","fields":["webNewUserCount"],"inputIds":["M008"],"inputNames":["Web 新增用户数"],"unit":"人"},
   "M026.web": {"referenceMetricId":"M026","name":"观影用户数（Web）","fields":["webWatchUserCount"],"inputIds":["M026"],"inputNames":["Web 观影用户数"],"unit":"人"},
@@ -60,13 +67,13 @@ const baseMappings = {
   "M055.total.new": {"referenceMetricId":"M055","name":"总点击次数（新用户）","fields":["newUserTotalClickedCount"],"inputIds":["M055"],"inputNames":["新增总点击次数"],"unit":"次"},
   "M094.total.new": {"referenceMetricId":"M094","name":"总点击人数（新用户）","fields":["newUserTotalClickedPerson"],"inputIds":["M094"],"inputNames":["新增总点击人数"],"unit":"人"},
   "M020": { fields: ["afterFirstData1.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第1日留存人数", "该注册日用户数"], unit: "%", cohortDays: 1, biV1Metric: "M020" },
-  "M115.d1": { referenceMetricId: "M115", name: "注册用户第1日留存人数", fields: ["afterFirstData1.loginCnt"], inputIds: ["M115"], inputNames: ["第1日留存人数"], unit: "人", cohortDays: 1 },
+  "M115.d1": { referenceMetricId: "M115", name: "注册用户第1日留存人数", fields: ["afterFirstData1.loginCnt"], inputIds: ["M115"], inputNames: ["第1日留存人数"], unit: "人", cohortDays: 1, biV1Metric: "M020", biV1Value: "numerator" },
   "M021": { fields: ["afterFirstData3.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第3日留存人数", "该注册日用户数"], unit: "%", cohortDays: 3, biV1Metric: "M021" },
-  "M115.d3": { referenceMetricId: "M115", name: "注册用户第3日留存人数", fields: ["afterFirstData3.loginCnt"], inputIds: ["M115"], inputNames: ["第3日留存人数"], unit: "人", cohortDays: 3 },
+  "M115.d3": { referenceMetricId: "M115", name: "注册用户第3日留存人数", fields: ["afterFirstData3.loginCnt"], inputIds: ["M115"], inputNames: ["第3日留存人数"], unit: "人", cohortDays: 3, biV1Metric: "M021", biV1Value: "numerator" },
   "M022": { fields: ["afterFirstData7.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第7日留存人数", "该注册日用户数"], unit: "%", cohortDays: 7, biV1Metric: "M022" },
-  "M115.d7": { referenceMetricId: "M115", name: "注册用户第7日留存人数", fields: ["afterFirstData7.loginCnt"], inputIds: ["M115"], inputNames: ["第7日留存人数"], unit: "人", cohortDays: 7 },
+  "M115.d7": { referenceMetricId: "M115", name: "注册用户第7日留存人数", fields: ["afterFirstData7.loginCnt"], inputIds: ["M115"], inputNames: ["第7日留存人数"], unit: "人", cohortDays: 7, biV1Metric: "M022", biV1Value: "numerator" },
   "M023": { fields: ["afterFirstData30.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第30日留存人数", "该注册日用户数"], unit: "%", cohortDays: 30, biV1Metric: "M023" },
-  "M115.d30": { referenceMetricId: "M115", name: "注册用户第30日留存人数", fields: ["afterFirstData30.loginCnt"], inputIds: ["M115"], inputNames: ["第30日留存人数"], unit: "人", cohortDays: 30 },
+  "M115.d30": { referenceMetricId: "M115", name: "注册用户第30日留存人数", fields: ["afterFirstData30.loginCnt"], inputIds: ["M115"], inputNames: ["第30日留存人数"], unit: "人", cohortDays: 30, biV1Metric: "M023", biV1Value: "numerator" },
   "M016.android": {"referenceMetricId":"M016","name":"日活跃用户数（Android）","fields":["androidLoginUserCount"],"inputIds":["M016"],"inputNames":["Android 日活跃用户数"],"unit":"人"},
   "M016.ios": {"referenceMetricId":"M016","name":"日活跃用户数（iOS）","fields":["iosLoginUserCount"],"inputIds":["M016"],"inputNames":["iOS 日活跃用户数"],"unit":"人"},
   "M016.old": {"referenceMetricId":"M016","name":"日活跃用户数（老用户）","fields":["oldUserLoginUserCount"],"inputIds":["M016"],"inputNames":["老用户日活跃用户数"],"unit":"人"},
@@ -89,6 +96,7 @@ const baseMappings = {
   M026: { fields: ["watchUserCount"], inputIds: ["M026"], unit: "人", biV1Metric: "M026" },
   M059: { fields: ["totalChargeUserCount"], inputIds: ["M059"], unit: "人" },
   M081: { fields: ["watchUserCount", "loginUserCount"], inputIds: ["M026", "M016"], unit: "%", biV1Metric: "M081" },
+  M103: { fields: ["startUserCount", "activeUserCount"], inputIds: ["M030", "M016"], inputNames: ["起播用户数", "日活跃用户数"], inputUnits: ["人", "人"], unit: "%", biV1Metric: "M103", biV1Only: true, sourceNote: "来自 bi-v1 用户观看域；单日按起播用户数除以日活跃用户数。多日结果必须按用户人天总分子、总分母重算，不平均每日比率。" },
   M061: { fields: ["totalChargeUserCount", "loginUserCount"], inputIds: ["M059", "M016"], unit: "%" },
   M008: { fields: ["registerUserCount"], inputIds: ["M008"], unit: "人" },
   M064: { fields: ["newUserChargeUserCount", "registerUserCount"], inputIds: ["M059", "M008"], inputNames: ["新增付费人数", "新增用户数"], unit: "%" },
@@ -106,7 +114,7 @@ const baseMappings = {
   "M094.total": { referenceMetricId: "M094", name: "总点击人数", fields: ["totalClickedPerson"], inputIds: ["M094"], unit: "人" }
 } as const;
 type CandidateId = keyof typeof baseMappings;
-type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
+type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Only?: boolean; biV1Value?: "numerator"; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
 const mappings: Record<CandidateId, CandidateMapping> = baseMappings;
 // Each capability applies to this exact candidate projection and its existing daily source.
 const periodStatisticKinds: Partial<Record<CandidateId, readonly DailyPeriodStatistics["values"][number]["kind"][]>> = {
@@ -119,6 +127,7 @@ const periodStatisticKinds: Partial<Record<CandidateId, readonly DailyPeriodStat
   "M055.new": ["period_sum", "daily_average"], "M055.navigation.new": ["period_sum", "daily_average"], "M055.total.new": ["period_sum", "daily_average"],
   M060: ["period_sum", "daily_average"], "M060.alipay": ["period_sum", "daily_average"], "M060.wechat": ["period_sum", "daily_average"],
   M112: ["period_sum", "daily_average"], "M112.alipay": ["period_sum", "daily_average"], "M112.wechat": ["period_sum", "daily_average"],
+  M084: ["period_sum", "daily_average"], M086: ["period_sum", "daily_average"], M095: ["period_sum", "daily_average"], M113: ["daily_average"],
   M016: ["daily_average"], "M016.android": ["daily_average"], "M016.ios": ["daily_average"], "M016.web": ["daily_average"], "M016.old": ["daily_average"],
   M026: ["daily_average"], "M026.android": ["daily_average"], "M026.ios": ["daily_average"], "M026.web": ["daily_average"], "M026.new": ["daily_average"], "M026.old": ["daily_average"],
   "M008.android": ["daily_average"], "M008.ios": ["daily_average"], "M008.web": ["daily_average"], "M008.nature": ["daily_average"], "M008.internal": ["daily_average"],
@@ -154,16 +163,16 @@ const boardMetrics: Record<string, readonly CandidateId[]> = {
   "5.2": (Object.keys(mappings) as CandidateId[]).filter(id => !mappings[id].checkin && id !== "M034" && id !== "M097"),
   "5.14": ["M075"],
   "5.12": ["M101", "M034", "M036", "M097"],
-  "5.7": ["M001", "M003", "M005", "M006", "M007", "M008", "M008.android", "M008.ios", "M008.web", "M008.nature", "M008.internal", "M059.new", "M064"],
-  "5.8": ["M016", "M016.android", "M016.ios", "M016.web", "M016.old", "M020", "M021", "M022", "M023", "M115.d1", "M115.d3", "M115.d7", "M115.d30"], "5.9": ["M026", "M081", "M101", "M102", "M098", "M034", "M036", "M097", "M026.android", "M026.ios", "M026.web", "M026.new", "M026.old", "M081.android", "M081.ios", "M081.web", "M081.old"],
+  "5.7": ["M001", "M002", "M003", "M095", "M005", "M099", "M006", "M007", "M008", "M008.android", "M008.ios", "M008.web", "M008.nature", "M008.internal", "M059.new", "M064"],
+  "5.8": ["M016", "M016.android", "M016.ios", "M016.web", "M016.old", "M020", "M021", "M022", "M023", "M115.d1", "M115.d3", "M115.d7", "M115.d30"], "5.9": ["M026", "M081", "M103", "M101", "M102", "M098", "M034", "M036", "M097", "M026.android", "M026.ios", "M026.web", "M026.new", "M026.old", "M081.android", "M081.ios", "M081.web", "M081.old"],
   "5.10": ["M059", "M058", "M061", "M067", "M087", "M059.new", "M064", "M058.new", "M088", "M067.new", "M065", "M066", "M065.new", "M066.new"],
-  "5.11": ["M059", "M058", "M061", "M067", "M087", "M112", "M060", "M114", "M112.alipay", "M060.alipay", "M114.alipay", "M112.wechat", "M060.wechat", "M114.wechat"]
+  "5.11": ["M059", "M058", "M061", "M067", "M087", "M113", "M112", "M060", "M114", "M112.alipay", "M060.alipay", "M114.alipay", "M112.wechat", "M060.wechat", "M114.wechat", "M084", "M086", "M090"]
 };
 const pending: Record<string, string[]> = {
   "5.12": ["M083", "M031", "M030", "M032"],
-  "5.2": [], "5.7": ["M002"],
+  "5.2": [], "5.7": [],
   "5.8": ["M018"], "5.9": ["M040", "M041", "M042"],
-  "5.10": [], "5.11": ["M113"],
+  "5.10": [], "5.11": [],
   "5.13": [], "5.14": [], "5.15": [], "5.5": []
 };
 export function dailyDashboardCatalog(enabled: boolean) {
@@ -180,7 +189,7 @@ export function dailyDashboardCatalog(enabled: boolean) {
 }
 function sourceApis(ids: readonly CandidateId[]) {
   return [
-    ...(ids.some(id => !mappings[id].cohortDays && !mappings[id].channel && !mappings[id].payment && !mappings[id].checkin && !mappings[id].realtime && !mappings[id].biV1Playback) ? [P_DAY_SUM_API] : []),
+    ...(ids.some(id => !mappings[id].cohortDays && !mappings[id].channel && !mappings[id].payment && !mappings[id].checkin && !mappings[id].realtime && !mappings[id].biV1Playback && !mappings[id].biV1Only) ? [P_DAY_SUM_API] : []),
     ...(ids.some(id => mappings[id].cohortDays) ? [RETENTION_PLUS_API] : []),
     ...(ids.some(id => mappings[id].channel) ? [CHANNEL_V2_API] : []),
     ...(ids.some(id => mappings[id].payment) ? [PAYMENT_RATE_API] : []),
@@ -411,20 +420,28 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             inputs: [{ key: mapping.fields[0], value: result?.value ?? null }] };
         }
         const biV1Point = mapping.biV1Metric ? biV1MetricDays.get(date)?.metrics[mapping.biV1Metric] : undefined;
-        if (biV1Point?.dataStatus && biV1Point.dataStatus !== "SOURCE_INCOMPLETE") {
-          const expectedUnit = mapping.unit === "%" ? "ratio" : "count";
-          const unitMismatch = biV1Point.dataStatus === "READY" && biV1Point.unit !== expectedUnit;
-          const values = expectedUnit === "ratio"
-            ? [biV1Point.numerator, biV1Point.denominator]
-            : [biV1Point.value];
+        if (biV1Point && (mapping.biV1Only || biV1Point.dataStatus && biV1Point.dataStatus !== "SOURCE_INCOMPLETE")) {
+          const usesReturnedNumerator = "biV1Value" in mapping && mapping.biV1Value === "numerator";
+          const expectedSourceUnit = usesReturnedNumerator ? "ratio" : mapping.unit === "%" ? "ratio" : "count";
+          const unitMismatch = biV1Point.dataStatus === "READY" && biV1Point.unit !== expectedSourceUnit;
+          const selectedValue = usesReturnedNumerator ? biV1Point.numerator : biV1Point.value;
+          const selectedState = usesReturnedNumerator && biV1Point.dataStatus === "READY" && selectedValue !== null
+            ? "available"
+            : biV1Point.state;
+          const values = usesReturnedNumerator
+            ? [biV1Point.numerator]
+            : expectedSourceUnit === "ratio"
+              ? [biV1Point.numerator, biV1Point.denominator]
+              : [biV1Point.value];
           return {
             date,
-            state: unitMismatch ? "invalid_value" : biV1Point.state,
-            value: unitMismatch ? null : biV1Point.value,
+            state: unitMismatch ? "invalid_value" : selectedState,
+            value: unitMismatch ? null : selectedValue,
             inputs: mapping.fields.map((key, index) => ({ key, value: unitMismatch ? null : values[index] ?? null })),
-            sourceStatus: biV1Point.dataStatus
+            ...(biV1Point.dataStatus ? { sourceStatus: biV1Point.dataStatus } : {})
           };
         }
+        if (mapping.biV1Only) return { date, value: null, state: "source_failure", inputs: mapping.fields.map(key => ({ key, value: null })) };
         const row = mapping.checkin ? checkinDays.get(date) : mapping.cohortDays ? cohorts.get(date) : mapping.channel ? channelDays.get(date) : mapping.payment ? paymentDays.get(date) : byDate.get(date);
         const field = (key: string): unknown => key.split(".").reduce<unknown>((value, part) => value && typeof value === "object" ? Reflect.get(value, part) : undefined, row);
         const values = mapping.fields.map(key => count(field(key), key.endsWith("Amt") || key === "totalUserWatchTime"));

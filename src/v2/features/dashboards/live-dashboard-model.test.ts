@@ -12,6 +12,19 @@ import { prepareWorkbookSheets, buildPreviewWorkbook } from "../../design/previe
 import { availablePeriodStatistics } from "./live-period-statistics";
 
 const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2026-09-05", "2026-09-06"] };
+test("经营明细把第一批已支持总体指标映射到真实日看板序列", () => {
+  for (const id of ["M002", "M095", "M099", "M103", "M084", "M086", "M090", "M113"]) {
+    expect(OPERATING_LIVE_IDS[`${id}:overall`]).toBe(id);
+  }
+  expect(OPERATING_LIVE_IDS["M113:overall"]).toBe("M113");
+  expect(OPERATING_LIVE_IDS["M090:overall"]).toBe("M090");
+  expect(OPERATING_LIVE_IDS["M113:支付宝"]).toBeUndefined();
+  expect(OPERATING_LIVE_IDS["M090:支付宝"]).toBeUndefined();
+  for (const key of ["M023:overall", "M115:overall:D30"]) {
+    expect(OPERATING_LIVE_IDS[key]).toBeDefined();
+  }
+  for (const key of ["M016:Web", "M008:Web", "M026:Web", "M081:Web"]) expect(OPERATING_LIVE_IDS[key]).toBeUndefined();
+});
 test("小额人均值保留四位，0与缺失独立，金额本身仍按原精度", () => {
   expect(liveValue(2204 / 209272, "元/人")).toBe("0.0105");
   expect(liveValue(11603 / 852800, "元/人")).toBe("0.0136");

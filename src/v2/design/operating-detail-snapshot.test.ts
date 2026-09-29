@@ -7,10 +7,15 @@ import { retentionTargetDate } from "./operating-detail-snapshot";
 describe("经营明细单日快照", () => {
   const date = "2026-09-08";
   const rows = operatingDetailRows(date);
-  test("73 个展示列同源引用适用维度，新增和留存不拆老用户", () => {
-    expect(DETAIL_COLUMNS).toHaveLength(73);
-    expect(new Set(DETAIL_COLUMNS.map(detailColumnKey)).size).toBe(73);
-    for (const id of ["M008", "M020"]) expect(DETAIL_COLUMNS.filter(c => c.metric.id === id).map(c => c.slice)).toEqual([undefined, "Android", "iOS", "自然新增", "内部导量"]);
+  test("93 个展示列同源引用适用维度，端别仅保留 Android 与 iOS", () => {
+    expect(DETAIL_COLUMNS).toHaveLength(93);
+    expect(new Set(DETAIL_COLUMNS.map(detailColumnKey)).size).toBe(93);
+    expect(DETAIL_COLUMNS.filter(c => c.metric.id === "M008").map(c => c.slice)).toEqual([undefined, "Android", "iOS", "自然新增", "内部导量"]);
+    expect(DETAIL_COLUMNS.some(c => c.slice === "Web")).toBe(false);
+    for (const id of ["M016", "M026", "M081"]) expect(DETAIL_COLUMNS.filter(c => c.metric.id === id).map(c => c.slice)).toEqual(expect.arrayContaining(["Android老用户", "iOS老用户"]));
+    for (const id of ["M112", "M113", "M060", "M114"]) expect(DETAIL_COLUMNS.filter(c => c.metric.id === id).map(c => c.slice)).toContain("USDT");
+    expect(DETAIL_COLUMNS.filter(c => c.metric.id === "M020").map(c => c.slice)).toEqual([undefined, "Android", "iOS", "自然新增", "内部导量"]);
+    expect(DETAIL_COLUMNS.find(c => c.metric.id === "M023")?.unit).toBe("%");
   });
   test("全部/单平台选择不修改原快照", () => {
     expect(selectOperatingRows(rows, "all")).toHaveLength(4);
@@ -67,10 +72,12 @@ describe("经营明细单日快照", () => {
     const selected = structuredClone(selectOperatingRows(rows, "TT")); selected[0].values[0].current = 0;
     const output = operatingDetailExportRows(selected, date);
     expect(output).toHaveLength(2);
-    expect(output[0]).toHaveLength(307);
+    expect(output[0]).toHaveLength(385);
     expect(output[1]).toHaveLength(output[0].length);
     expect(new Set(output[0]).size).toBe(output[0].length);
-    expect(output[1].slice(0,13)).toEqual([date, "TikTok", "TT", null, "待接口支持", null, "待接口支持", 0, "完整", 60500, 59000, null, "待接口支持"]);
+    expect(output[0].slice(0, 3)).toEqual(["数据日", "业务平台", "PID"]);
+    expect(output[0]).not.toEqual(expect.arrayContaining(["模式", "推广状态"]));
+    expect(output[1].slice(0,9)).toEqual([date, "TikTok", "TT", 0, "完整", 60500, 59000, null, "待接口支持"]);
     const i = output[0].indexOf("活跃用户观影率（%）"); expect(output[1][i]).toBeCloseTo(78, 8);
   });
   test("十种摘要拆解使用同一日期和平台，未成熟优先且不伪造可用结果", () => {
@@ -111,8 +118,9 @@ describe("经营明细单日快照", () => {
       const matches = DETAIL_COLUMNS.filter(c => c.sourceColumn === letter(i+5));
       expect(matches).toHaveLength(1); expect(matches[0].sourceLabel).toBe(name);
     });
-    expect(DETAIL_COLUMNS.filter(c=>!c.sourceColumn)).toHaveLength(15);
-    expect(operatingColumnDocumentation()).toHaveLength(78);
+    expect(DETAIL_COLUMNS.filter(c=>!c.sourceColumn)).toHaveLength(35);
+    expect(operatingColumnDocumentation()).toHaveLength(96);
+    expect(operatingColumnDocumentation().flat()).not.toEqual(expect.arrayContaining(["推广状态"]));
     expect(operatingSummaryModels(rows,"all",date).map(m=>m.metric.id)).toEqual(OPERATING_SUMMARY_IDS);
   });
   test("次数获客、广告人均与拉单口径精确绑定，不用提交或到账替代", () => {

@@ -115,8 +115,8 @@ export function operatingSummaryModels(rows: DetailRow[], platform: string, date
 export function operatingDetailExportRows(rows: DetailRow[], date: string) {
   const numeric = (value: number | null, column: DetailColumn) => value === null ? null : value * (column.kind === "ratio" ? 100 : 1);
   const retention = DETAIL_COLUMNS.filter(c=>c.periodDays && !c.slice);
-  return [["数据日", "业务平台", "PID", "模式", "模式｜数据状态", "推广状态", "推广状态｜数据状态", ...DETAIL_COLUMNS.flatMap(column => [`${column.metric.name}（${column.unit}）`, `${column.metric.name}｜数据状态`, `${column.metric.name}｜昨日（${column.unit}）`, `${column.metric.name}｜上周同日（${column.unit}）`]), "MAU｜自然月", "MAU｜数据截至日", ...retention.map(c=>`${c.metric.name}｜目标日`)],
-    ...rows.map(row => [date, row.name, row.pid, row.productMode, row.productMode === null ? "待接口支持" : "完整", row.promotionStatus, row.promotionStatus === null ? "待接口支持" : "完整", ...row.values.flatMap((value, i) => [numeric(value.current, DETAIL_COLUMNS[i]), value.state ? operatingValueLabel(value, DETAIL_COLUMNS[i]) : "完整", numeric(value.previousDay, DETAIL_COLUMNS[i]), numeric(value.previousWeek, DETAIL_COLUMNS[i])]), date.slice(0,7), null, ...retention.map(c=>retentionTargetDate(c,date))])];
+  return [["数据日", "业务平台", "PID", ...DETAIL_COLUMNS.flatMap(column => [`${column.metric.name}（${column.unit}）`, `${column.metric.name}｜数据状态`, `${column.metric.name}｜昨日（${column.unit}）`, `${column.metric.name}｜上周同日（${column.unit}）`]), "MAU｜自然月", "MAU｜数据截至日", ...retention.map(c=>`${c.metric.name}｜目标日`)],
+    ...rows.map(row => [date, row.name, row.pid, ...row.values.flatMap((value, i) => [numeric(value.current, DETAIL_COLUMNS[i]), value.state ? operatingValueLabel(value, DETAIL_COLUMNS[i]) : "完整", numeric(value.previousDay, DETAIL_COLUMNS[i]), numeric(value.previousWeek, DETAIL_COLUMNS[i])]), date.slice(0,7), null, ...retention.map(c=>retentionTargetDate(c,date))])];
 }
 
 // Synthetic daily platform snapshots; aggregate metrics remain an independent query fixture.

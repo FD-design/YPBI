@@ -526,7 +526,7 @@ function CoreOverviewDesignFixture() {
     const metadata: WorkbookSheet = { name: "00_导出说明", rows: [
       ["数据性质", "合成演示数据，非正式业务结果"], ["统计日期", detailOnly ? appliedFilters.end : dateRangeLabel(appliedFilters)],
       ["明细数据日", appliedFilters.end], ["昨日日期", previousDate], ["上周同日日期", previousWeekDate], ["明细业务平台", detailScopeLabel], ["明细范围", "所选范围结束日的单日快照"],
-      ["数值单位", "百分比按 0–100 输出；人均广告点击为次/人；ARPU、ARPPU为USD/人；端别比值以iOS为1，其他单位见字段说明"], ["导出范围", "全部已筛选行、73个业务列及10项数值摘要，不受可视区域和卡片收起状态裁剪"],
+      ["数值单位", "百分比按 0–100 输出；人均广告点击为次/人；ARPU、ARPPU为USD/人；端别比值以iOS为1，其他单位见字段说明"], ["导出范围", `全部已筛选行、${DETAIL_COLUMNS.length}个业务列及10项数值摘要，不受可视区域和卡片收起状态裁剪`],
       ["大盘汇总", "独立查询结果，不对各 PID 人数相加"]
     ] };
     const detail: WorkbookSheet = { name: "01_经营明细", rows: wideRows };
@@ -683,8 +683,6 @@ function CoreOverviewDesignFixture() {
           <thead><tr>
             <th scope="col">状态</th>
             <th scope="col">业务平台</th>
-            <th scope="col">模式</th>
-            <th scope="col">推广状态</th>
             {detailColumns.map((column, columnIndex) => {
               const active = sort.columnIndex === columnIndex;
               const nextDirection = active && sort.direction === "desc" ? "升序" : "降序";
@@ -710,8 +708,6 @@ function CoreOverviewDesignFixture() {
           <tbody>{sortedRows.map((row) => <tr key={row.pid}>
             <td><span className={row.state === "完整" ? "core-review__complete" : "ui-status ui-status--warning"}>{row.state}</span></td>
             <td><b>{row.name}</b><small>PID {row.pid}</small></td>
-            <td><span className="core-review__complete">{row.productMode ?? "待接口支持"}</span></td>
-            <td><span className="core-review__complete">{row.promotionStatus ?? "待接口支持"}</span></td>
             {detailColumns.map((column, columnIndex) => <DetailMetricCell
               key={detailColumnKey(column)}
               row={row}
@@ -727,7 +723,7 @@ function CoreOverviewDesignFixture() {
         </table>
       </div>
       <footer>
-        <span><CheckCircle2 aria-hidden="true" />{sortedRows.length} 个平台 · 73 个业务列 · {live ? "逐列展示待验数与接入状态" : "合成演示数据"} · 导出保留状态</span>
+        <span><CheckCircle2 aria-hidden="true" />{sortedRows.length} 个平台 · {DETAIL_COLUMNS.length} 个业务列 · {live ? "逐列展示待验数与接入状态" : "合成演示数据"} · 导出保留状态</span>
 
       </footer>
     </section>
