@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { aggregateBiV1MetricDays, queryBiV1Metrics, type BiV1MetricCode, type BiV1MetricDataStatus } from "./bi-v1.metrics-adapter";
+import { aggregateBiV1MetricDays, biV1MetricKey, queryBiV1Metrics, type BiV1MetricCode, type BiV1MetricDataStatus } from "./bi-v1.metrics-adapter";
 
 const makeRow = (metricCode: BiV1MetricCode, unit: "count" | "ratio", value: number | null, numerator: number, denominator: number, dimensions: Record<string, string> = {}, dataStatus: BiV1MetricDataStatus = "READY") => ({
   metricCode,
@@ -39,6 +39,23 @@ describe("bi-v1 通用指标适配", () => {
       makeRow("M003", "count", 8, 8, 0, { channel: "b" })
     ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003"] });
     expect(result[0].metrics.M003).toMatchObject({ state: "invalid_value", dataStatus: null, value: null });
+    expect(result[0].metrics[biV1MetricKey("M003", ["a"])]).toMatchObject({ state: "available", value: 12 });
+    expect(result[0].metrics[biV1MetricKey("M003", ["b"])]).toMatchObject({ state: "available", value: 8 });
+  });
+
+  test("总体与交叉维度独立返回，字段名别名不改变业务切片", () => {
+    const result = aggregateBiV1MetricDays(message([
+      makeRow("M016", "count", 10, 10, 0),
+      makeRow("M016", "count", 4, 4, 0, { clientPlatform: "Android", userType: "old_user" }),
+      makeRow("M016", "count", 3, 3, 0, { platform: "iOS", audience: "老用户" }),
+      makeRow("M020", "ratio", .6, 6, 10, { d0Platform: "Android" }),
+      makeRow("M113", "count", 2, 2, 0, { payment_method: "ali_pay" })
+    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016", "M020", "M113"] });
+    expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 10 });
+    expect(result[0].metrics[biV1MetricKey("M016", ["android", "old"])]).toMatchObject({ state: "available", value: 4 });
+    expect(result[0].metrics[biV1MetricKey("M016", ["ios", "old"])]).toMatchObject({ state: "available", value: 3 });
+    expect(result[0].metrics[biV1MetricKey("M020", ["android"])]).toMatchObject({ state: "available", value: .6, numerator: 6, denominator: 10 });
+    expect(result[0].metrics[biV1MetricKey("M113", ["alipay"])]).toMatchObject({ state: "available", value: 2 });
   });
 
   test("SOURCE_INCOMPLETE 和缺日保持状态，不补0", () => {

@@ -3,6 +3,7 @@ import { DETAIL_COLUMNS, detailColumnKey, operatingDetailRows, operatingSummaryM
 import { OPERATING_BREAKDOWNS, galleryBreakdown } from "./operating-breakdown-preview";
 import { operatingColumnDocumentation, OPERATING_SUMMARY_IDS } from "./operating-detail-columns";
 import { retentionTargetDate } from "./operating-detail-snapshot";
+import { OPERATING_LIVE_IDS } from "./operating-live-model";
 
 describe("经营明细单日快照", () => {
   const date = "2026-09-08";
@@ -16,6 +17,10 @@ describe("经营明细单日快照", () => {
     for (const id of ["M112", "M113", "M060", "M114"]) expect(DETAIL_COLUMNS.filter(c => c.metric.id === id).map(c => c.slice)).toContain("USDT");
     expect(DETAIL_COLUMNS.filter(c => c.metric.id === "M020").map(c => c.slice)).toEqual([undefined, "Android", "iOS", "自然新增", "内部导量"]);
     expect(DETAIL_COLUMNS.find(c => c.metric.id === "M023")?.unit).toBe("%");
+  });
+  test("每个经营明细列都有唯一真实接口投影，不因前端漏映射显示待支持", () => {
+    expect(DETAIL_COLUMNS.map(detailColumnKey).filter(key => !OPERATING_LIVE_IDS[key])).toEqual([]);
+    expect(new Set(Object.values(OPERATING_LIVE_IDS)).size).toBe(Object.values(OPERATING_LIVE_IDS).length);
   });
   test("全部/单平台选择不修改原快照", () => {
     expect(selectOperatingRows(rows, "all")).toHaveLength(4);

@@ -177,6 +177,58 @@ describe("bi-v1 通用指标渐进替换", () => {
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
   });
 
+  test("经营明细总体与交叉维度一次接入，不把已返回维度误判为待支持", async () => {
+    const metricRow = (metricCode: string, value: number, dimensions: Record<string, string> = {}, numerator = value, denominator = 0, unit: "count" | "ratio" = "count") => ({
+      metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, value, numerator, denominator, unit,
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "first-batch-v1"
+    });
+    const rows = [
+      metricRow("M018", 9),
+      metricRow("M008", 3), metricRow("M008", 2, { registerPlatform: "Android" }), metricRow("M008", 1, { acquisitionType: "natural" }),
+      metricRow("M016", 6), metricRow("M016", 4, { clientPlatform: "Android" }), metricRow("M016", 2, { clientPlatform: "iOS" }), metricRow("M016", 2, { userType: "new" }),
+      metricRow("M016", 3, { clientPlatform: "Android", userType: "old" }), metricRow("M016", 1, { clientPlatform: "iOS", userType: "old" }),
+      metricRow("M026", 5), metricRow("M026", 3, { clientPlatform: "Android" }), metricRow("M026", 2, { clientPlatform: "iOS" }),
+      metricRow("M026", 2, { clientPlatform: "Android", userType: "old" }), metricRow("M026", 1, { clientPlatform: "iOS", userType: "old" }),
+      metricRow("M081", 5 / 6, {}, 5, 6, "ratio"), metricRow("M081", 1 / 2, { userType: "new" }, 1, 2, "ratio"),
+      metricRow("M081", 3 / 4, { clientPlatform: "Android" }, 3, 4, "ratio"), metricRow("M081", 1, { clientPlatform: "iOS" }, 2, 2, "ratio"),
+      metricRow("M081", 2 / 3, { clientPlatform: "Android", userType: "old" }, 2, 3, "ratio"), metricRow("M081", 1, { clientPlatform: "iOS", userType: "old" }, 1, 1, "ratio"),
+      metricRow("M020", .8, {}, 8, 10, "ratio"), metricRow("M020", .75, { d0Platform: "Android" }, 3, 4, "ratio"),
+      metricRow("M020", 1, { d0Platform: "iOS" }, 2, 2, "ratio"), metricRow("M020", .5, { acquisitionType: "natural" }, 2, 4, "ratio"),
+      metricRow("M020", 1, { acquisitionType: "internal_channel" }, 2, 2, "ratio"),
+      metricRow("M110", 2, { userType: "new" }, 4, 2, "ratio"), metricRow("M111", .5, { userType: "new" }, 1, 2, "ratio"),
+      metricRow("M113", 4), metricRow("M113", 1, { payment_method: "alipay" }), metricRow("M113", 2, { payment_method: "wechat" }), metricRow("M113", 1, { payment_method: "usdt" }),
+      metricRow("M112", 2, { payment_method: "usdt" }), metricRow("M060", 1, { payment_method: "usdt" }), metricRow("M114", .5, { payment_method: "usdt" }, 1, 2, "ratio")
+    ];
+    const result = await new DailyDashboardService({ get: async path => {
+      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows } };
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date })], totalCount: 1 } };
+      if (path.includes("reletionsStatPlus")) return { data: [] };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: "5.2", pid: "PH", dateRange: [date, date] });
+    const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    expect(point("M018")).toMatchObject({ state: "available", value: 9, sourceStatus: "READY" });
+    expect(point("M008.android")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
+    expect(point("M008.nature")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
+    expect(point("M016.android")).toMatchObject({ state: "available", value: 4, sourceStatus: "READY" });
+    expect(point("M016.new")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
+    expect(point("M016.androidOld")).toMatchObject({ state: "available", value: 3, sourceStatus: "READY" });
+    expect(point("M026.android")).toMatchObject({ state: "available", value: 3, sourceStatus: "READY" });
+    expect(point("M026.iosOld")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
+    expect(point("M081.android")).toMatchObject({ state: "available", value: 3 / 4, sourceStatus: "READY" });
+    expect(point("M081.androidOld")).toMatchObject({ state: "available", value: 2 / 3, sourceStatus: "READY" });
+    expect(point("M020.android")).toMatchObject({ state: "available", value: .75, sourceStatus: "READY" });
+    expect(point("M020.internal")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
+    expect(point("M115.d1")).toMatchObject({ state: "available", value: 8, sourceStatus: "READY" });
+    expect(point("M110.new")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
+    expect(point("M111.new")).toMatchObject({ state: "available", value: .5, sourceStatus: "READY" });
+    expect(point("M113.alipay")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
+    expect(point("M113.usdt")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
+    expect(point("M112.usdt")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
+    expect(point("M060.usdt")).toMatchObject({ state: "available", value: 1, sourceStatus: "READY" });
+    expect(point("M114.usdt")).toMatchObject({ state: "available", value: .5, sourceStatus: "READY" });
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
   test("支付首批新指标直接呈现 bi-v1 状态，不回退旧字段或伪造0", async () => {
     const rows = [
       { metricCode: "M113", businessDate: date, dimensions: { pid: "PH" }, value: 3, numerator: 3, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "order-fetch-user-v1" },
