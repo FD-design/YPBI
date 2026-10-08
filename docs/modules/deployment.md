@@ -7,7 +7,8 @@
 - 老用户交叉维度在专题页被统一判为待接入、支付方式缺少 USDT，均属前端映射遗漏；共享模型使用已登记的独立结果，摘要、计算依据、核对表与导出同源。正式指标定义与经营明细列范围不变。
 - 发布后的旧浏览器入口曾请求已移除的动态资源；旧资源路径返回 HTML，导致模块加载失败。新入口提供有界版本恢复，保留筛选和测试环境选择。反向代理的 HTML 缓存策略、缺失资源 404 及旧资源保留仍不在应用发布包内；已打开的旧代码首次需要刷新。
 - 本轮发布校验通过：`verify:release`（893 项 Bun 测试，0 失败；含类型检查和生产构建）、`build:internal-preview`、17 项契约测试及 4 项归档测试。浏览器受影响范围共 56 个用例通过：经营明细 / 相邻交互 17 个、关联看板 39 个。首轮关联用例 37 个通过、2 个因把范围名 USDT 误判为 USD 单位而失败；按实际单位节点修正定位后，支付 4 个用例全部通过，保留缺失值与无虚构单位校验。
-- 本地证据位于 `data/release-checks/20261008/`：`live-fix-verify.log`、`live-fix-internal.log`、`live-fix-contracts.log`、`live-fix-archive.log`、`live-fix-browser-{neighbors,connected,payment}.log`。隔离接口样本截图位于 `/private/tmp/ypbi-live-fix-payment-usdt.png` 和 `/private/tmp/ypbi-live-fix-5.9-M081.png`，不代表线上业务数值。本轮部署结果待补充。
+- 本地证据位于 `data/release-checks/20261008/`：`live-fix-verify.log`、`live-fix-internal.log`、`live-fix-contracts.log`、`live-fix-archive.log`、`live-fix-browser-{neighbors,connected,payment}.log`。隔离接口样本截图位于 `/private/tmp/ypbi-live-fix-payment-usdt.png` 和 `/private/tmp/ypbi-live-fix-5.9-M081.png`，不代表线上业务数值。
+- `5c16a26` 已于 2026-10-08 17:03（UTC+08:00）自动部署成功，[部署流水线](https://github.com/FD-design/YPBI/actions/runs/37753774567)全部步骤通过。独立公网检查确认新入口 `index-DPm2Ysum.js` 返回 JavaScript 200、health 为 `ok / real`、匿名 session 为 401；ready 维持原代理基线 404。更新后的线上业务值待用户重新验证测试 Token 后复核，不能以本地夹具或公网页面检查替代验数。
 - 不修改 Google 需求表、正式埋点 / 指标规则、数据库、账号、Token 或服务器配置；未核实原始返回的事项不归为后端缺口。应用更新重启后需重新验证测试 Token，再进行真实数据复验。
 
 ## 2026-10-08 第一批维度接入发布
