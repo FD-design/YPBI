@@ -12,7 +12,8 @@ const query = { boardId: "5.2", pid: "PH", dateRange: ["2026-09-05", "2026-09-06
 const row = (fields: Record<string, unknown> = {}) => ({ pid: "PH", sumDate: "2026-09-04T16:00:00.000Z", loginUserCount: 100, registerUserCount: 30,
   watchUserCount: 80, totalChargeUserCount: 4, newUserChargeUserCount: 2, diamondChargeAmt: "40.50", adsCount: 20, navCount: 5,
   totalClickedCount: 26, adsClickedPerson: 10, navClickedPerson: 3, totalClickedPerson: 11, secret: "must-never-project", ...fields });
-const service = (rows: Record<string, unknown>[] = [row()], envelope = {}) => new DailyDashboardService({ get: async (path) => path.endsWith("pDaySum") ? ({ code: 200, msg: { pageData: rows, totalCount: rows.length, ...envelope } }) : path.includes("reletionsStatPlus") ? {data:[]} : {msg:{pageData:[],totalData:[],totalCount:0}} });
+const emptyMetrics = { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-10-09T00:00:00Z", watermark: null, rows: [] } };
+const service = (rows: Record<string, unknown>[] = [row()], envelope = {}) => new DailyDashboardService({ get: async (path) => path === "/api/admin/bi/v1/metrics" ? emptyMetrics : path.endsWith("pDaySum") ? ({ code: 200, msg: { pageData: rows, totalCount: rows.length, ...envelope } }) : path.includes("reletionsStatPlus") ? {data:[]} : {msg:{pageData:[],totalData:[],totalCount:0}} });
 const getSeries = async (id: string, fields: Record<string, unknown> = {}) => (await service([row(fields)]).execute(query)).data.series.find(series => series.metric.id === id)!;
 
 describe("观影旧接口待验数接入", () => {
@@ -37,7 +38,7 @@ describe("观影旧接口待验数接入", () => {
     expect((await make().execute({...q,boardId:"5.2"})).data.sourceApiIds).toHaveLength(7);
     const playback=await make().execute({...q,boardId:"5.12"});
     expect(playback.data.series.map(series=>series.metric.id)).toEqual(["M101","M034","M036","M097"]);
-    expect(playback.data.sourceApiIds).toEqual(["/api/admin/home/pRealDayLine","/api/admin/bi/v1/playback"]);
+    expect(playback.data.sourceApiIds).toEqual(["/api/admin/home/pRealDayLine","/api/admin/bi/v1/playback","/api/admin/bi/v1/metrics"]);
   });
   test("同源时长真零、缺失、非法值与零分母分开，实时失败不污染时长",async()=>{
     for(const [summary,state,value] of [[{totalUserWatchTime:0,watchUserCount:4},"available",0],[{watchUserCount:4},"no_value",null],[{totalUserWatchTime:-1,watchUserCount:4},"invalid_value",null],[{totalUserWatchTime:7200,watchUserCount:0},"zero_denominator",null]] as const){
@@ -155,8 +156,11 @@ describe("bi-v1 通用指标渐进替换", () => {
       if (path === "/api/admin/bi/v1/metrics") {
         const metricCodes = params.metricCodes.split(",");
         metricCalls.push(metricCodes);
+        if (metricCodes.includes("M018")) {
+          expect(params).toMatchObject({ pid: "PH", startDate: businessDate, endDate: "2020-02-01", granularity: "summary" });
+          throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "不支持的指标编码 M018", 422);
+        }
         expect(params).toMatchObject({ pid: "PH", startDate: businessDate, endDate: "2020-01-02", granularity: "day", includeIncomplete: "true" });
-        if (metricCodes.includes("M018")) throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "不支持的指标编码 M018", 422);
         return { code: 200, msg: {
           metricVersion: "bi-v1", generatedAt: "2026-10-08T10:00:00+08:00", watermark: null,
           rows: paymentRows.filter(row => metricCodes.includes(row.metricCode))
@@ -173,11 +177,9 @@ describe("bi-v1 通用指标渐进替换", () => {
     const core = await service.execute({ ...range, boardId: "5.2" });
     const coreCalls = metricCalls.length;
     const payment = await service.execute({ ...range, boardId: "5.11" });
-    expect(metricCalls[0]).toContain("M018");
-    expect(coreCalls).toBe(metricCalls[0].length + 1);
-    expect(metricCalls.slice(1, coreCalls).every(codes => codes.length === 1)).toBe(true);
-    expect(metricCalls).toHaveLength(coreCalls + 1);
-    expect(metricCalls[coreCalls]).not.toContain("M018");
+    expect(metricCalls.slice(0, coreCalls).filter(codes => codes.includes("M018"))).toEqual([["M018"]]);
+    expect(metricCalls.slice(coreCalls).every(codes => !codes.includes("M018"))).toBe(true);
+    expect(metricCalls.slice(0, coreCalls).some(codes => codes.includes("M112") && codes.includes("M114"))).toBe(true);
     expect(legacyPaymentCalls).toBe(2);
     const point = (result: typeof core, id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
     for (const id of ["M113", "M112", "M060", "M114"]) {
@@ -258,8 +260,8 @@ describe("bi-v1 通用指标渐进替换", () => {
       metricRow("M113", 4), metricRow("M113", 1, { payment_method: "alipay" }), metricRow("M113", 2, { payment_method: "wechat" }), metricRow("M113", 1, { payment_method: "usdt" }),
       metricRow("M112", 2, { payment_method: "usdt" }), metricRow("M060", 1, { payment_method: "usdt" }), metricRow("M114", .5, { payment_method: "usdt" }, 1, 2, "ratio")
     ];
-    const result = await new DailyDashboardService({ get: async path => {
-      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows } };
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows: rows.filter(row => params.metricCodes.split(",").includes(row.metricCode)) } };
       if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date })], totalCount: 1 } };
       if (path.includes("reletionsStatPlus")) return { data: [] };
       return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
@@ -330,9 +332,9 @@ describe("bi-v1 分维单位与状态回归", () => {
     metricCode, businessDate: date, dimensions: { pid: "PH" }, value: 1, numerator: 1, denominator: 0,
     unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1", ...overrides
   });
-  const execute = (rows: Record<string, unknown>[], boardId = "5.2") => new DailyDashboardService({ get: async path => {
+  const execute = (rows: Record<string, unknown>[], boardId = "5.2") => new DailyDashboardService({ get: async (path, params) => {
     if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
-      metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows
+      metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows: rows.filter(row => params.metricCodes.split(",").includes(String(row.metricCode)))
     } };
     return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
   } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [date, date] });
@@ -376,6 +378,17 @@ describe("bi-v1 分维单位与状态回归", () => {
       });
     });
   }
+
+  test("广告渗透率不展示超过100%的异常值，人均次数仍可大于1", async () => {
+    const result = await execute([
+      metricRow("M111", { value: 2, numerator: 2, denominator: 1, unit: "ratio" }),
+      metricRow("M111", { dimensions: { pid: "PH", userCohort: "new" }, value: 2, numerator: 2, denominator: 1, unit: "ratio" }),
+      metricRow("M110", { value: 2, numerator: 2, denominator: 1, unit: "count_per_user" })
+    ]);
+    for (const id of ["M111", "M111.new"]) expect(result.data.series.find(s => s.metric.id === id)!.points[0])
+      .toMatchObject({ state: "invalid_value", value: null });
+    expect(result.data.series.find(s => s.metric.id === "M110")!.points[0]).toMatchObject({ state: "available", value: 2 });
+  });
 
   test("普通比率拒绝count_per_user，保留同批合法人均广告结果", async () => {
     const result = await execute([
@@ -453,7 +466,7 @@ describe("bi-v1 分维单位与状态回归", () => {
           const id = `${code}${method}`;
           const point = result.data.series.find(series => series.metric.id === id)!.points[0];
           expect(point).toMatchObject({
-            state: method || code === "M113" ? "invalid_value" : "no_value", value: null
+            state: "source_failure", value: null
           });
           expect(point).not.toHaveProperty("sourceStatus");
           expect(point.inputs.every(input => input.value === null)).toBe(true);
@@ -510,17 +523,19 @@ describe("bi-v1 分维单位与状态回归", () => {
     }
   });
 
-  test("月活日快照保留原值，不生成月活快照的日均或合计", async () => {
+  test("月活独立读取自然月汇总，不生成每日快照、日均或合计", async () => {
     const nextDate = "2026-09-06";
-    const result = await new DailyDashboardService({ get: async path => {
-      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics" && params.metricCodes === "M018") {
+        expect(params).toMatchObject({ startDate: "2026-09-01", endDate: "2026-09-10", granularity: "summary" });
+        return { code: 200, msg: {
         metricVersion: "bi-v1", generatedAt: "2026-09-07T10:00:00+08:00", watermark: null,
-        rows: [metricRow("M018", { value: 12, numerator: 12 }), metricRow("M018", { businessDate: nextDate, value: 15, numerator: 15 })]
-      } };
+        rows: [metricRow("M018", { businessDate: undefined, value: 15, numerator: 15 })]
+      } }; }
       return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
     } }, () => new Date("2026-09-10T00:00:00Z")).execute({ boardId: "5.8", pid: "PH", dateRange: [date, nextDate] });
     const series = result.data.series.find(item => item.metric.id === "M018")!;
-    expect(series.points.map(point => point.value)).toEqual([12, 15]);
+    expect(series.points.map(point => point.value)).toEqual([null, 15]);
     expect(series.periodStatistics).toMatchObject({ state: "unsupported", values: [] });
   });
 
@@ -581,7 +596,7 @@ describe("多来源真实数据边界",()=>{
     if(path === "/api/admin/bi/v1/metrics")return{code:200,msg:{metricVersion:"bi-v1",generatedAt:"2026-09-12T10:00:00+08:00",watermark:null,rows:[
       {metricCode:"M008",businessDate:day,dimensions:{pid:"PH",acquisitionType:"natural"},value:40,numerator:40,denominator:0,unit:"count",dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:"rule-v1"},
       ...([["alipay",3,4],["wechat",4,5]] as const).map(([paymentMethod,numerator,denominator])=>({metricCode:"M114",businessDate:day,dimensions:{pid:"PH",payment_method:paymentMethod},value:numerator/denominator,numerator,denominator,unit:"ratio",dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:"rule-v1"}))
-    ]}};
+    ].filter(row => params.metricCodes.split(",").includes(row.metricCode))}};
     return{msg:{pageData:[{sumDate:day,payType:"ali_pay"}],totalAllCount:10,totalSurCount:7,aliTotalCount:4,aliTotalSucCount:3,wxTotalCount:5,wxTotalSucCount:4,totalSucRate:"99%",globalTotalCount:99999,privateToken:"never-return"}};
   }},()=>new Date("2026-09-12T00:00:00Z"));
   test("渠道独立合计、支付总体、方式切片保持各自来源",async()=>{
@@ -610,7 +625,7 @@ describe("多来源真实数据边界",()=>{
   test("留存使用计数计算而非接口百分数字符串，未结束观察不采0",async()=>{
     const result=await make().execute(q);
     expect(result.data.series.find(s=>s.metric.id==="M023")!.points[0].value).toBe(.2);
-    const recent=await new DailyDashboardService({get:async(path)=>path.includes("reletionsStatPlus")?{data:[{pid:"PH",sumDate:"2026-09-11",registerCount:100,afterFirstData1:{date:"2026-09-12",loginCnt:0}}]}:{msg:{pageData:[],totalCount:0}}},()=>new Date("2026-09-12T08:00:00Z")).execute({...q,boardId:"5.8",dateRange:["2026-09-11","2026-09-11"]});
+    const recent=await new DailyDashboardService({get:async(path)=>path === "/api/admin/bi/v1/metrics" ? emptyMetrics : path.includes("reletionsStatPlus")?{data:[{pid:"PH",sumDate:"2026-09-11",registerCount:100,afterFirstData1:{date:"2026-09-12",loginCnt:0}}]}:{msg:{pageData:[],totalCount:0}}},()=>new Date("2026-09-12T08:00:00Z")).execute({...q,boardId:"5.8",dateRange:["2026-09-11","2026-09-11"]});
     expect(recent.data.series.find(s=>s.metric.id==="M020")!.points[0]).toMatchObject({state:"immature",value:null,inputs:[{value:null},{value:100}]});
   });
 });

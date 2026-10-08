@@ -9,7 +9,8 @@ import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { REALTIME_API } from "../upstream/realtime.adapter";
 import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-daily.adapter";
 import { BI_V1_PLAYBACK_API, readBiV1PlaybackDays, type BiV1PlaybackDay } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension } from "../upstream/bi-v1.metrics-adapter";
+import { readBiV1MonthlyMetricDays } from "../upstream/bi-v1.monthly-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
 export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRechargeSucRate";
 export const CHECKIN_OVERVIEW_API = "/api/admin/dataDashboard/overview";
@@ -24,11 +25,11 @@ const baseMappings = {
   M034: { fields: ["effectivePlayCount"], inputIds: ["M034"], inputNames: ["有效观看次数"], inputUnits: ["次"], unit: "次", biV1Playback: true, formula: "各视频类型有效观看次数之和", sourceNote: "来自 bi-v1 播放域；仅展示 READY 结果，其他状态保留为数据状态，不补 0。" },
   M036: { fields: ["effectivePlayCount", "successfulStartCount"], inputIds: ["M034", "M097"], inputNames: ["有效观看次数", "成功起播次数"], inputUnits: ["次", "次"], unit: "%", biV1Playback: true, formula: "有效观看次数 ÷ 成功起播次数 × 100%", sourceNote: "来自 bi-v1 播放域；先汇总各视频类型的分子、分母再计算，不平均分类比率或日比率。" },
   M097: { fields: ["successfulStartCount"], inputIds: ["M097"], inputNames: ["成功起播次数"], inputUnits: ["次"], unit: "次", biV1Playback: true, formula: "各视频类型成功起播次数之和", sourceNote: "来自 bi-v1 播放域；仅展示 READY 结果，其他状态保留为数据状态，不补 0。" },
-  M101: { fields: ["watchCount"], inputIds: ["M101"], inputNames: ["播放发起次数"], inputUnits: ["次"], unit: "次", realtime: true, formula: "同一业务日完整 288 个五分钟统计点的播放发起次数之和", definition: "所选平台单日后台记录的视频播放发起次数。", sourceNote: "仅累计所选平台同一业务日完整、无重复的 288 个五分钟统计点；缺点或尚未结束的业务日不生成日总值。开始记录去重及测试流量排除规则待验数。" },
+  M101: { fields: ["watchCount"], inputIds: ["M101"], inputNames: ["播放发起次数"], inputUnits: ["次"], unit: "次", realtime: true, biV1Metric: "M101", formula: "同一业务日完整 288 个五分钟统计点的播放发起次数之和", definition: "所选平台单日后台记录的视频播放发起次数。", sourceNote: "优先读取 bi-v1 的同口径观影次数；旧接口仅在新来源不可用时读取完整、无重复的 288 个五分钟统计点。非 READY 结果保留来源状态，不补0。" },
   M102: { fields: ["totalUserWatchTime"], inputIds: ["M102"], inputNames: ["接口记录观影时长"], inputUnits: ["秒（暂定）"], unit: "小时", channel: true, resultDivisor: 3600, formula: "接口记录观影时长（暂按秒） ÷ 3600", definition: "所选平台单日接口记录的观影时长总和，暂按秒换算为小时；未额外剔除暂停、缓冲及后台时间。", sourceNote: WATCH_TIME_NOTE },
   M098: { fields: ["totalUserWatchTime", "watchUserCount"], inputIds: ["M102", "M026"], inputNames: ["接口记录观影时长", "同范围观影用户数"], inputUnits: ["秒（暂定）", "人"], unit: "分钟/人", channel: true, resultDivisor: 60, formula: "接口记录观影时长（暂按秒） ÷ 同范围观影用户数 ÷ 60", definition: "所选平台单日接口记录观影时长除以同源观影用户数，换算为分钟/人；未额外剔除暂停、缓冲及后台时间。", sourceNote: WATCH_TIME_NOTE },
   M075: { fields: ["signInRate.raw.signed"], inputIds: ["M075"], inputNames: ["当日签到人数"], unit: "人", checkin: true },
-  M018: { fields: ["monthlyActiveUserCount"], inputIds: ["M018"], inputNames: ["自然月内成功登录去重用户数"], unit: "人", biV1Metric: "M018", biV1Only: true, sourceNote: "来自 bi-v1 用户域；按自然月内成功登录用户去重，未完月统计至数据截止日。" },
+  M018: { fields: ["monthlyActiveUserCount"], inputIds: ["M018"], inputNames: ["自然月内成功登录去重用户数"], unit: "人", biV1Metric: "M018", biV1Only: true, sourceNote: "来自 bi-v1 自然月汇总；历史月份查询完整自然月，当前月查询至已结束业务日。每月仅保留一个月值，不累加日活，不生成每日月活趋势。" },
   "M016.new": { referenceMetricId: "M016", name: "日活跃用户数（新用户）", fields: ["newUserLoginUserCount"], inputIds: ["M016"], inputNames: ["新用户日活跃用户数"], unit: "人", biV1Metric: "M016", biV1Dimensions: ["new"], biV1Only: true },
   "M016.androidOld": { referenceMetricId: "M016", name: "日活跃用户数（Android老用户）", fields: ["androidOldUserLoginUserCount"], inputIds: ["M016"], inputNames: ["Android老用户日活跃用户数"], unit: "人", biV1Metric: "M016", biV1Dimensions: ["android", "old"], biV1Only: true },
   "M016.iosOld": { referenceMetricId: "M016", name: "日活跃用户数（iOS老用户）", fields: ["iosOldUserLoginUserCount"], inputIds: ["M016"], inputNames: ["iOS老用户日活跃用户数"], unit: "人", biV1Metric: "M016", biV1Dimensions: ["ios", "old"], biV1Only: true },
@@ -108,8 +109,8 @@ const baseMappings = {
   "M058.new": {"referenceMetricId":"M058","name":"总充值金额（新用户）","fields":["newUserDiamondChargeAmt"],"inputIds":["M058"],"inputNames":["新增充值金额"],"unit":AMOUNT_UNIT},
   "M088": {"referenceMetricId":"M088","name":"新增用户 ARPU","fields":["newUserDiamondChargeAmt","registerUserCount"],"inputIds":["M088","M088"],"inputNames":["新增充值金额","新增用户数"],"unit":AMOUNT_PER_USER_UNIT},
   "M067.new": {"referenceMetricId":"M067","name":"ARPPU（新用户）","fields":["newUserDiamondChargeAmt","newUserChargeUserCount"],"inputIds":["M067","M067"],"inputNames":["新增充值金额","新增付费人数"],"unit":AMOUNT_PER_USER_UNIT},
-  "display:M016": {"referenceMetricId":"M016","name":"日活 Android:iOS","fields":["androidLoginUserCount","iosLoginUserCount"],"inputIds":["M016","M016"],"inputNames":["Android 日活跃用户数","iOS 日活跃用户数"],"unit":"Android:iOS"},
-  "display:M008": {"referenceMetricId":"M008","name":"新增 Android:iOS","fields":["androidNewUserCount","iosNewUserCount"],"inputIds":["M008","M008"],"inputNames":["Android 新增用户数","iOS 新增用户数"],"unit":"Android:iOS"},
+  "display:M016": {"referenceMetricId":"M016","name":"日活 Android:iOS","fields":["androidLoginUserCount","iosLoginUserCount"],"inputIds":["M016","M016"],"inputNames":["Android 日活跃用户数","iOS 日活跃用户数"],"unit":"Android:iOS", derivedFrom: ["M016.android", "M016.ios"]},
+  "display:M008": {"referenceMetricId":"M008","name":"新增 Android:iOS","fields":["androidNewUserCount","iosNewUserCount"],"inputIds":["M008","M008"],"inputNames":["Android 新增用户数","iOS 新增用户数"],"unit":"Android:iOS", derivedFrom: ["M008.android", "M008.ios"]},
   "M001": {"referenceMetricId":"M001","name":"落地页访问次数","fields":["totalVistCount"],"inputIds":["M001"],"inputNames":["落地页访问次数"],"unit":"次","biV1Metric":"M001"},
   M016: { fields: ["loginUserCount"], inputIds: ["M016"], unit: "人", biV1Metric: "M016" },
   M026: { fields: ["watchUserCount"], inputIds: ["M026"], unit: "人", biV1Metric: "M026" },
@@ -122,9 +123,9 @@ const baseMappings = {
   M058: { fields: ["diamondChargeAmt"], inputIds: ["M058"], unit: AMOUNT_UNIT },
   M067: { fields: ["diamondChargeAmt", "totalChargeUserCount"], inputIds: ["M058", "M059"], unit: AMOUNT_PER_USER_UNIT },
   M087: { fields: ["diamondChargeAmt", "loginUserCount"], inputIds: ["M058", "M016"], unit: AMOUNT_PER_USER_UNIT },
-  M110: { fields: ["adsCount", "loginUserCount"], inputIds: ["M055", "M016"], inputNames: ["广告点击次数", "日活跃用户数"], unit: "次/人" },
+  M110: { fields: ["adsCount", "loginUserCount"], inputIds: ["M055", "M016"], inputNames: ["广告点击次数", "日活跃用户数"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user" },
   "M110.new": { referenceMetricId: "M110", name: "活跃用户人均广告点击次数（新用户）", fields: ["newUserAdClickCount", "newUserActiveUserCount"], inputIds: ["M055", "M016"], inputNames: ["新用户广告点击次数", "新用户日活跃用户数"], inputUnits: ["次", "人"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user", biV1Dimensions: ["new"], biV1Only: true },
-  M111: { fields: ["adsClickedPerson", "loginUserCount"], inputIds: ["M094", "M016"], inputNames: ["广告点击人数", "日活跃用户数"], unit: "%" },
+  M111: { fields: ["adsClickedPerson", "loginUserCount"], inputIds: ["M094", "M016"], inputNames: ["广告点击人数", "日活跃用户数"], unit: "%", biV1Metric: "M111" },
   "M111.new": { referenceMetricId: "M111", name: "活跃用户广告点击渗透率（新用户）", fields: ["newUserAdClickUserCount", "newUserActiveUserCount"], inputIds: ["M094", "M016"], inputNames: ["新用户广告点击人数", "新用户日活跃用户数"], unit: "%", biV1Metric: "M111", biV1Dimensions: ["new"], biV1Only: true },
   "M059.new": { referenceMetricId: "M059", name: "新增付费人数", fields: ["newUserChargeUserCount"], inputIds: ["M059"], inputNames: ["新增付费人数"], unit: "人" },
   "M055.ads": { referenceMetricId: "M055", name: "广告点击次数", fields: ["adsCount"], inputIds: ["M055"], unit: "次" },
@@ -135,8 +136,25 @@ const baseMappings = {
   "M094.total": { referenceMetricId: "M094", name: "总点击人数", fields: ["totalClickedPerson"], inputIds: ["M094"], unit: "人" }
 } as const;
 type CandidateId = keyof typeof baseMappings;
-type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Unit?: BiV1MetricUnit; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
+type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Unit?: BiV1MetricUnit; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; derivedFrom?: readonly [CandidateId, CandidateId]; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
 const mappings: Record<CandidateId, CandidateMapping> = baseMappings;
+function dimensionFilters(tokens: readonly string[] = []): BiV1MetricDimensionFilters {
+  const filters: BiV1MetricDimensionFilters = {};
+  for (const token of tokens) {
+    switch (token) {
+      case "android": case "ios": case "web": filters.clientPlatform = token; break;
+      case "new": case "old": filters.userCohort = token; break;
+      case "natural": filters.sourceType = "natural"; break;
+      case "internal": filters.sourceType = "internal_channel"; break;
+      case "alipay": filters.paymentMethod = "ali_pay"; break;
+      case "wechat": filters.paymentMethod = "wx_pay"; break;
+      case "usdt": filters.paymentMethod = "usdt_pay"; break;
+      case "unknown": filters.paymentMethod = "unknown"; break;
+      default: throw new Error("日看板分维映射缺少正式筛选条件");
+    }
+  }
+  return filters;
+}
 // Each capability applies to this exact candidate projection and its existing daily source.
 const periodStatisticKinds: Partial<Record<CandidateId, readonly DailyPeriodStatistics["values"][number]["kind"][]>> = {
   M102: ["period_sum", "daily_average"], M058: ["period_sum", "daily_average"], M065: ["period_sum", "daily_average"], M066: ["period_sum", "daily_average"],
@@ -216,6 +234,7 @@ export function dailyDashboardCatalog(enabled: boolean) {
   } };
 }
 function sourceApis(ids: readonly CandidateId[]) {
+  ids = ids.flatMap(id => mappings[id].derivedFrom ?? [id]);
   return [
     ...(ids.some(id => !mappings[id].cohortDays && !mappings[id].channel && !mappings[id].payment && !mappings[id].checkin && !mappings[id].realtime && !mappings[id].biV1Playback && !mappings[id].biV1Only) ? [P_DAY_SUM_API] : []),
     ...(ids.some(id => mappings[id].cohortDays) ? [RETENTION_PLUS_API] : []),
@@ -405,31 +424,84 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }
     })();
     const biV1MetricDays = new Map<string, BiV1MetricDay>();
-    const biV1MetricCodes = [...new Set(ids.flatMap(id => mappings[id].biV1Metric ? [mappings[id].biV1Metric] : []))];
     const biV1MetricTask = (async () => {
-      if (!biV1MetricCodes.length) return;
+      const groups = new Map<string, { filters: BiV1MetricDimensionFilters; codes: Set<BiV1MetricCode> }>();
+      for (const id of ids) {
+        const mapping = mappings[id];
+        if (!mapping.biV1Metric || mapping.biV1Metric === "M018") continue;
+        const filters = dimensionFilters(mapping.biV1Dimensions);
+        const key = JSON.stringify(filters);
+        const group = groups.get(key) ?? { filters, codes: new Set<BiV1MetricCode>() };
+        group.codes.add(mapping.biV1Metric);
+        groups.set(key, group);
+      }
+      const requests = [...groups.values()];
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(3, requests.length) }, async () => {
+        while (next < requests.length) {
+          const group = requests[next++];
+          try {
+            const result = await readBiV1MetricDays(this.client, {
+              pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1],
+              metricCodes: [...group.codes],
+              dimensions: Object.keys(group.filters) as BiV1MetricDimension[],
+              ...(Object.keys(group.filters).length ? { dimensionFilters: group.filters } : {})
+            });
+            for (const day of result.days) {
+              const existing = biV1MetricDays.get(day.date) ?? { date: day.date, metrics: {} };
+              Object.assign(existing.metrics, day.metrics);
+              biV1MetricDays.set(day.date, existing);
+            }
+          } catch {
+            // Each filter group is independent. Missing or failed slices cannot
+            // borrow the overall value or overwrite another group's healthy result.
+            for (let i = 0; i < days; i++) {
+              const date = new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10);
+              const existing = biV1MetricDays.get(date) ?? { date, metrics: {} };
+              for (const code of group.codes) existing.metrics[biV1MetricKey(code, group.filters)] = {
+                state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null
+              };
+              biV1MetricDays.set(date, existing);
+            }
+          }
+        }
+      }));
+    })();
+    const monthlyDays = new Map<string, BiV1MetricDay>();
+    const monthlyTask = (async () => {
+      if (!ids.includes("M018")) return;
       try {
-        const result = await readBiV1MetricDays(this.client, {
-          pid: query.pid,
-          startDate: query.dateRange[0],
-          endDate: query.dateRange[1],
-          metricCodes: biV1MetricCodes
-        });
-        result.days.forEach(day => biV1MetricDays.set(day.date, day));
+        const result = await readBiV1MonthlyMetricDays(this.client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] }, today);
+        result.days.forEach(day => monthlyDays.set(day.date, day));
       } catch {
-        // The generic endpoint is an upgrade path. A transport/schema failure must not
-        // remove values that are still valid on an existing, independently checked source.
-        biV1MetricDays.clear();
+        for (let i = 0; i < days; i++) {
+          const date = new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10);
+          monthlyDays.set(date, { date, metrics: { M018: { state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null } } });
+        }
       }
     })();
-    await Promise.all([dailyTask, cohortTask, paymentTask, channelTask, checkinTask, watchTask, playbackTask, biV1MetricTask]);
-    return dailyDashboardV2SuccessSchema.parse({ success: true, data: {
-      schemaVersion: DAILY_DASHBOARD_VERSION, query, queryId: randomUUID(), fetchedAt,
-      timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: sourceApis(ids),
-      series: ids.map(id => {
-        const points: DailyPoint[] = Array.from({ length: days }, (_, i) => {
-        const date = new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10);
+    await Promise.all([dailyTask, cohortTask, paymentTask, channelTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
+    const pointCache = new Map<string, DailyPoint>();
+    const pointFor = (id: CandidateId, date: string): DailyPoint => {
+      const key = `${id}|${date}`;
+      const cached = pointCache.get(key);
+      if (cached) return cached;
+      const point = projectPoint(id, date);
+      pointCache.set(key, point);
+      return point;
+    };
+    const projectPoint = (id: CandidateId, date: string): DailyPoint => {
         const mapping = mappings[id];
+        if (mapping.derivedFrom) {
+          const sources = mapping.derivedFrom.map(source => pointFor(source, date));
+          const inputs = mapping.fields.map((key, index) => ({ key, value: sources[index].state === "available" ? sources[index].value : null }));
+          const unavailable = sources.find(point => point.state !== "available" || point.value === null);
+          if (unavailable) return { date, value: null, state: unavailable.state === "available" ? "no_value" : unavailable.state, inputs,
+            ...(unavailable.sourceStatus ? { sourceStatus: unavailable.sourceStatus } : {}) };
+          return { date, value: sources[1].value === 0 ? null : sources[0].value! / sources[1].value!,
+            state: sources[1].value === 0 ? "zero_denominator" : "available", inputs,
+            ...(sources.every(point => point.sourceStatus === "READY") ? { sourceStatus: "READY" as const } : {}) };
+        }
         if (mapping.biV1Playback) {
           const code = id as "M034" | "M036" | "M097";
           const point = playbackDays.get(date)?.metrics[code];
@@ -442,18 +514,19 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             ...(point?.dataStatus ? { sourceStatus: point.dataStatus } : {})
           };
         }
-        if (mapping.realtime) {
-          const result = watchDays.get(date);
-          return { date, state: watchFailures.has(date) ? "source_failure" : result?.state ?? "no_record", value: result?.value ?? null,
-            inputs: [{ key: mapping.fields[0], value: result?.value ?? null }] };
-        }
-        const biV1Day = biV1MetricDays.get(date);
-        const biV1Point = mapping.biV1Metric ? biV1Day?.metrics[biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions)]
-          ?? (mapping.biV1Dimensions && biV1Day?.metrics[mapping.biV1Metric]?.dataStatus !== "READY" ? biV1Day?.metrics[mapping.biV1Metric] : undefined) : undefined;
-        if (biV1Point && (mapping.biV1Only || biV1Point.dataStatus && biV1Point.dataStatus !== "SOURCE_INCOMPLETE")) {
+        const biV1Day = (id === "M018" ? monthlyDays : biV1MetricDays).get(date);
+        const biV1Point = mapping.biV1Metric ? biV1Day?.metrics[biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions)] : undefined;
+        if (biV1Point) {
+          if (!mapping.biV1Only && (!biV1Point.dataStatus || biV1Point.dataStatus === "SOURCE_INCOMPLETE")) {
+            const legacyPoint = projectLegacyPoint(id, date);
+            if (legacyPoint.state === "available" || biV1Point.state === "no_record") return legacyPoint;
+          }
           const usesReturnedNumerator = "biV1Value" in mapping && mapping.biV1Value === "numerator";
           const expectedSourceUnit = mapping.biV1Unit ?? (usesReturnedNumerator || mapping.fields.length === 2 ? "ratio" : "count");
           const unitMismatch = biV1Point.dataStatus === "READY" && biV1Point.unit !== expectedSourceUnit;
+          const invalidPenetration = mapping.biV1Metric === "M111" && biV1Point.dataStatus === "READY"
+            && biV1Point.numerator !== null && biV1Point.denominator !== null && biV1Point.numerator > biV1Point.denominator;
+          const invalidSourceValue = unitMismatch || invalidPenetration;
           const selectedValue = usesReturnedNumerator ? biV1Point.numerator : biV1Point.value;
           const selectedState = usesReturnedNumerator && biV1Point.dataStatus === "READY" && selectedValue !== null
             ? "available"
@@ -465,13 +538,22 @@ export class DailyDashboardService implements DailyDashboardExecutor {
               : [biV1Point.value];
           return {
             date,
-            state: unitMismatch ? "invalid_value" : selectedState,
-            value: unitMismatch ? null : selectedValue,
-            inputs: mapping.fields.map((key, index) => ({ key, value: unitMismatch ? null : values[index] ?? null })),
+            state: invalidSourceValue ? "invalid_value" : selectedState,
+            value: invalidSourceValue ? null : selectedValue,
+            inputs: mapping.fields.map((key, index) => ({ key, value: invalidSourceValue ? null : values[index] ?? null })),
             ...(biV1Point.dataStatus ? { sourceStatus: biV1Point.dataStatus } : {})
           };
         }
         if (mapping.biV1Only) return { date, value: null, state: biV1Day ? "no_record" : "source_failure", inputs: mapping.fields.map(key => ({ key, value: null })) };
+        return projectLegacyPoint(id, date);
+    };
+    const projectLegacyPoint = (id: CandidateId, date: string): DailyPoint => {
+        const mapping = mappings[id];
+        if (mapping.realtime) {
+          const result = watchDays.get(date);
+          return { date, state: watchFailures.has(date) ? "source_failure" : result?.state ?? "no_record", value: result?.value ?? null,
+            inputs: [{ key: mapping.fields[0], value: result?.value ?? null }] };
+        }
         const row = mapping.checkin ? checkinDays.get(date) : mapping.cohortDays ? cohorts.get(date) : mapping.channel ? channelDays.get(date) : mapping.payment ? paymentDays.get(date) : byDate.get(date);
         const field = (key: string): unknown => key.split(".").reduce<unknown>((value, part) => value && typeof value === "object" ? Reflect.get(value, part) : undefined, row);
         const values = mapping.fields.map(key => count(field(key), key.endsWith("Amt") || key === "totalUserWatchTime"));
@@ -497,7 +579,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         if (denominator === 0) return { date, value: null, state: "zero_denominator", inputs };
         if (mapping.unit === "%" && !mapping.allowAboveOne && denominator !== undefined && denominator !== null && numerator > denominator) return { date, value: null, state: "invalid_value", inputs };
         return { date, value: (denominator == null ? numerator : numerator / denominator) / (mapping.resultDivisor ?? 1), state: "available", inputs };
-        });
+    };
+    return dailyDashboardV2SuccessSchema.parse({ success: true, data: {
+      schemaVersion: DAILY_DASHBOARD_VERSION, query, queryId: randomUUID(), fetchedAt,
+      timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: sourceApis(ids),
+      series: ids.map(id => {
+        const points = Array.from({ length: days }, (_, i) => pointFor(id, new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10)));
         return { metric: metric(id), points, periodStatistics: periodStatistics(id, points, query, today) };
       })
     } });

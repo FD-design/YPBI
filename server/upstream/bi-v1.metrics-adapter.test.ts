@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { aggregateBiV1MetricDays, biV1MetricCodeSchema, biV1MetricKey, queryBiV1Metrics, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDataStatus, type BiV1MetricUnit } from "./bi-v1.metrics-adapter";
+import { aggregateBiV1MetricDays, biV1MetricCodeSchema, biV1MetricKey, queryBiV1Metrics, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDataStatus, type BiV1MetricDimensionFilters, type BiV1MetricUnit } from "./bi-v1.metrics-adapter";
 import { UpstreamError } from "./client";
 
 const makeRow = (metricCode: BiV1MetricCode, unit: BiV1MetricUnit, value: number | null, numerator: number, denominator: number, dimensions: Record<string, unknown> = {}, dataStatus: BiV1MetricDataStatus = "READY") => ({
@@ -183,21 +183,23 @@ describe("bi-v1 批量请求有界隔离", () => {
 describe("bi-v1 通用指标适配", () => {
   test("M110 正式次/人单位通过批量解析并保留 2/3，同批计数和比率正常返回", async () => {
     let calls = 0;
-    const result = await readBiV1MetricDays({ get: async () => {
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
       calls++;
+      const filters = JSON.parse(params.dimensionFilters);
+      expect(filters).toEqual({ userCohort: "new" });
       return { code: 200, msg: message([
-        makeRow("M110", "count_per_user", 2 / 3, 2, 3, { userType: "new" }),
-        makeRow("M113", "count", 4, 4, 0),
-        makeRow("M114", "ratio", .5, 2, 4)
+        makeRow("M110", "count_per_user", 2 / 3, 2, 3, { userType: filters.userCohort }),
+        makeRow("M113", "count", 4, 4, 0, filters),
+        makeRow("M114", "ratio", .5, 2, 4, filters)
       ]) };
-    } }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M110", "M113", "M114"] });
+    } }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M110", "M113", "M114"], dimensionFilters: { userCohort: "new" } });
     expect(calls).toBe(1);
     expect(result.message).not.toBeNull();
     expect(result.days[0].metrics[biV1MetricKey("M110", ["new"])]).toMatchObject({
       state: "available", dataStatus: "READY", value: 2 / 3, numerator: 2, denominator: 3, unit: "count_per_user"
     });
-    expect(result.days[0].metrics.M113).toMatchObject({ state: "available", value: 4, unit: "count" });
-    expect(result.days[0].metrics.M114).toMatchObject({ state: "available", value: .5, unit: "ratio" });
+    expect(result.days[0].metrics[biV1MetricKey("M113", ["new"])]).toMatchObject({ state: "available", value: 4, unit: "count" });
+    expect(result.days[0].metrics[biV1MetricKey("M114", ["new"])]).toMatchObject({ state: "available", value: .5, unit: "ratio" });
   });
 
   for (const [label, value, numerator, denominator, state] of [
@@ -243,11 +245,12 @@ describe("bi-v1 通用指标适配", () => {
 
   for (const field of ["paymentMethod", "payment_method"] as const) {
     test(`${field} 接受正式支付值与旧别名，unknown 独立保留`, async () => {
-      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([
-        makeRow("M113", "count", 20, 20, 0),
+      const result = await readBiV1MetricDays({ get: async (_path, params) => {
+        expect(params.dimensions).toBe("paymentMethod");
+        return { code: 200, msg: message([
         ...["ali_pay", "wx_pay", "usdt_pay", "unknown"].map((value, index) => makeRow("M113", "count", index + 1, index + 1, 0, { [field]: value }))
-      ]) }) }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M113"] });
-      expect(result.days[0].metrics.M113).toMatchObject({ state: "available", value: 20 });
+      ]) }; } }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M113"], dimensions: ["paymentMethod"] });
+      expect(result.days[0].metrics.M113).toBeUndefined();
       for (const [index, value] of ["alipay", "wechat", "usdt", "unknown"].entries()) {
         expect(result.days[0].metrics[biV1MetricKey("M113", [value])]).toMatchObject({ state: "available", value: index + 1 });
       }
@@ -266,22 +269,25 @@ describe("bi-v1 通用指标适配", () => {
       { paymentMethod: ["wx_pay"] }, { paymentMethod: "wx_pay", channel: "unknown" },
       { paymentMethod: "wx_pay", payment_method: "ali_pay" }
     ];
-    const result = aggregateBiV1MetricDays({ ...message([]), rows: [
+    const payload = { ...message([]), rows: [
       makeRow("M113", "count", 12, 12, 0),
       makeRow("M113", "count", 4, 4, 0, { paymentMethod: "wx_pay" }),
       makeRow("M113", "count", 2, 2, 0, { paymentMethod: "unknown" }),
       makeRow("M016", "count", 10, 10, 0),
       ...isolatedDimensions.map(dimensions => ({ ...makeRow("M113", "count", null, 0, 0, dimensions, "FAILED"), businessDate: undefined }))
-    ] }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", metricCodes: ["M113", "M016"] });
+    ] };
+    const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", metricCodes: ["M113", "M016"] as const };
+    const result = aggregateBiV1MetricDays(payload, query);
+    const grouped = aggregateBiV1MetricDays(payload, { ...query, dimensions: ["paymentMethod"] });
     expect(result[0].metrics.M113).toMatchObject({ state: "available", value: 12 });
-    expect(result[0].metrics[biV1MetricKey("M113", ["wechat"])]).toMatchObject({ state: "available", value: 4 });
-    expect(result[0].metrics[biV1MetricKey("M113", ["unknown"])]).toMatchObject({ state: "available", value: 2 });
+    expect(grouped[0].metrics[biV1MetricKey("M113", ["wechat"])]).toMatchObject({ state: "available", value: 4 });
+    expect(grouped[0].metrics[biV1MetricKey("M113", ["unknown"])]).toMatchObject({ state: "available", value: 2 });
     expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 10 });
-    expect(result[1].metrics.M113).toMatchObject({ state: "no_record", value: null });
+    expect(result[1].metrics.M113).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
     for (const dimensions of isolatedDimensions) {
       const key = biV1MetricKey("M113", dimensions);
       expect(key.startsWith("M113|unmapped:")).toBe(true);
-      for (const day of result) expect(day.metrics[key]).toMatchObject({ state: "source_failure", dataStatus: "FAILED", value: null });
+      for (const day of result) expect(day.metrics[key]).toBeUndefined();
     }
     expect(biV1MetricKey("M113", { paymentMethod: "wx_pay", payment_method: "wechat" })).toBe(biV1MetricKey("M113", ["wechat"]));
   });
@@ -302,24 +308,29 @@ describe("bi-v1 通用指标适配", () => {
       makeRow("M003", "count", 12, 12, 0, { channel: "a" }),
       makeRow("M003", "count", 8, 8, 0, { channel: "b" })
     ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003"] });
-    expect(result[0].metrics.M003).toMatchObject({ state: "invalid_value", dataStatus: null, value: null });
-    expect(result[0].metrics[biV1MetricKey("M003", { channel: "a" })]).toMatchObject({ state: "available", value: 12 });
-    expect(result[0].metrics[biV1MetricKey("M003", { channel: "b" })]).toMatchObject({ state: "available", value: 8 });
+    expect(result[0].metrics.M003).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
+    expect(result[0].metrics[biV1MetricKey("M003", { channel: "a" })]).toBeUndefined();
+    expect(result[0].metrics[biV1MetricKey("M003", { channel: "b" })]).toBeUndefined();
   });
 
   test("总体与交叉维度独立返回，字段名别名不改变业务切片", () => {
-    const result = aggregateBiV1MetricDays(message([
+    const payload = message([
       makeRow("M016", "count", 10, 10, 0),
       makeRow("M016", "count", 4, 4, 0, { clientPlatform: "Android", userType: "old_user" }),
       makeRow("M016", "count", 3, 3, 0, { platform: "iOS", audience: "老用户" }),
       makeRow("M020", "ratio", .6, 6, 10, { d0Platform: "Android" }),
       makeRow("M113", "count", 2, 2, 0, { payment_method: "ali_pay" })
-    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016", "M020", "M113"] });
+    ]);
+    const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016", "M020", "M113"] as const };
+    const result = aggregateBiV1MetricDays(payload, query);
+    const cross = aggregateBiV1MetricDays(payload, { ...query, dimensions: ["clientPlatform", "userCohort"] });
+    const platform = aggregateBiV1MetricDays(payload, { ...query, dimensions: ["clientPlatform"] });
+    const payment = aggregateBiV1MetricDays(payload, { ...query, dimensions: ["paymentMethod"] });
     expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 10 });
-    expect(result[0].metrics[biV1MetricKey("M016", ["android", "old"])]).toMatchObject({ state: "available", value: 4 });
-    expect(result[0].metrics[biV1MetricKey("M016", ["ios", "old"])]).toMatchObject({ state: "available", value: 3 });
-    expect(result[0].metrics[biV1MetricKey("M020", ["android"])]).toMatchObject({ state: "available", value: .6, numerator: 6, denominator: 10 });
-    expect(result[0].metrics[biV1MetricKey("M113", ["alipay"])]).toMatchObject({ state: "available", value: 2 });
+    expect(cross[0].metrics[biV1MetricKey("M016", ["android", "old"])]).toMatchObject({ state: "available", value: 4 });
+    expect(cross[0].metrics[biV1MetricKey("M016", ["ios", "old"])]).toMatchObject({ state: "available", value: 3 });
+    expect(platform[0].metrics[biV1MetricKey("M020", ["android"])]).toMatchObject({ state: "available", value: .6, numerator: 6, denominator: 10 });
+    expect(payment[0].metrics[biV1MetricKey("M113", ["alipay"])]).toMatchObject({ state: "available", value: 2 });
   });
 
   test("只把对应字段的合法值映射为已登记切片，未知字段与错配值独立保留", () => {
@@ -335,17 +346,20 @@ describe("bi-v1 通用指标适配", () => {
       makeRow("M113", "count", 9, 9, 0, { payment_method: "alipay" }),
       makeRow("M113", "count", 7, 7, 0, { channel: "alipay" })
     ];
-    const result = aggregateBiV1MetricDays(message(rows), {
+    const query = {
       pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016", "M113"]
-    });
+    } as const;
+    const result = aggregateBiV1MetricDays(message(rows), query);
+    const platform = aggregateBiV1MetricDays(message(rows), { ...query, dimensionFilters: { clientPlatform: "android" } });
+    const cohort = aggregateBiV1MetricDays(message(rows), { ...query, dimensionFilters: { userCohort: "old" } });
+    const payment = aggregateBiV1MetricDays(message(rows), { ...query, dimensionFilters: { paymentMethod: "ali_pay" } });
     expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 20 });
-    expect(result[0].metrics[biV1MetricKey("M016", ["android"])]).toMatchObject({ state: "available", value: 8 });
-    expect(result[0].metrics[biV1MetricKey("M016", ["old"])]).toMatchObject({ state: "available", value: 4 });
+    expect(platform[0].metrics[biV1MetricKey("M016", ["android"])]).toMatchObject({ state: "available", value: 8 });
+    expect(cohort[0].metrics[biV1MetricKey("M016", ["old"])]).toMatchObject({ state: "available", value: 4 });
     expect(result[0].metrics[biV1MetricKey("M016", ["android", "old"])]).toBeUndefined();
-    expect(result[0].metrics[biV1MetricKey("M113", ["alipay"])]).toMatchObject({ state: "available", value: 9 });
-    for (const row of rows) {
-      expect(result[0].metrics[biV1MetricKey(row.metricCode, row.dimensions)]).toMatchObject({ state: "available", value: row.value });
-    }
+    expect(payment[0].metrics[biV1MetricKey("M113", ["alipay"])]).toMatchObject({ state: "available", value: 9 });
+    for (const row of rows.filter(row => biV1MetricKey(row.metricCode, row.dimensions).includes("unmapped:")))
+      expect(result[0].metrics[biV1MetricKey(row.metricCode, row.dimensions)]).toBeUndefined();
   });
 
   test("空值和非字符串维度不变成总体，也不通过字符串转换命中业务切片", () => {
@@ -364,7 +378,7 @@ describe("bi-v1 通用指标适配", () => {
       const dimensionOnly = aggregateBiV1MetricDays(message([
         makeRow("M016", "count", 3, 3, 0, dimension)
       ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016"] });
-      expect(dimensionOnly[0].metrics.M016).toMatchObject({ state: "invalid_value", value: null });
+      expect(dimensionOnly[0].metrics.M016).toMatchObject({ state: "source_failure", value: null });
     }
   });
 
@@ -383,7 +397,7 @@ describe("bi-v1 通用指标适配", () => {
     const globalRow = (dimensions: Record<string, unknown>, dataStatus: BiV1MetricDataStatus) => ({
       ...makeRow("M016", "count", null, 0, 0, dimensions, dataStatus), businessDate: undefined
     });
-    const result = aggregateBiV1MetricDays({ ...message([]), rows: [
+    const payload = { ...message([]), rows: [
       globalRow({ channel: "android" }, "FAILED"),
       globalRow({ videoType: "android" }, "SOURCE_INCOMPLETE"),
       globalRow({ channel: "" }, "PROCESSING"),
@@ -391,15 +405,18 @@ describe("bi-v1 通用指标适配", () => {
       makeRow("M016", "count", 4, 4, 0, { clientPlatform: "android" }),
       makeRow("M016", "count", 3, 3, 0, { clientPlatform: "ios" }),
       makeRow("M016", "count", 3, 3, 0, { platform: "iOS" })
-    ] }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", metricCodes: ["M016"] });
+    ] };
+    const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", metricCodes: ["M016"] as const };
+    const result = aggregateBiV1MetricDays(payload, query);
+    const platform = aggregateBiV1MetricDays(payload, { ...query, dimensions: ["clientPlatform"] });
     expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 10 });
-    expect(result[0].metrics[biV1MetricKey("M016", ["android"])]).toMatchObject({ state: "available", value: 4 });
-    expect(result[0].metrics[biV1MetricKey("M016", ["ios"])]).toMatchObject({ state: "invalid_value", value: null });
+    expect(platform[0].metrics[biV1MetricKey("M016", ["android"])]).toMatchObject({ state: "available", value: 4 });
+    expect(platform[0].metrics[biV1MetricKey("M016", ["ios"])]).toMatchObject({ state: "invalid_value", value: null });
     for (const day of result) {
-      expect(day.metrics[biV1MetricKey("M016", { channel: "android" })]).toMatchObject({ state: "source_failure", dataStatus: "FAILED", value: null });
-      expect(day.metrics[biV1MetricKey("M016", { videoType: "android" })]).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null });
+      expect(day.metrics[biV1MetricKey("M016", { channel: "android" })]).toBeUndefined();
+      expect(day.metrics[biV1MetricKey("M016", { videoType: "android" })]).toBeUndefined();
     }
-    expect(result[1].metrics.M016).toMatchObject({ state: "no_record", dataStatus: null, value: null });
+    expect(result[1].metrics.M016).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
     expect(result[1].metrics[biV1MetricKey("M016", ["android"])]).toBeUndefined();
   });
 
@@ -432,7 +449,7 @@ describe("bi-v1 通用指标适配", () => {
   });
 
   test("异常指标按指标隔离，不影响同批正常指标", () => {
-    const count = makeRow("M003", "count", 1, 1, 0, { channel: "a" });
+    const count = makeRow("M003", "count", 1, 1, 0);
     const duplicate = aggregateBiV1MetricDays(message([count, count, makeRow("M016", "count", 2, 2, 0)]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003", "M016"] });
     expect(duplicate[0].metrics.M003).toMatchObject({ state: "invalid_value", dataStatus: null, value: null });
     expect(duplicate[0].metrics.M016).toMatchObject({ state: "available", value: 2 });
@@ -457,5 +474,215 @@ describe("bi-v1 通用指标适配", () => {
     const result = aggregateBiV1MetricDays(await queryBiV1Metrics(client as never, query), query);
     expect(result[0].metrics.M001).toMatchObject({ state: "available", value: 120, dataStatus: "READY" });
     expect(result[0].metrics.M006).toMatchObject({ state: "no_value", value: null, dataStatus: "SOURCE_INCOMPLETE" });
+  });
+});
+
+describe("bi-v1 显式维度请求", () => {
+  const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016"] as const };
+
+  for (const [filter, alias] of [
+    [{ clientPlatform: "android" }, { platform: "Android" }],
+    [{ clientPlatform: "ios" }, { registerPlatform: "iOS" }],
+    [{ clientPlatform: "web" }, { d0Platform: "web" }],
+    [{ userCohort: "new" }, { userType: "new_user" }],
+    [{ userCohort: "old" }, { audience: "老用户" }],
+    [{ sourceType: "natural" }, { acquisitionType: "organic" }],
+    [{ sourceType: "internal_channel" }, { acquisitionType: "internal_traffic" }],
+    [{ paymentMethod: "ali_pay" }, { payment_method: "支付宝" }],
+    [{ paymentMethod: "wx_pay" }, { payment_method: "wechat" }],
+    [{ paymentMethod: "usdt_pay" }, { payment_method: "usdt" }],
+    [{ paymentMethod: "unknown" }, { payment_method: "unknown" }],
+    [{ clientPlatform: "android", userCohort: "old" }, { audience: "android_old_user" }]
+  ] as const) {
+    test(`正式筛选 ${JSON.stringify(filter)} 作为 JSON 发送，返回别名仅命中对应切片`, async () => {
+      const result = await readBiV1MetricDays({ get: async (_path, params) => {
+        expect(params.dimensionFilters).toBe(JSON.stringify(filter));
+        expect(params.dimensions).toBeUndefined();
+        expect(params.granularity).toBe("day");
+        const requestedFilters = JSON.parse(params.dimensionFilters);
+        const rows = JSON.stringify(requestedFilters) === JSON.stringify(filter)
+          ? [makeRow("M016", "count", 7, 7, 0, alias)] : [];
+        return { code: 200, msg: message(rows) };
+      } }, { ...query, dimensionFilters: filter });
+      expect(result.days[0].metrics[biV1MetricKey("M016", filter)]).toMatchObject({ state: "available", value: 7 });
+      expect(result.days[0].metrics.M016).toBeUndefined();
+    });
+  }
+
+  test("同一上游夹具按实际筛选分别返回新老用户，未筛选不会暗带新用户", async () => {
+    const calls: string[] = [];
+    const client = { get: async (_path: string, params: Record<string, string>) => {
+      const filters = JSON.parse(params.dimensionFilters ?? "{}");
+      calls.push(filters.userCohort ?? "overall");
+      return { code: 200, msg: message(filters.userCohort === "new"
+        ? [makeRow("M110", "count_per_user", 2 / 3, 2, 3, filters)]
+        : filters.userCohort === "old"
+          ? [makeRow("M110", "count_per_user", 3 / 4, 3, 4, filters)]
+          : [makeRow("M110", "count_per_user", null, 0, 0, {}, "SOURCE_INCOMPLETE")]) };
+    } };
+    for (const userCohort of ["new", "old"] as const) {
+      const result = await readBiV1MetricDays(client, { ...query, metricCodes: ["M110"], dimensionFilters: { userCohort } });
+      expect(result.days[0].metrics[biV1MetricKey("M110", [userCohort])]).toMatchObject({
+        state: "available", value: userCohort === "new" ? 2 / 3 : 3 / 4
+      });
+    }
+    const overall = await readBiV1MetricDays(client, { ...query, metricCodes: ["M110"] });
+    expect(overall.days[0].metrics.M110).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null });
+    expect(calls).toEqual(["new", "old", "overall"]);
+  });
+
+  test("过滤键缺失、错值或额外交叉维度仅隔离不匹配行，保留同日精确结果", async () => {
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
+      expect(JSON.parse(params.dimensionFilters)).toEqual({ userCohort: "new" });
+      return { code: 200, msg: message([
+        makeRow("M110", "count_per_user", 2 / 3, 2, 3, { userCohort: "new" }),
+        makeRow("M110", "count_per_user", 10, 10, 1),
+        makeRow("M110", "count_per_user", 10, 10, 1, { userCohort: "old" }),
+        makeRow("M110", "count_per_user", 10, 10, 1, { userCohort: "new", clientPlatform: "android" }),
+        makeRow("M110", "count_per_user", 10, 10, 1, { userCohort: "new", channel: "x" }),
+        makeRow("M016", "count", 8, 8, 0)
+      ]) };
+    } }, { ...query, metricCodes: ["M110", "M016"], dimensionFilters: { userCohort: "new" } });
+    expect(result.message?.rows).toHaveLength(1);
+    expect(result.message?.dimensionConflicts).toHaveLength(5);
+    expect(result.days[0].metrics[biV1MetricKey("M110", ["new"])]).toMatchObject({ state: "available", value: 2 / 3 });
+    expect(result.days[0].metrics[biV1MetricKey("M016", ["new"])]).toEqual({ state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null });
+    expect(result.days[0].metrics.M110).toBeUndefined();
+    expect(result.days[0].metrics.M016).toBeUndefined();
+  });
+
+  test("多余交叉行值结构错误不清空同指标精确结果，跨PID仍先拒绝", async () => {
+    for (const pid of ["PH", "OTHER"]) {
+      let calls = 0;
+      const promise = readBiV1MetricDays({ get: async (_path, params) => {
+        calls++;
+        const filters = JSON.parse(params.dimensionFilters);
+        return { code: 200, msg: { ...message([]), rows: [
+          makeRow("M016", "count", 4, 4, 0, filters),
+          { ...makeRow("M016", "count", 2, 2, 0, { pid, ...filters, clientPlatform: "android" }), numerator: null, unit: null }
+        ] } };
+      } }, { ...query, dimensionFilters: { userCohort: "new" } });
+      if (pid === "OTHER") await expect(promise).rejects.toMatchObject({ code: "BI_V1_SCOPE_CONFLICT" });
+      else expect((await promise).days[0].metrics[biV1MetricKey("M016", ["new"])]).toMatchObject({ state: "available", value: 4 });
+      expect(calls).toBe(1);
+    }
+  });
+
+  test("默认和显式空分组都只读取pid总体，单维响应不会变成总体", async () => {
+    for (const dimensions of [undefined, []] as const) {
+      const result = await readBiV1MetricDays({ get: async (_path, params) => {
+        expect(params.dimensions).toBeUndefined();
+        expect(params.dimensionFilters).toBeUndefined();
+        return { code: 200, msg: message([makeRow("M016", "count", 3, 3, 0, { clientPlatform: "android" })]) };
+      } }, { ...query, dimensions });
+      expect(result.days[0].metrics.M016).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
+      expect(Object.keys(result.days[0].metrics)).toEqual(["M016"]);
+    }
+  });
+
+  for (const dataStatus of ["READY", "FAILED", "SOURCE_INCOMPLETE", "NOT_MATURE"] as const) {
+    test(`无日期总体 ${dataStatus} 不冒充所请求的新用户状态`, async () => {
+      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: {
+        ...message([]), rows: [{ ...makeRow("M016", "count", dataStatus === "READY" ? 8 : null, 8, 0, {}, dataStatus), businessDate: undefined }]
+      } }) }, { ...query, endDate: "2026-09-22", dimensionFilters: { userCohort: "new" } });
+      for (const day of result.days) {
+        expect(day.metrics[biV1MetricKey("M016", ["new"])]).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
+        expect(day.metrics.M016).toBeUndefined();
+      }
+    });
+  }
+
+  test("分组字段和筛选字段组成精确范围，不产生总体或把各组求和", async () => {
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
+      const filters = JSON.parse(params.dimensionFilters);
+      expect(filters).toEqual({ userCohort: "old" });
+      expect(params.dimensions).toBe("clientPlatform");
+      return { code: 200, msg: message([
+        makeRow("M016", "count", 4, 4, 0, { ...filters, clientPlatform: "android" }),
+        makeRow("M016", "count", 3, 3, 0, { ...filters, clientPlatform: "ios" }),
+        makeRow("M016", "count", 100, 100, 0, filters),
+        makeRow("M016", "count", 200, 200, 0)
+      ]) };
+    } }, { ...query, dimensionFilters: { userCohort: "old" }, dimensions: ["clientPlatform"] });
+    expect(result.days[0].metrics[biV1MetricKey("M016", ["android", "old"])]).toMatchObject({ value: 4 });
+    expect(result.days[0].metrics[biV1MetricKey("M016", ["ios", "old"])]).toMatchObject({ value: 3 });
+    expect(result.days[0].metrics.M016).toBeUndefined();
+    expect(result.days[0].metrics[biV1MetricKey("M016", ["old"])]).toBeUndefined();
+  });
+
+  test("同族重复别名一致时去重，冲突时不命中筛选结果", async () => {
+    for (const [platform, state] of [["Android", "available"], ["ios", "source_failure"]] as const) {
+      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([
+        makeRow("M016", "count", 4, 4, 0, { clientPlatform: "android", platform })
+      ]) }) }, { ...query, dimensionFilters: { clientPlatform: "android" } });
+      expect(result.days[0].metrics[biV1MetricKey("M016", ["android"])]).toMatchObject({ state, value: state === "available" ? 4 : null });
+    }
+  });
+
+  test("按指标恢复保留筛选、PID和日期，失败项只写本次切片", async () => {
+    const calls: Record<string, string>[] = [];
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
+      calls.push(params);
+      const filters = JSON.parse(params.dimensionFilters);
+      if (params.metricCodes.includes("M008")) return { code: 400, err: "不支持指标 M008" };
+      return { code: 200, msg: message([makeRow("M016", "count", 0, 0, 0, filters)]) };
+    } }, { ...query, metricCodes: ["M008", "M016"], dimensionFilters: { userCohort: "new" } });
+    expect(calls).toHaveLength(3);
+    for (const params of calls) expect(params).toMatchObject({ pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", dimensionFilters: '{"userCohort":"new"}' });
+    expect(result.days[0].metrics[biV1MetricKey("M008", ["new"])]).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
+    expect(result.days[0].metrics[biV1MetricKey("M016", ["new"])]).toMatchObject({ state: "available", value: 0 });
+    expect(result.days[0].metrics.M008).toBeUndefined();
+  });
+
+  test("筛选无记录保持缺失，多日期状态只来自精确维度行", async () => {
+    const result = await readBiV1MetricDays({ get: async (_path, params) => ({ code: 200, msg: {
+      ...message([]), rows: [{ ...makeRow("M016", "count", null, 0, 0, JSON.parse(params.dimensionFilters), "SOURCE_INCOMPLETE"), businessDate: undefined }]
+    } }) }, { ...query, metricCodes: ["M016", "M008"], endDate: "2026-09-22", dimensionFilters: { userCohort: "new" } });
+    for (const day of result.days) {
+      expect(day.metrics[biV1MetricKey("M016", ["new"])]).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null });
+      expect(day.metrics[biV1MetricKey("M008", ["new"])]).toMatchObject({ state: "no_record", dataStatus: null, value: null });
+    }
+  });
+
+  test("未匹配维度行仍必须通过PID与日期检查，值错误不掩盖范围问题", async () => {
+    for (const overrides of [
+      { dimensions: { pid: "OTHER", userCohort: "old" } },
+      { businessDate: "2026-09-20", dimensions: { pid: "PH", userCohort: "old" } }
+    ]) await expect(readBiV1MetricDays({ get: async () => ({ code: 200, msg: {
+      ...message([]), rows: [{ ...makeRow("M016", "count", 3, 3, 0), ...overrides, numerator: null }]
+    } }) }, { ...query, dimensionFilters: { userCohort: "new" } })).rejects.toMatchObject({ code: "BI_V1_SCOPE_CONFLICT" });
+  });
+
+  test("无效筛选在联网前拒绝，未声明的留存维度不擅自支持", async () => {
+    let calls = 0;
+    for (const filter of [{ clientPlatform: "old" }, { paymentMethod: "alipay" }, { channel: "android" }, { retentionDay: "D1" }]) {
+      await expect(queryBiV1Metrics({ get: async () => { calls++; return { code: 200, msg: message([]) }; } }, {
+        ...query, dimensionFilters: filter as unknown as BiV1MetricDimensionFilters
+      })).rejects.toMatchObject({ code: "BI_V1_REQUEST_REJECTED", statusCode: 422 });
+    }
+    expect(calls).toBe(0);
+  });
+
+  test("summary 传排他区间并保留无日期总体，日聚合拒绝汇总", async () => {
+    const summaryQuery = { ...query, metricCodes: ["M018"] as const, startDate: "2026-09-01", endDate: "2026-09-30", granularity: "summary" as const, dimensions: [] };
+    const result = await queryBiV1Metrics({ get: async (_path, params) => {
+      expect(params).toMatchObject({ granularity: "summary", startDate: "2026-09-01", endDate: "2026-10-01" });
+      expect(params.dimensions).toBeUndefined();
+      return { code: 200, msg: { ...message([]), rows: [{ ...makeRow("M018", "count", 3, 3, 0), businessDate: undefined }] } };
+    } }, summaryQuery);
+    expect(result.rows[0]).toMatchObject({ metricCode: "M018", value: 3 });
+    expect(() => aggregateBiV1MetricDays(result, summaryQuery)).toThrow("汇总结果不能按日聚合");
+  });
+
+  test("M101 通用计数保留来源规则，忽略上游伪造的本地校验元数据", async () => {
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
+      expect(params.metricCodes).toBe("M101");
+      return { code: 200, msg: { ...message([
+        { ...makeRow("M101", "count", 3, 3, 0), ruleVersion: "legacy-content-view-count-v1" }
+      ]), dimensionConflicts: [{ metricCode: "M101" }] } };
+    } }, { ...query, metricCodes: ["M101"] });
+    expect(result.message?.rows[0].ruleVersion).toBe("legacy-content-view-count-v1");
+    expect(result.message?.dimensionConflicts).toBeUndefined();
+    expect(result.days[0].metrics.M101).toMatchObject({ state: "available", value: 3 });
   });
 });

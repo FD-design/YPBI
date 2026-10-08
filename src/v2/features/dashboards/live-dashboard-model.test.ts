@@ -12,6 +12,7 @@ import { prepareWorkbookSheets, buildPreviewWorkbook } from "../../design/previe
 import { availablePeriodStatistics } from "./live-period-statistics";
 
 const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2026-09-05", "2026-09-06"] };
+const emptyMetrics = { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-10-09T00:00:00Z", watermark: null, rows: [] } };
 test("经营明细把第一批总体与支付方式指标映射到独立真实日看板序列", () => {
   for (const id of ["M002", "M095", "M099", "M103", "M084", "M086", "M090", "M113"]) {
     expect(OPERATING_LIVE_IDS[`${id}:overall`]).toBe(id);
@@ -49,7 +50,7 @@ test("多指标下载的工作表名合法唯一，保留完整业务名称索�
 const original = (id = "M016"): DashboardMetricCardModel => ({ metric: { id, name: "测试指标", definitionLabel: "权威定义", aggregationLabel: "原演示范围" }, result: { status: "no_values", contextLabel: "演示", retryable: false } });
 async function data(values: (number | null)[], range = query.dateRange) {
   const rows = values.flatMap((value, index) => value === null ? [] : [{ pid: "PH", sumDate: range[index], loginUserCount: value, watchUserCount: value / 2 }]);
-  return new DailyDashboardService({ get: async () => ({ code: 200, msg: { pageData: rows, totalCount: rows.length } }) }).execute({ ...query, dateRange: range });
+  return new DailyDashboardService({ get: async path => path === "/api/admin/bi/v1/metrics" ? emptyMetrics : ({ code: 200, msg: { pageData: rows, totalCount: rows.length } }) }).execute({ ...query, dateRange: range });
 }
 function reading(result: DailyDashboardSuccess): LiveDashboardReading {
   return { query: result.data.query, metricIds: ["M016", "M081"], state: { status: "success", data: result, refreshing: false, refreshError: null }, platformName: "测试平台", retry() {}, canExport: false,
@@ -57,7 +58,7 @@ function reading(result: DailyDashboardSuccess): LiveDashboardReading {
 }
 
 test("留存率分母0不丢掉真实留存人数0",async()=>{
-  const result=await new DailyDashboardService({get:async(path)=>path.includes("reletionsStatPlus")?{data:[{pid:"PH",sumDate:query.dateRange[0],registerCount:0,afterFirstData1:{date:query.dateRange[1],loginCnt:0}}]}:{msg:{pageData:[],totalCount:0}}},()=>new Date("2026-09-12T00:00:00Z")).execute({...query,boardId:"5.8"});
+  const result=await new DailyDashboardService({get:async(path)=>path === "/api/admin/bi/v1/metrics" ? emptyMetrics : path.includes("reletionsStatPlus")?{data:[{pid:"PH",sumDate:query.dateRange[0],registerCount:0,afterFirstData1:{date:query.dateRange[1],loginCnt:0}}]}:{msg:{pageData:[],totalCount:0}}},()=>new Date("2026-09-12T00:00:00Z")).execute({...query,boardId:"5.8"});
   const rows=connectedCohortRows(query,{status:"success",data:result,refreshing:false,refreshError:null});
   expect(rows[0].base).toBe(0);expect(rows[0].cells[0]).toMatchObject({rate:null,count:0,status:"分母为0 · 待验数"});
 });
