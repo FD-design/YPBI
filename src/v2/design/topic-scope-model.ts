@@ -7,8 +7,8 @@ import type { DashboardMetricCardModel } from "../features/dashboards/dashboard-
 /** Real scopes are explicit adapter series. A joint result never comes from joining marginal totals. */
 export function topicLiveScopeId(id: string, scope: TopicScope) {
   if (scope.client !== "overall" && scope.audience !== "overall") {
-    return scope.audience === "existing" && (scope.client === "android" || scope.client === "ios")
-      ? `${id}.${scope.client}Old`
+    return scope.client === "android" || scope.client === "ios"
+      ? `${id}.${scope.client}${scope.audience === "existing" ? "Old" : "New"}`
       : null;
   }
   if (scope.client !== "overall") return `${id}.${scope.client}`;

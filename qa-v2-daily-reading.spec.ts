@@ -44,7 +44,7 @@ test("关闭比较清除双日变化和虚线，比率保留周期整体而非�
   const card = visitCard(page);
   await expect(card.locator(".metric-summary__comparison")).toHaveCount(0);
   await expect(card.locator(".dashboard-metric-card__trend-context")).toHaveCount(0);
-  const ratio = page.getByRole("article", { name: "访问-下载点击转化率", exact: true });
+  const ratio = page.getByRole("article", { name: "落地页访问-下载点击转化率", exact: true });
   await expect(ratio.locator(".metric-summary__supplementary")).toContainText("周期转化率");
   await expect(ratio.locator(".metric-summary__supplementary")).not.toContainText(/周期合计|日均/);
   await acquisition(page);

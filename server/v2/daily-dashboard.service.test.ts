@@ -326,6 +326,131 @@ describe("bi-v1 通用指标渐进替换", () => {
   });
 });
 
+describe("bi-v1 广告次数分子与新用户交叉投影", () => {
+  const date = "2026-09-05";
+  type Scope = Record<string, string>;
+  type MetricRow = Record<string, unknown>;
+  const metricRow = (metricCode: string, dimensions: Scope, numerator: number, denominator = 0, overrides: MetricRow = {}) => ({
+    metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, numerator, denominator,
+    value: denominator ? numerator / denominator : numerator,
+    unit: metricCode === "M110" ? "count_per_user" : metricCode === "M081" || metricCode === "M111" ? "ratio" : "count",
+    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1", ...overrides
+  });
+  const execute = async (boardId: string, rowsForScope: (scope: Scope) => MetricRow[], legacyRows: MetricRow[] = []) => {
+    const requests: { codes: string[]; scope: Scope; dimensions: string[] }[] = [];
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") {
+        const scope = JSON.parse(params.dimensionFilters ?? "{}") as Scope;
+        const codes = params.metricCodes.split(",");
+        requests.push({ codes, scope, dimensions: params.dimensions?.split(",") ?? [] });
+        expect(params).toMatchObject({ pid: "PH", startDate: params.granularity === "summary" ? "2026-09-01" : date });
+        return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null,
+          rows: rowsForScope(scope).filter(row => codes.includes(String(row.metricCode))) } };
+      }
+      if (path.endsWith("pDaySum")) return { msg: { pageData: legacyRows, totalCount: legacyRows.length } };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [date, date] });
+    return { result, requests, point: (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0] };
+  };
+  const adRows = (scope: Scope, overrides: MetricRow = {}) => Object.keys(scope).some(key => key !== "userCohort") || scope.userCohort === "old"
+    ? [] : [metricRow("M110", scope, scope.userCohort === "new" ? 2 : 5, scope.userCohort === "new" ? 3 : 6, overrides),
+      metricRow("M111", scope, scope.userCohort === "new" ? 2 : 4, scope.userCohort === "new" ? 3 : 6)];
+
+  test("广告次数直接读取同范围M110分子，总体5、新用户2，点击人数不复用M111", async () => {
+    const { result, requests, point } = await execute("5.2", scope => adRows(scope), [row({ sumDate: date, adsCount: 99, adsClickedNewCount: 88, adsClickedPerson: 11, adsClickedNewPerson: 7 })]);
+    expect(point("M055.ads")).toMatchObject({ state: "available", sourceStatus: "READY", value: 5, inputs: [{ key: "adsCount", value: 5 }] });
+    expect(point("M055.new")).toMatchObject({ state: "available", sourceStatus: "READY", value: 2, inputs: [{ key: "adsClickedNewCount", value: 2 }] });
+    expect(point("M110").value).toBe(5 / 6);
+    expect(point("M110.new").value).toBe(2 / 3);
+    expect(point("M094.ads")).toMatchObject({ state: "available", value: 11 });
+    expect(point("M094.new")).toMatchObject({ state: "available", value: 7 });
+    expect(point("M094.ads")).not.toHaveProperty("sourceStatus");
+    expect(requests.filter(request => request.codes.includes("M110")).map(({ scope, dimensions }) => ({ scope, dimensions })))
+      .toEqual([{ scope: {}, dimensions: [] }, { scope: { userCohort: "new" }, dimensions: ["userCohort"] }]);
+    expect(requests.every(request => !request.codes.includes("M055") && !request.codes.includes("M094"))).toBe(true);
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("READY零分母的点击次数真零仍可用，人均次数保持zero_denominator", async () => {
+    const { point } = await execute("5.2", scope => adRows(scope, { numerator: 0, denominator: 0, value: null }));
+    for (const id of ["M055.ads", "M055.new"]) expect(point(id)).toMatchObject({ state: "available", sourceStatus: "READY", value: 0, inputs: [{ value: 0 }] });
+    for (const id of ["M110", "M110.new"]) expect(point(id)).toMatchObject({ state: "zero_denominator", sourceStatus: "READY", value: null });
+    for (const id of ["M094.ads", "M094.new"]) expect(point(id)).toMatchObject({ state: "no_record", value: null });
+  });
+
+  for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
+    test(`广告次数不消费${dataStatus}附带分子，新用户状态不受总体READY影响`, async () => {
+      const { point } = await execute("5.2", scope => adRows(scope, scope.userCohort === "new" ? { dataStatus } : {}));
+      expect(point("M055.ads")).toMatchObject({ state: "available", sourceStatus: "READY", value: 5 });
+      expect(point("M055.new")).toMatchObject({ state, sourceStatus: dataStatus, value: null, inputs: [{ value: null }] });
+    });
+  }
+
+  for (const [numerator, state] of [[undefined, "source_failure"], [null, "source_failure"], [-1, "source_failure"], [.5, "invalid_value"], [Number.MAX_SAFE_INTEGER + 1, "invalid_value"]] as const) {
+    test(`广告次数拒绝缺失或非法分子${String(numerator)}，不从value反推`, async () => {
+      const { point } = await execute("5.2", scope => adRows(scope, scope.userCohort === "new" ? { numerator, value: 2 / 3 } : {}));
+      expect(point("M055.ads")).toMatchObject({ state: "available", value: 5 });
+      expect(point("M055.new")).toMatchObject({ state, value: null, inputs: [{ value: null }] });
+    });
+  }
+
+  test("广告次数拒绝错误单位；精确新用户分子不能由总体或含端别的交叉行代替", async () => {
+    for (const invalidRows of [
+      [metricRow("M110", { userCohort: "new" }, 2, 3, { unit: "ratio" })],
+      [metricRow("M110", {}, 5, 6), metricRow("M110", { clientPlatform: "android", userCohort: "new" }, 2, 3)]
+    ]) {
+      const { point } = await execute("5.2", scope => scope.userCohort === "new" ? invalidRows : adRows(scope));
+      expect(point("M055.ads")).toMatchObject({ state: "available", value: 5 });
+      expect(point("M055.new")).toMatchObject({ state: invalidRows.length === 1 ? "invalid_value" : "source_failure", value: null, inputs: [{ value: null }] });
+    }
+  });
+
+  test("广告次数仅在旧源完整有效时沿用既有SOURCE_INCOMPLETE回退", async () => {
+    const { point } = await execute("5.2", scope => adRows(scope, { dataStatus: "SOURCE_INCOMPLETE" }),
+      [row({ sumDate: date, adsCount: 8, adsClickedNewCount: 0 })]);
+    expect(point("M055.ads")).toMatchObject({ state: "available", value: 8 });
+    expect(point("M055.new")).toMatchObject({ state: "available", value: 0 });
+    for (const id of ["M055.ads", "M055.new"]) expect(point(id)).not.toHaveProperty("sourceStatus");
+  });
+
+  const crossRows = (scope: Scope) => {
+    const active = scope.userCohort === "new" && scope.clientPlatform ? scope.clientPlatform === "android" ? 6 : 4 : 99;
+    const viewers = active === 6 ? 2 : active === 4 ? 3 : 88;
+    return [metricRow("M016", scope, active), metricRow("M026", scope, viewers), metricRow("M081", scope, viewers, active)];
+  };
+  for (const boardId of ["5.8", "5.9"]) {
+    const codes = boardId === "5.8" ? ["M016"] : ["M026", "M081"];
+    test(`${boardId}新用户交叉投影按两个过滤字段查询，不借单维值、不相加`, async () => {
+      const { result, requests, point } = await execute(boardId, crossRows);
+      for (const clientPlatform of ["android", "ios"]) {
+        const active = clientPlatform === "android" ? 6 : 4;
+        const viewers = clientPlatform === "android" ? 2 : 3;
+        const request = requests.find(request => request.scope.clientPlatform === clientPlatform && request.scope.userCohort === "new")!;
+        expect(request).toMatchObject({ codes, scope: { clientPlatform, userCohort: "new" } });
+        expect(request.dimensions.toSorted()).toEqual(["clientPlatform", "userCohort"]);
+        for (const code of codes) {
+          const value = code === "M016" ? active : code === "M026" ? viewers : viewers / active;
+          expect(point(`${code}.${clientPlatform}New`)).toMatchObject({ state: "available", sourceStatus: "READY", value });
+          expect(point(`${code}.${clientPlatform}New`).inputs.map(input => input.value)).toEqual(code === "M081" ? [viewers, active] : [value]);
+          expect(result.data.series.find(series => series.metric.id === `${code}.${clientPlatform}New`)!.periodStatistics)
+            .toMatchObject(code === "M081" ? { state: "unsupported" } : { state: "available", values: [{ kind: "daily_average", value }] });
+        }
+      }
+      expect(dailyDashboardMatchesMapping(result)).toBe(true);
+    });
+
+    test(`${boardId}新用户交叉响应缺少端别时拒绝，其他客户端与单维保持可用`, async () => {
+      const { point } = await execute(boardId, scope => crossRows(scope).map(row => scope.clientPlatform === "android" && scope.userCohort === "new"
+        ? { ...row, dimensions: { pid: "PH", userCohort: "new" } } : row));
+      for (const code of codes) {
+        expect(point(`${code}.androidNew`)).toMatchObject({ state: "source_failure", value: null });
+        expect(point(`${code}.iosNew`).state).toBe("available");
+        expect(point(`${code}.new`).state).toBe("available");
+      }
+    });
+  }
+});
+
 describe("bi-v1 分维单位与状态回归", () => {
   const date = "2026-09-05";
   const metricRow = (metricCode: string, overrides: Record<string, unknown> = {}) => ({

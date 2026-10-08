@@ -44,7 +44,7 @@ test("180天全量导出不随点选裁剪，待加工非零；固定留存人�
 
 test("真实接口只读独立范围；单维存在不代表交叉存在，也不回填演示", () => {
   const live = {metricIds:["M016","M016.android","M016.new"],query:{pid:"test",dateRange:["2026-09-02","2026-09-08"]},state:{status:"failure",message:"来源失败"}} as unknown as LiveDashboardReading;
-  expect(topicLiveScopeId("M016",{client:"android",audience:"new"})).toBeNull();
+  expect(topicLiveScopeId("M016",{client:"android",audience:"new"})).toBe("M016.androidNew");
   expect(topicScopeModel("M016",DEFAULT_TOPIC_VIEW,DEFAULT_TOPIC_SCOPE,live).result.status).toBe("failed");
   expect(topicScopeModel("M016",DEFAULT_TOPIC_VIEW,{client:"android",audience:"new"},live).result.status).toBe("not_ready");
   expect(topicScopeModel("M016",DEFAULT_TOPIC_VIEW,{client:"ios",audience:"overall"},live).result.status).toBe("not_ready");
@@ -53,34 +53,49 @@ test("真实接口只读独立范围；单维存在不代表交叉存在，也�
   expect(JSON.stringify(rows)).not.toContain("194,319");
 });
 
-test("活跃与消费共用已登记的 Android/iOS 老用户交叉结果及来源状态", async () => {
+test("活跃与消费共用 Android/iOS 新老用户独立交叉结果及来源状态", async () => {
   const date = "2026-09-08";
-  const rows = ["M016", "M026", "M081"].flatMap(metricCode => ["Android", "iOS"].map(clientPlatform => ({
-    metricCode, businessDate: date, dimensions: { pid: "PH", clientPlatform, userType: "old" },
-    value: metricCode === "M081" ? 2 / 3 : 2, numerator: 2, denominator: metricCode === "M081" ? 3 : 0,
-    unit: metricCode === "M081" ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "first-batch-v1"
+  const rows = ["M016", "M026", "M081"].flatMap(metricCode => ["android", "ios"].flatMap(clientPlatform => ["new", "old"].map(userCohort => {
+    const numerator = userCohort === "new" ? 1 : 2;
+    return { metricCode, businessDate: date, dimensions: { pid: "PH", clientPlatform, userCohort },
+      value: metricCode === "M081" ? numerator / 3 : numerator, numerator, denominator: metricCode === "M081" ? 3 : 0,
+      unit: metricCode === "M081" ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "first-batch-v1" };
   })));
-  const service = new DailyDashboardService({ get: async (path, params) => path === "/api/admin/bi/v1/metrics"
-    ? { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: null, rows: rows.filter(row => String(params?.metricCodes).split(",").includes(row.metricCode)) } }
-    : { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] } });
+  const service = new DailyDashboardService({ get: async (path, params) => {
+    if (path !== "/api/admin/bi/v1/metrics") return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    const filters = JSON.parse(String(params?.dimensionFilters ?? "{}"));
+    return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: null,
+      rows: rows.filter(row => String(params?.metricCodes).split(",").includes(row.metricCode)
+        && filters.clientPlatform === row.dimensions.clientPlatform && filters.userCohort === row.dimensions.userCohort) } };
+  } });
   for (const id of ["M016", "M026", "M081"]) {
     const data = await service.execute({ boardId: id === "M016" ? "5.8" : "5.9", pid: "PH", dateRange: [date, date] });
     const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id), state: { status: "success", data, refreshing: false, refreshError: null }, platformName: "测试", controls: { dirty: false } } as LiveDashboardReading;
-    for (const client of ["android", "ios"] as const) {
-      const scope = { client, audience: "existing" as const };
-      expect(topicLiveScopeId(id, scope)).toBe(`${id}.${client}Old`);
+    for (const client of ["android", "ios"] as const) for (const audience of ["new", "existing"] as const) {
+      const scope = { client, audience };
+      const sourceId = `${id}.${client}${audience === "existing" ? "Old" : "New"}`;
+      const numerator = audience === "new" ? 1 : 2;
+      const value = id === "M081" ? numerator / 3 : numerator;
+      expect(topicLiveScopeId(id, scope)).toBe(sourceId);
       const result = topicScopeModel(id, DEFAULT_TOPIC_VIEW, scope, live).result;
       expect(result.status).toBe("available");
       if (result.status !== "available") throw Error("交叉结果未接入");
-      expect(result.value.raw).toBe(id === "M081" ? 2 / 3 : 2);
-      if (id === "M081") expect(result.calculation).toMatchObject({ numerator: { value: 2 }, denominator: { value: 3 } });
+      expect(result.value.raw).toBe(value);
+      if (id === "M081") expect(result.calculation).toMatchObject({ numerator: { value: numerator }, denominator: { value: 3 } });
       const exported = topicScopeExport(id, DEFAULT_TOPIC_VIEW, live);
-      expect(exported.some(row => row[0] === (client === "android" ? "Android" : "iOS") && row[1] === "老用户" && row[3] === "摘要" && row[5] === (id === "M081" ? (2 / 3) * 100 : 2))).toBe(true);
-      const series = data.data.series.find(item => item.metric.id === `${id}.${client}Old`)!;
-      series.points[0] = { ...series.points[0], state: "no_value", value: null, sourceStatus: "PROCESSING" };
-      expect(topicScopeModel(id, DEFAULT_TOPIC_VIEW, scope, live).result).toMatchObject({ status: "no_values", label: "计算中" });
+      expect(exported.some(row => row[0] === (client === "android" ? "Android" : "iOS") && row[1] === (audience === "new" ? "新用户" : "老用户") && row[3] === "摘要" && row[5] === (id === "M081" ? value * 100 : value))).toBe(true);
+      const series = data.data.series.find(item => item.metric.id === sourceId)!;
+      for (const [sourceStatus, state, status, label] of [
+        ["PROCESSING", "no_value", "no_values", "计算中"],
+        ["SOURCE_INCOMPLETE", "no_value", "no_values", "数据接入中"],
+        ["NOT_MATURE", "immature", "no_values", "待成熟"],
+        ["FAILED", "source_failure", "failed", "数据异常"]
+      ] as const) {
+        series.points[0] = { ...series.points[0], state, value: null, sourceStatus };
+        expect(topicScopeModel(id, DEFAULT_TOPIC_VIEW, scope, live).result).toMatchObject({ status, label });
+      }
     }
-    expect(topicScopeModel(id, DEFAULT_TOPIC_VIEW, { client: "android", audience: "new" }, live).result.status).toBe("not_ready");
+    expect(topicScopeModel(id, DEFAULT_TOPIC_VIEW, { client: "web", audience: "new" }, live).result.status).toBe("not_ready");
     expect(topicScopeModel(id, DEFAULT_TOPIC_VIEW, { client: "web", audience: "existing" }, live).result.status).toBe("not_ready");
   }
 });

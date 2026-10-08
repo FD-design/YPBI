@@ -55,7 +55,7 @@ test("时长单日分秒读法与精确值同步，对比与刷新保持", async
   await panel.getByRole("button", { name: "查看同口径数据表", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("观影用户数");
 });
-for (const [board, title, count] of [["5.8", "活跃与留存", 9], ["5.9", "视频消费表现", 12]]) test(`${title}布局、卡片阅读、导出与响应式`, async ({ page }) => {
+for (const [board, title, count] of [["5.8", "活跃与留存", 8], ["5.9", "视频消费表现", 12]]) test(`${title}布局、卡片阅读、导出与响应式`, async ({ page }) => {
   const errors = []; page.on("pageerror", error => errors.push(error.message));
   await page.goto(`${base}/dashboards/public?design=dashboard-center&board=${board}`);
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
