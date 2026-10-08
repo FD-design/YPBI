@@ -6,7 +6,7 @@
 
 支付分组在同一适配入口归一化 `paymentMethod` 与 `payment_method`：`ali_pay`、`wx_pay`、`usdt_pay` 对应既有支付宝、微信、USDT 投影，保留旧接口别名。`unknown` 独立保存，不代替总体或任一已知支付方式，不新增页面列。两个字段同时返回相同支付方式时只匹配一个切片；冲突字段、未知字段和非法值继续隔离。M112 支付订单获取次数、M113 支付订单获取用户数、M060 支付成功订单数、M114 订单获取—支付成功转化率读取各自独立分组，总体 READY 不覆盖对应分组的未就绪状态。
 
-本次只修正接口兼容，页面布局、指标定义、权限、数据环境、缓存隔离和原来源回退规则保持不变。实现入口为 `server/upstream/bi-v1.metrics-adapter.ts`、`server/v2/daily-dashboard.service.ts`；验证与未发布状态见[本地回归记录](deployment.md#2026-10-08-人均单位与支付分组本地修复)。
+本次只修正接口兼容，页面布局、指标定义、权限、数据环境、缓存隔离和原来源回退规则保持不变。实现入口为 `server/upstream/bi-v1.metrics-adapter.ts`、`server/v2/daily-dashboard.service.ts`；验证见[本地回归记录](deployment.md#2026-10-08-人均单位与支付分组本地修复)，生产版本与实际会话验收状态见[发布记录](deployment.md#2026-10-09-人均单位与支付分组发布)。
 
 ## 2026-10-08 bi-v1 请求级故障隔离
 
