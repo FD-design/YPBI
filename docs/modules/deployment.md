@@ -4,8 +4,9 @@
 
 - 发布范围：经营明细 93 个数值列及关联看板的第一批指标、维度与数据状态映射；页面布局和正式指标口径保持原状。账号、数据库、运行配置、上游凭据及 Google 需求文档不随发布修改。
 - 发布前检查：`verify:release` 通过，包含 845 项 Bun 测试与类型检查、生产构建；`build:internal-preview` 通过；契约测试 17 项、部署归档测试 4 项通过。登录、目录、事件检索和关联专题定向浏览器回归 12 项通过。
-- 经营明细、11 张关联看板和分组交互的浏览器复验 47 项通过，覆盖缺失与真实零、计算依据、导出、失败恢复和三档视口。通过现有 `main` 自动发布流程部署；部署前线上基线为 `e083235`。当前记录不代表发布已完成或生产真实历史数据已通过验数。
-- 本地证据位于 `data/release-checks/20261008/`：`verify-release.log`、`build-internal.log`、`contracts.log`、`browser-regression.log`。浏览器初次最终批次因沙箱内 Chrome 启动被终止，未进入页面；隔离运行时复验另存 `browser-final-authorized.log`，不把启动失败计为业务回归。
+- 经营明细、11 张关联看板和分组交互的浏览器复验 47 项通过，覆盖缺失与真实零、计算依据、导出、失败恢复和三档视口。`5db22d5` 已从线上基线 `e083235` 快进发布；[GitHub 部署记录](https://github.com/FD-design/YPBI/actions/runs/37730334059)成功，发布完成时间为 2026-10-08 13:03（UTC+08:00）。
+- 发布后独立公网检查：页面成功返回并加载新资源 `index-BTy31_Ln.js`，health 为 `ok / real`，匿名 session 返回 401。公网 ready 仍按发布前代理基线返回 404，未扩大代理暴露范围。线上业务值验收待用户登录并重新验证测试 Token；本次发布成功不代表真实历史数据已通过验数。
+- 本地证据位于 `data/release-checks/20261008/`：`verify-release.log`、`build-internal.log`、`contracts.log`、`browser-regression.log`、`deploy-actions.log`、`live-index.html`。浏览器初次最终批次因沙箱内 Chrome 启动被终止，未进入页面；隔离运行时复验另存 `browser-final-authorized.log`，不把启动失败计为业务回归。
 - 自动部署重启会清除内存中的测试 Token 会话；正式凭据和普通登录账号库保留。业务验收使用用户重新验证的测试会话；来源不完整、处理中、未成熟与真实 0 继续区别显示。
 
 ## 2026-09-22 GitHub 自动部署
