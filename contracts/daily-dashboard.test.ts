@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dailyDashboardMatchesQuery, dailyDashboardSuccessSchema, dailyPeriodStatisticsSchema } from "./daily-dashboard";
+import { DAILY_DASHBOARD_MAX_SERIES, dailyDashboardMatchesQuery, dailyDashboardSuccessSchema, dailyPeriodStatisticsSchema } from "./daily-dashboard";
 
 const query = { boardId: "5.7", pid: "PH", dateRange: ["2026-09-05", "2026-09-06"] as [string, string] };
 const statistics = { aggregationVersion: "daily-statistics/v1", dateRange: query.dateRange, dayCount: 2,
@@ -13,11 +13,19 @@ const response = (version: "day-dashboard/v1" | "day-dashboard/v2" = "day-dashbo
     series: [version === "day-dashboard/v1" ? structuredClone(series) : { ...structuredClone(series), periodStatistics: structuredClone(statistics) }] } });
 
 describe("日看板周期统计版本契约", () => {
-  for (const version of ["day-dashboard/v1", "day-dashboard/v2"] as const) test(`${version}兼容四源并允许五源，超出五源拒绝`, () => {
-    for (const count of [4, 5, 6]) {
+  for (const version of ["day-dashboard/v1", "day-dashboard/v2"] as const) test(`${version}支持已登记八类来源，超出八源拒绝`, () => {
+    for (const count of [4, 5, 8, 9]) {
       const result = response(version);
       result.data.sourceApiIds = Array.from({ length: count }, (_, i) => `/api/admin/source-${i}`);
-      expect(dailyDashboardSuccessSchema.safeParse(result).success).toBe(count <= 5);
+      expect(dailyDashboardSuccessSchema.safeParse(result).success).toBe(count <= 8);
+    }
+  });
+  for (const version of ["day-dashboard/v1", "day-dashboard/v2"] as const) test(`${version}容纳完整经营明细切片且保留响应数量上限`, () => {
+    for (const count of [101, DAILY_DASHBOARD_MAX_SERIES, DAILY_DASHBOARD_MAX_SERIES + 1]) {
+      const result = response(version);
+      const template = result.data.series[0];
+      result.data.series = Array.from({ length: count }, (_, i) => ({ ...structuredClone(template), metric: { ...template.metric, id: `slice-${i}` } }));
+      expect(dailyDashboardSuccessSchema.safeParse(result).success).toBe(count <= DAILY_DASHBOARD_MAX_SERIES);
     }
   });
   for (const version of ["day-dashboard/v1", "day-dashboard/v2"] as const) test(`${version}按各自严格结构读取`, () => {

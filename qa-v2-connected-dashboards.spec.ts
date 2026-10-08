@@ -44,7 +44,7 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
           natureRegisterCount:opts.zeroTypes?0:12,channelInternalRegisterCount:opts.zeroTypes?0:16,vipChargeAmt:30,goldChargeAmt:10.5,
           newUserDiamondChargeAmt:10,newUserVipChargeAmt:8,newUserGoldChargeAmt:2,
           totalVistCount:1000,totalDownCountNoDedup:100,visiCountNoDedup:1000,totalDownCountByIp:80,ipStatTotalCount:800,
-          totalAllCount:10,totalSurCount:7,aliTotalCount:6,aliTotalSucCount:4,wxTotalCount:4,wxTotalSucCount:3,
+          totalAllCount:10,totalSurCount:7,alipayOrderFetchCount:6,alipayPaidOrderCount:4,wechatOrderFetchCount:4,wechatPaidOrderCount:3,
           registerCount:100,"afterFirstData1.loginCnt":40,"afterFirstData3.loginCnt":30,"afterFirstData7.loginCnt":20,"afterFirstData30.loginCnt":10,
           "signInRate.raw.signed":20,adsClickedNewCount:6,adsClickedNewPerson:2,navClickedNewCount:1,navClickedNewPerson:1,newUserTotalClickedCount:7,newUserTotalClickedPerson:3,
           pid: query.pid, sumDate: date, loginUserCount: opts.zero ? 0 : (100 + n) * factor, registerUserCount: 20 + n, watchUserCount: 80 + n, totalChargeUserCount: 4, newUserChargeUserCount: 2, diamondChargeAmt: 40.5, adsCount: 20, navCount: 5, totalClickedCount: 26, adsClickedPerson: 10, navClickedPerson: 3, totalClickedPerson: 11 };
@@ -218,7 +218,10 @@ test("支付总体真分母、支付方式真实计数隔离及阅读者导出�
   await page.getByRole("button", { name: "关闭导出", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: /关闭/ }).click();
   await page.getByRole("radio", { name: "支付宝", exact: true }).check();
-  await expect(page.locator(".payment-business__summary .data-origin-badge").filter({ hasText: "待验数" })).toHaveCount(3);
+  await expect(page.locator(".payment-business__summary .data-origin-badge").filter({ hasText: "待验数" })).toHaveCount(4);
+  const orderFetchUsers = page.locator(".payment-business__summary").getByRole("article", { name: "拉单人数轻量诊断", exact: true });
+  await expect(orderFetchUsers.locator(".metric-summary__number strong")).toHaveText("—");
+  await expect(orderFetchUsers.getByRole("status")).toHaveText("字段未返回");
 });
 
 test("支付方式缺失日保留空输入，不用演示填补真实比率", async ({ page }) => {

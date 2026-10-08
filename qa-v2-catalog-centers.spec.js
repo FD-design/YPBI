@@ -1,4 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+const eventSnapshot = JSON.parse(readFileSync(new URL("./src/v2/design/generated/event-catalog-preview.json", import.meta.url), "utf8"));
+const catalogPageSize = 50;
+
 test.use({ channel: "chrome" });
 test("从看板站内切换两个目录不继承贴边或固定高度，返回刷新保持边距", async ({ page }) => {
   await page.setViewportSize({width:1280,height:950});
@@ -50,11 +55,16 @@ test("两个目录共用标题与分页；移动端完整字段局部滚动", as
 });
 test("事件搜索、无查询状态、定义详情、全属性和唯一关闭", async ({ page }) => {
   await page.goto(`${base}/data/events?design=catalog-center`);
-  await page.getByRole("button", { name: "第 3 页", exact: true }).click();
-  await expect(page.locator(".ui-result-table tbody tr")).toHaveCount(1);
-  await page.getByRole("textbox", { name: "搜索事件", exact: true }).fill("page_view");
   const table = page.getByRole("table", { name: "事件目录", exact: true });
-  await expect(table.locator("tbody tr")).toHaveCount(3);
+  const lastPage = Math.ceil(eventSnapshot.items.length / catalogPageSize);
+  const lastPageEvents = eventSnapshot.items.slice((lastPage - 1) * catalogPageSize);
+  await page.getByRole("button", { name: `第 ${lastPage} 页`, exact: true }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(lastPageEvents.length);
+  for (const event of lastPageEvents) await expect(table.getByRole("button", { name: `${event.name} ${event.id}`, exact: true })).toBeVisible();
+  await page.getByRole("textbox", { name: "搜索事件", exact: true }).fill("page_view");
+  const matchingEvents = eventSnapshot.items.filter(event => `${event.name} ${event.id} ${event.definition}`.toLowerCase().includes("page_view"));
+  await expect(table.locator("tbody tr")).toHaveCount(matchingEvents.length);
+  for (const event of matchingEvents) await expect(table.getByRole("button", { name: `${event.name} ${event.id}`, exact: true })).toBeVisible();
   const eventButton = table.getByRole("button", { name: "页面浏览 page_view", exact: true });
   await eventButton.click();
   const dialog = page.getByRole("dialog");

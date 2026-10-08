@@ -5,14 +5,27 @@ const directoryUrl = baseUrl + "/dashboards/public?design=dashboard-center";
 test.use({ channel: "chrome" });
 
 async function openWorkbench(page, url = directoryUrl) {
-  const requests = [], errors = [];
+  const requests = [], environmentRequests = [], errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route(baseUrl + "/api/**", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/bi/v2/data-environment") {
+      environmentRequests.push(route.request());
+      expect(route.request().method()).toBe("GET");
+      expect(route.request().headers()["x-ypbi-data-environment"]).toBe("production");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, data: { mode: "production", testAvailable: false, expiresAt: null, userName: null } })
+      });
+      return;
+    }
     requests.push(route.request().url());
     await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "QA backend unavailable" }) });
   });
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await expect(page.locator(".dashboard-workbench")).toBeVisible();
+  await expect.poll(() => environmentRequests.length).toBeGreaterThan(0);
+  await expect(page.locator(".v2-data-environment")).toHaveText("正式数据");
   return { requests, errors };
 }
 const boardNavigation = (page) => page.getByRole("navigation", { name: "公共看板列表" });

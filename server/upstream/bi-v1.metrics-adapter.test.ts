@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { aggregateBiV1MetricDays, biV1MetricKey, queryBiV1Metrics, type BiV1MetricCode, type BiV1MetricDataStatus } from "./bi-v1.metrics-adapter";
 
-const makeRow = (metricCode: BiV1MetricCode, unit: "count" | "ratio", value: number | null, numerator: number, denominator: number, dimensions: Record<string, string> = {}, dataStatus: BiV1MetricDataStatus = "READY") => ({
+const makeRow = (metricCode: BiV1MetricCode, unit: "count" | "ratio", value: number | null, numerator: number, denominator: number, dimensions: Record<string, unknown> = {}, dataStatus: BiV1MetricDataStatus = "READY") => ({
   metricCode,
   businessDate: "2026-09-21",
   dimensions: { pid: "PH", ...dimensions },
@@ -39,8 +39,8 @@ describe("bi-v1 通用指标适配", () => {
       makeRow("M003", "count", 8, 8, 0, { channel: "b" })
     ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M003"] });
     expect(result[0].metrics.M003).toMatchObject({ state: "invalid_value", dataStatus: null, value: null });
-    expect(result[0].metrics[biV1MetricKey("M003", ["a"])]).toMatchObject({ state: "available", value: 12 });
-    expect(result[0].metrics[biV1MetricKey("M003", ["b"])]).toMatchObject({ state: "available", value: 8 });
+    expect(result[0].metrics[biV1MetricKey("M003", { channel: "a" })]).toMatchObject({ state: "available", value: 12 });
+    expect(result[0].metrics[biV1MetricKey("M003", { channel: "b" })]).toMatchObject({ state: "available", value: 8 });
   });
 
   test("总体与交叉维度独立返回，字段名别名不改变业务切片", () => {
@@ -56,6 +56,87 @@ describe("bi-v1 通用指标适配", () => {
     expect(result[0].metrics[biV1MetricKey("M016", ["ios", "old"])]).toMatchObject({ state: "available", value: 3 });
     expect(result[0].metrics[biV1MetricKey("M020", ["android"])]).toMatchObject({ state: "available", value: .6, numerator: 6, denominator: 10 });
     expect(result[0].metrics[biV1MetricKey("M113", ["alipay"])]).toMatchObject({ state: "available", value: 2 });
+  });
+
+  test("只把对应字段的合法值映射为已登记切片，未知字段与错配值独立保留", () => {
+    const rows = [
+      makeRow("M016", "count", 20, 20, 0),
+      makeRow("M016", "count", 8, 8, 0, { clientPlatform: "android" }),
+      makeRow("M016", "count", 6, 6, 0, { channel: "android" }),
+      makeRow("M016", "count", 5, 5, 0, { videoType: "android" }),
+      makeRow("M016", "count", 4, 4, 0, { userType: "old" }),
+      makeRow("M016", "count", 3, 3, 0, { clientPlatform: "old" }),
+      makeRow("M016", "count", 2, 2, 0, { channel: "android+old" }),
+      makeRow("M016", "count", 1, 1, 0, { clientPlatform: "android", channel: "old" }),
+      makeRow("M113", "count", 9, 9, 0, { payment_method: "alipay" }),
+      makeRow("M113", "count", 7, 7, 0, { channel: "alipay" })
+    ];
+    const result = aggregateBiV1MetricDays(message(rows), {
+      pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016", "M113"]
+    });
+    expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 20 });
+    expect(result[0].metrics[biV1MetricKey("M016", ["android"])]).toMatchObject({ state: "available", value: 8 });
+    expect(result[0].metrics[biV1MetricKey("M016", ["old"])]).toMatchObject({ state: "available", value: 4 });
+    expect(result[0].metrics[biV1MetricKey("M016", ["android", "old"])]).toBeUndefined();
+    expect(result[0].metrics[biV1MetricKey("M113", ["alipay"])]).toMatchObject({ state: "available", value: 9 });
+    for (const row of rows) {
+      expect(result[0].metrics[biV1MetricKey(row.metricCode, row.dimensions)]).toMatchObject({ state: "available", value: row.value });
+    }
+  });
+
+  test("空值和非字符串维度不变成总体，也不通过字符串转换命中业务切片", () => {
+    const dimensions: Record<string, unknown>[] = [
+      { channel: "" }, { channel: null }, { clientPlatform: " " }, { clientPlatform: null },
+      { clientPlatform: ["android"] }, { clientPlatform: "unknown" },
+      { clientPlatform: "android", channel: "" }
+    ];
+    for (const dimension of dimensions) {
+      const result = aggregateBiV1MetricDays(message([
+        makeRow("M016", "count", 12, 12, 0),
+        makeRow("M016", "count", 3, 3, 0, dimension)
+      ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016"] });
+      expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 12 });
+      expect(result[0].metrics[biV1MetricKey("M016", ["android"])]).toBeUndefined();
+      const dimensionOnly = aggregateBiV1MetricDays(message([
+        makeRow("M016", "count", 3, 3, 0, dimension)
+      ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M016"] });
+      expect(dimensionOnly[0].metrics.M016).toMatchObject({ state: "invalid_value", value: null });
+    }
+  });
+
+  test("字段别名、合法值别名与维度顺序继续匹配同一切片", () => {
+    expect(biV1MetricKey("M016", { userCohort: "老用户", platform: "Android" }))
+      .toBe(biV1MetricKey("M016", { clientPlatform: "android", userType: "old_user" }));
+    expect(biV1MetricKey("M008", { registerPlatform: "iOS" })).toBe(biV1MetricKey("M008", ["ios"]));
+    expect(biV1MetricKey("M008", { sourceType: "organic" })).toBe(biV1MetricKey("M008", ["natural"]));
+    expect(biV1MetricKey("M020", { acquisitionType: "internal_channel" })).toBe(biV1MetricKey("M020", ["internal"]));
+    expect(biV1MetricKey("M016", { audience: "android_old_user" })).toBe(biV1MetricKey("M016", ["android", "old"]));
+    expect(biV1MetricKey("M016", { channel: "old", clientPlatform: "android" }))
+      .toBe(biV1MetricKey("M016", { clientPlatform: "android", channel: "old" }));
+  });
+
+  test("同值未知维度的全局状态不污染已登记切片，重复别名只隔离相应切片", () => {
+    const globalRow = (dimensions: Record<string, unknown>, dataStatus: BiV1MetricDataStatus) => ({
+      ...makeRow("M016", "count", null, 0, 0, dimensions, dataStatus), businessDate: undefined
+    });
+    const result = aggregateBiV1MetricDays({ ...message([]), rows: [
+      globalRow({ channel: "android" }, "FAILED"),
+      globalRow({ videoType: "android" }, "SOURCE_INCOMPLETE"),
+      globalRow({ channel: "" }, "PROCESSING"),
+      makeRow("M016", "count", 10, 10, 0),
+      makeRow("M016", "count", 4, 4, 0, { clientPlatform: "android" }),
+      makeRow("M016", "count", 3, 3, 0, { clientPlatform: "ios" }),
+      makeRow("M016", "count", 3, 3, 0, { platform: "iOS" })
+    ] }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", metricCodes: ["M016"] });
+    expect(result[0].metrics.M016).toMatchObject({ state: "available", value: 10 });
+    expect(result[0].metrics[biV1MetricKey("M016", ["android"])]).toMatchObject({ state: "available", value: 4 });
+    expect(result[0].metrics[biV1MetricKey("M016", ["ios"])]).toMatchObject({ state: "invalid_value", value: null });
+    for (const day of result) {
+      expect(day.metrics[biV1MetricKey("M016", { channel: "android" })]).toMatchObject({ state: "source_failure", dataStatus: "FAILED", value: null });
+      expect(day.metrics[biV1MetricKey("M016", { videoType: "android" })]).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null });
+    }
+    expect(result[1].metrics.M016).toMatchObject({ state: "no_record", dataStatus: null, value: null });
+    expect(result[1].metrics[biV1MetricKey("M016", ["android"])]).toBeUndefined();
   });
 
   test("SOURCE_INCOMPLETE 和缺日保持状态，不补0", () => {

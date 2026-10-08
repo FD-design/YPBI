@@ -78,16 +78,42 @@ function normalizedDimensionValue(value: unknown) {
   return dimensionAliases[normalized] ?? normalized;
 }
 
+const platformValues = ["android", "ios", "web"] as const;
+const userValues = ["new", "old", "android+old", "ios+old"] as const;
+const acquisitionValues = ["natural", "internal"] as const;
+const dimensionFieldValues: Readonly<Record<string, readonly string[]>> = {
+  clientPlatform: platformValues,
+  platform: platformValues,
+  registerPlatform: platformValues,
+  d0Platform: platformValues,
+  userType: userValues,
+  audience: userValues,
+  userCohort: userValues,
+  acquisitionType: acquisitionValues,
+  sourceType: acquisitionValues,
+  payment_method: ["alipay", "wechat", "usdt"]
+};
+
 /**
- * The upstream contract owns dimension field names. YPBI identifies a slice by
- * its stable dimension values so aliases such as clientPlatform/platform do not
- * create a second business contract. PID is scope, never a grouping value.
+ * Only recognized field/value pairs match the slices used by dashboard mappings.
+ * Other dimensions retain their field names and values in an isolated key. PID
+ * supplies request scope and does not participate in the grouping key.
  */
 export function biV1MetricKey(code: BiV1MetricCode, dimensions: Record<string, unknown> | readonly string[] = []) {
-  const values = Array.isArray(dimensions)
-    ? dimensions
-    : Object.entries(dimensions).filter(([key]) => key !== "pid").map(([, value]) => value);
-  const tokens = values.map(normalizedDimensionValue).filter(Boolean).sort();
+  if (Array.isArray(dimensions)) {
+    const tokens = dimensions.map(normalizedDimensionValue).filter(Boolean).sort();
+    return tokens.length ? `${code}|${tokens.join("+")}` : code;
+  }
+  const entries = Object.entries(dimensions).filter(([key]) => key !== "pid").sort(([left], [right]) => left.localeCompare(right));
+  const tokens: string[] = [];
+  for (const [field, value] of entries) {
+    const token = typeof value === "string" ? normalizedDimensionValue(value) : "";
+    if (!Object.hasOwn(dimensionFieldValues, field) || !dimensionFieldValues[field].includes(token)) {
+      return `${code}|unmapped:${JSON.stringify(entries)}`;
+    }
+    tokens.push(token);
+  }
+  tokens.sort();
   return tokens.length ? `${code}|${tokens.join("+")}` : code;
 }
 

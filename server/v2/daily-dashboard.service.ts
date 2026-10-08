@@ -49,15 +49,15 @@ const baseMappings = {
   "M112.alipay": { referenceMetricId: "M112", name: "支付订单获取次数（支付宝）", fields: ["alipayOrderFetchCount"], inputIds: ["M112"], inputNames: ["支付订单获取次数（支付宝）"], unit: "次", biV1Metric: "M112", biV1Dimensions: ["alipay"], biV1Only: true },
   "M113.alipay": { referenceMetricId: "M113", name: "支付订单获取用户数（支付宝）", fields: ["alipayOrderFetchUserCount"], inputIds: ["M113"], inputNames: ["支付订单获取用户数（支付宝）"], unit: "人", biV1Metric: "M113", biV1Dimensions: ["alipay"], biV1Only: true },
   "M060.alipay": { referenceMetricId: "M060", name: "支付成功订单数（支付宝）", fields: ["alipayPaidOrderCount"], inputIds: ["M060"], inputNames: ["支付成功订单数（支付宝）"], unit: "次", biV1Metric: "M060", biV1Dimensions: ["alipay"], biV1Only: true },
-  "M114.alipay": { referenceMetricId: "M114", name: "订单获取-支付成功转化率（支付宝）", fields: ["alipayPaidOrderCount", "alipayOrderFetchCount"], inputIds: ["M060", "M112"], inputNames: ["支付成功订单数（支付宝）", "支付订单获取次数（支付宝）"], unit: "%", biV1Metric: "M114", biV1Dimensions: ["alipay"], biV1Only: true },
+  "M114.alipay": { referenceMetricId: "M114", name: "订单获取-支付成功转化率（支付宝）", fields: ["alipayPaidOrderCount", "alipayOrderFetchCount"], inputIds: ["M060", "M112"], inputNames: ["支付成功订单数（支付宝）", "支付订单获取次数（支付宝）"], inputUnits: ["次", "次"], unit: "%", biV1Metric: "M114", biV1Dimensions: ["alipay"], biV1Only: true },
   "M112.wechat": { referenceMetricId: "M112", name: "支付订单获取次数（微信）", fields: ["wechatOrderFetchCount"], inputIds: ["M112"], inputNames: ["支付订单获取次数（微信）"], unit: "次", biV1Metric: "M112", biV1Dimensions: ["wechat"], biV1Only: true },
   "M113.wechat": { referenceMetricId: "M113", name: "支付订单获取用户数（微信）", fields: ["wechatOrderFetchUserCount"], inputIds: ["M113"], inputNames: ["支付订单获取用户数（微信）"], unit: "人", biV1Metric: "M113", biV1Dimensions: ["wechat"], biV1Only: true },
   "M060.wechat": { referenceMetricId: "M060", name: "支付成功订单数（微信）", fields: ["wechatPaidOrderCount"], inputIds: ["M060"], inputNames: ["支付成功订单数（微信）"], unit: "次", biV1Metric: "M060", biV1Dimensions: ["wechat"], biV1Only: true },
-  "M114.wechat": { referenceMetricId: "M114", name: "订单获取-支付成功转化率（微信）", fields: ["wechatPaidOrderCount", "wechatOrderFetchCount"], inputIds: ["M060", "M112"], inputNames: ["支付成功订单数（微信）", "支付订单获取次数（微信）"], unit: "%", biV1Metric: "M114", biV1Dimensions: ["wechat"], biV1Only: true },
+  "M114.wechat": { referenceMetricId: "M114", name: "订单获取-支付成功转化率（微信）", fields: ["wechatPaidOrderCount", "wechatOrderFetchCount"], inputIds: ["M060", "M112"], inputNames: ["支付成功订单数（微信）", "支付订单获取次数（微信）"], inputUnits: ["次", "次"], unit: "%", biV1Metric: "M114", biV1Dimensions: ["wechat"], biV1Only: true },
   "M112.usdt": { referenceMetricId: "M112", name: "支付订单获取次数（USDT）", fields: ["usdtOrderFetchCount"], inputIds: ["M112"], inputNames: ["支付订单获取次数（USDT）"], unit: "次", biV1Metric: "M112", biV1Dimensions: ["usdt"], biV1Only: true },
   "M113.usdt": { referenceMetricId: "M113", name: "支付订单获取用户数（USDT）", fields: ["usdtOrderFetchUserCount"], inputIds: ["M113"], inputNames: ["支付订单获取用户数（USDT）"], unit: "人", biV1Metric: "M113", biV1Dimensions: ["usdt"], biV1Only: true },
   "M060.usdt": { referenceMetricId: "M060", name: "支付成功订单数（USDT）", fields: ["usdtPaidOrderCount"], inputIds: ["M060"], inputNames: ["支付成功订单数（USDT）"], unit: "次", biV1Metric: "M060", biV1Dimensions: ["usdt"], biV1Only: true },
-  "M114.usdt": { referenceMetricId: "M114", name: "订单获取-支付成功转化率（USDT）", fields: ["usdtPaidOrderCount", "usdtOrderFetchCount"], inputIds: ["M060", "M112"], inputNames: ["支付成功订单数（USDT）", "支付订单获取次数（USDT）"], unit: "%", biV1Metric: "M114", biV1Dimensions: ["usdt"], biV1Only: true },
+  "M114.usdt": { referenceMetricId: "M114", name: "订单获取-支付成功转化率（USDT）", fields: ["usdtPaidOrderCount", "usdtOrderFetchCount"], inputIds: ["M060", "M112"], inputNames: ["支付成功订单数（USDT）", "支付订单获取次数（USDT）"], inputUnits: ["次", "次"], unit: "%", biV1Metric: "M114", biV1Dimensions: ["usdt"], biV1Only: true },
   "M008.nature": { "referenceMetricId": "M008", "name": "新增用户数（自然新增）", "fields": ["natureRegisterCount"], "inputIds": ["M008"], "inputNames": ["自然新增用户数"], "unit": "人", "channel": true, "allowAboveOne": false, "biV1Metric": "M008", "biV1Dimensions": ["natural"], "biV1Only": true },
   "M008.internal": { "referenceMetricId": "M008", "name": "新增用户数（内部导量）", "fields": ["channelInternalRegisterCount"], "inputIds": ["M008"], "inputNames": ["内部标识注册用户数"], "unit": "人", "channel": true, "allowAboveOne": false, "biV1Metric": "M008", "biV1Dimensions": ["internal"], "biV1Only": true },
   "M058.nature": {"referenceMetricId":"M058","name":"充值金额（自然新增）","fields":["natureChargeAmt"],"inputIds":["M058"],"inputNames":["自然新增充值金额"],"unit":AMOUNT_UNIT,"channel":true,"allowAboveOne":false},
@@ -123,7 +123,7 @@ const baseMappings = {
   M067: { fields: ["diamondChargeAmt", "totalChargeUserCount"], inputIds: ["M058", "M059"], unit: AMOUNT_PER_USER_UNIT },
   M087: { fields: ["diamondChargeAmt", "loginUserCount"], inputIds: ["M058", "M016"], unit: AMOUNT_PER_USER_UNIT },
   M110: { fields: ["adsCount", "loginUserCount"], inputIds: ["M055", "M016"], inputNames: ["广告点击次数", "日活跃用户数"], unit: "次/人" },
-  "M110.new": { referenceMetricId: "M110", name: "活跃用户人均广告点击次数（新用户）", fields: ["newUserAdClickCount", "newUserActiveUserCount"], inputIds: ["M055", "M016"], inputNames: ["新用户广告点击次数", "新用户日活跃用户数"], unit: "次/人", biV1Metric: "M110", biV1Dimensions: ["new"], biV1Only: true },
+  "M110.new": { referenceMetricId: "M110", name: "活跃用户人均广告点击次数（新用户）", fields: ["newUserAdClickCount", "newUserActiveUserCount"], inputIds: ["M055", "M016"], inputNames: ["新用户广告点击次数", "新用户日活跃用户数"], inputUnits: ["次", "人"], unit: "次/人", biV1Metric: "M110", biV1Dimensions: ["new"], biV1Only: true },
   M111: { fields: ["adsClickedPerson", "loginUserCount"], inputIds: ["M094", "M016"], inputNames: ["广告点击人数", "日活跃用户数"], unit: "%" },
   "M111.new": { referenceMetricId: "M111", name: "活跃用户广告点击渗透率（新用户）", fields: ["newUserAdClickUserCount", "newUserActiveUserCount"], inputIds: ["M094", "M016"], inputNames: ["新用户广告点击人数", "新用户日活跃用户数"], unit: "%", biV1Metric: "M111", biV1Dimensions: ["new"], biV1Only: true },
   "M059.new": { referenceMetricId: "M059", name: "新增付费人数", fields: ["newUserChargeUserCount"], inputIds: ["M059"], inputNames: ["新增付费人数"], unit: "人" },
@@ -148,9 +148,9 @@ const periodStatisticKinds: Partial<Record<CandidateId, readonly DailyPeriodStat
   "M055.new": ["period_sum", "daily_average"], "M055.navigation.new": ["period_sum", "daily_average"], "M055.total.new": ["period_sum", "daily_average"],
   M060: ["period_sum", "daily_average"], "M060.alipay": ["period_sum", "daily_average"], "M060.wechat": ["period_sum", "daily_average"], "M060.usdt": ["period_sum", "daily_average"],
   M112: ["period_sum", "daily_average"], "M112.alipay": ["period_sum", "daily_average"], "M112.wechat": ["period_sum", "daily_average"], "M112.usdt": ["period_sum", "daily_average"],
-  M084: ["period_sum", "daily_average"], M086: ["period_sum", "daily_average"], M095: ["period_sum", "daily_average"],
+  M084: ["period_sum", "daily_average"], M086: ["period_sum", "daily_average"], M095: ["daily_average"],
   M113: ["daily_average"], "M113.alipay": ["daily_average"], "M113.wechat": ["daily_average"], "M113.usdt": ["daily_average"],
-  M018: ["daily_average"], M016: ["daily_average"], "M016.android": ["daily_average"], "M016.ios": ["daily_average"], "M016.web": ["daily_average"], "M016.old": ["daily_average"],
+  M016: ["daily_average"], "M016.android": ["daily_average"], "M016.ios": ["daily_average"], "M016.web": ["daily_average"], "M016.old": ["daily_average"],
   "M016.new": ["daily_average"], "M016.androidOld": ["daily_average"], "M016.iosOld": ["daily_average"],
   M026: ["daily_average"], "M026.android": ["daily_average"], "M026.ios": ["daily_average"], "M026.web": ["daily_average"], "M026.new": ["daily_average"], "M026.old": ["daily_average"],
   "M026.androidOld": ["daily_average"], "M026.iosOld": ["daily_average"],
@@ -184,7 +184,7 @@ function periodStatistics(id: CandidateId, points: readonly DailyPoint[], query:
   return { ...context, state: "available", values: kinds.map(kind => ({ kind, value: kind === "period_sum" ? sum : sum / dayCount })), reason: null };
 }
 const boardMetrics: Record<string, readonly CandidateId[]> = {
-  "5.2": (Object.keys(mappings) as CandidateId[]).filter(id => !mappings[id].checkin && id !== "M034" && id !== "M097"),
+  "5.2": (Object.keys(mappings) as CandidateId[]).filter(id => !mappings[id].checkin),
   "5.14": ["M075"],
   "5.12": ["M101", "M034", "M036", "M097"],
   "5.7": ["M001", "M002", "M003", "M095", "M005", "M099", "M006", "M007", "M008", "M008.android", "M008.ios", "M008.web", "M008.nature", "M008.internal", "M059.new", "M064"],
@@ -252,7 +252,7 @@ function metric(id: CandidateId): DailyReadingMetric {
     definition: mapping.definition ?? definition.authority.definition,
     formula: mapping.formula ?? (mapping.fields.length === 2 ? mapping.inputNames ? mapping.inputNames.join(" ÷ ") + (mapping.unit === "%" ? " × 100%" : "") : definition.authority.registeredFormula : null),
     sourceNote: mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null),
-    inputs: mapping.fields.map((key, index) => ({ key, name: mapping.inputNames?.[index] ?? mapping.name ?? getV2MetricDefinition(mapping.inputIds[index])!.name, unit: mapping.inputUnits?.[index] ?? (mapping.payment ? "次" : key.endsWith("Amt") ? AMOUNT_UNIT : ["adsCount", "navCount", "totalClickedCount", "adsClickedNewCount", "totalVistCount", "navClickedNewCount", "newUserTotalClickedCount", "totalDownCountNoDedup", "visiCountNoDedup"].includes(key) ? "次" : ["totalDownCountByIp", "ipStatTotalCount"].includes(key) ? "IP·天" : "人") }))
+    inputs: mapping.fields.map((key, index) => ({ key, name: mapping.inputNames?.[index] ?? mapping.name ?? getV2MetricDefinition(mapping.inputIds[index])!.name, unit: mapping.inputUnits?.[index] ?? (mapping.fields.length === 1 ? mapping.unit : mapping.payment ? "次" : key.endsWith("Amt") ? AMOUNT_UNIT : ["adsCount", "navCount", "totalClickedCount", "adsClickedNewCount", "totalVistCount", "navClickedNewCount", "newUserTotalClickedCount", "totalDownCountNoDedup", "visiCountNoDedup"].includes(key) ? "次" : ["totalDownCountByIp", "ipStatTotalCount"].includes(key) ? "IP·天" : "人") }))
   };
 }
 const badSource = () => new UpstreamError("DAILY_SOURCE_CONFLICT", "日汇总数据结构或范围异常", 502);
@@ -452,7 +452,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           ?? (mapping.biV1Dimensions && biV1Day?.metrics[mapping.biV1Metric]?.dataStatus !== "READY" ? biV1Day?.metrics[mapping.biV1Metric] : undefined) : undefined;
         if (biV1Point && (mapping.biV1Only || biV1Point.dataStatus && biV1Point.dataStatus !== "SOURCE_INCOMPLETE")) {
           const usesReturnedNumerator = "biV1Value" in mapping && mapping.biV1Value === "numerator";
-          const expectedSourceUnit = usesReturnedNumerator ? "ratio" : mapping.unit === "%" ? "ratio" : "count";
+          const expectedSourceUnit = usesReturnedNumerator || mapping.fields.length === 2 ? "ratio" : "count";
           const unitMismatch = biV1Point.dataStatus === "READY" && biV1Point.unit !== expectedSourceUnit;
           const selectedValue = usesReturnedNumerator ? biV1Point.numerator : biV1Point.value;
           const selectedState = usesReturnedNumerator && biV1Point.dataStatus === "READY" && selectedValue !== null

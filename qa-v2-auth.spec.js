@@ -317,7 +317,7 @@ test("改密成功更新 CSRF，下一次退出使用新令牌且写请求方法
 
   const accountButton = page.getByRole("button", { name: "账号菜单，QA 用户" });
   await accountButton.click();
-  await expect(page.getByRole("menu")).toContainText("@qa.user · 维护者");
+  await expect(page.getByRole("menu")).toContainText("@qa.user · 管理员");
   await page.getByRole("menuitem", { name: "修改密码" }).click();
   await page.getByLabel("当前密码").fill(initialPassword);
   await page.getByRole("button", { name: "取消" }).click();

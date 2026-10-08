@@ -116,22 +116,40 @@ test("注册热力图7/30日统一应用，两种色阶、基数与全表可读"
 
 test("分组显示保留至少一组，同日明细与完整分组可切换",async({page})=>{
   await page.goto(board('5.9'));
-  const panel=page.getByRole('article',{name:'消费结构',exact:true});
-  await panel.getByRole('radio',{name:'新老用户',exact:true}).click();
-  const legend=panel.getByRole('group',{name:'消费结构分组',exact:true});
-  await legend.getByRole('button',{name:'老用户',exact:true}).click();
-  await expect(panel).toContainText('显示 1/2 组');
-  await legend.getByRole('button',{name:'新用户',exact:true}).click();
-  await expect(panel).toContainText('显示 1/2 组');
+  const panel=page.getByRole('article',{name:'消费结构',exact:true}), scope=panel.getByLabel('分析范围',{exact:true});
+  await panel.getByRole('radio',{name:'客户端与新老用户',exact:true}).click();
+  await expect(scope.getByRole('radiogroup',{name:'展示方式',exact:true}).getByRole('radio',{name:'分组对比',exact:true})).toBeChecked();
+  const legend=panel.getByRole('group',{name:'观影用户数分组',exact:true}), summary=panel.locator('.topic-preview__group-summary');
+  await expect(summary.locator('section')).toHaveCount(4);
+  for(const name of ['Android · 老用户','iOS · 新用户','iOS · 老用户']) await legend.getByRole('button',{name,exact:true}).click();
+  await expect(scope).toContainText('当前显示 1 个客户端 × 人群分组');
+  await expect(summary.locator('section')).toHaveCount(1);
+  await legend.getByRole('button',{name:'Android · 新用户',exact:true}).click();
+  await expect(legend.getByRole('button',{name:'Android · 新用户',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(summary.locator('section')).toHaveCount(1);
   await panel.getByRole('button',{name:'查看同口径数据表',exact:true}).click();
-  const dialog=page.getByRole('dialog');
-  await expect(dialog).toContainText('已显示：新用户');
+  const dialog=page.getByRole('dialog'), table=dialog.getByRole('table',{name:'观影用户数逐日明细',exact:true});
+  const selectedValues=['17,495 人','18,109 人','18,686 人','16,754 人','17,153 人','17,470 人','17,699 人'];
+  await expect(dialog).toContainText('已显示：Android · 新用户');
+  await expect(table.getByRole('columnheader')).toHaveText(['日期','Android · 新用户','详情']);
+  await expect(table.locator('tbody tr')).toHaveCount(7);
+  await expect(table.locator('tbody tr td:nth-child(1)')).toHaveText(['2026-09-02','2026-09-03','2026-09-04','2026-09-05','2026-09-06','2026-09-07','2026-09-08']);
+  await expect(table.locator('tbody tr td:nth-child(2)')).toHaveText(selectedValues);
   await dialog.getByRole('button',{name:'查看全部分组',exact:true}).click();
-  await expect(dialog.getByRole('columnheader',{name:'老用户',exact:true})).toBeVisible();
-  await expect(dialog.locator('tbody tr').first().locator('td').nth(2)).toContainText('人');
+  await expect(dialog).toContainText('全部分组与总体');
+  await expect(table.getByRole('columnheader')).toHaveText(['日期','总体','Android · 新用户','Android · 老用户','iOS · 新用户','iOS · 老用户','详情']);
+  await expect(table.locator('tbody tr')).toHaveCount(7);
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(selectedValues);
+  for(const column of [1,2,3,4,5]) await expect(table.locator('tbody tr').first().locator('td').nth(column)).toContainText('人');
+  await dialog.getByRole('button',{name:'仅查看已显示分组',exact:true}).click();
+  await expect(dialog).toContainText('已显示：Android · 新用户');
+  await expect(table.getByRole('columnheader')).toHaveText(['日期','Android · 新用户','详情']);
+  await expect(table.locator('tbody tr')).toHaveCount(7);
+  await expect(table.locator('tbody tr td:nth-child(2)')).toHaveText(selectedValues);
   await page.keyboard.press('Escape');
-  await panel.getByRole('button',{name:'恢复全部',exact:true}).click();
-  await expect(panel).toContainText('显示 2/2 组');
+  await scope.getByRole('button',{name:'恢复全部分组',exact:true}).click();
+  await expect(scope).toContainText('当前显示 4 个客户端 × 人群分组');
+  await expect(summary.locator('section')).toHaveCount(4);
   for(const width of [1280,1024,390]) {await page.setViewportSize({width,height:950});await panel.scrollIntoViewIfNeeded();await page.screenshot({path:`/private/tmp/ypbi-group-redesign-${width}.png`});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);}
 });
 

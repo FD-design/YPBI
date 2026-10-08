@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const DAILY_DASHBOARD_VERSION = "day-dashboard/v2" as const;
 export const DAILY_STATISTICS_VERSION = "daily-statistics/v1" as const;
+// A board includes metric slices and calculation inputs as well as visible columns.
+export const DAILY_DASHBOARD_MAX_SERIES = 256;
 export const dailyDashboardQuerySchema = z.object({
   boardId: z.string().min(1).max(32),
   pid: z.string().min(1).max(32),
@@ -59,11 +61,11 @@ const dailyDashboardDataFields = {
   sourceApiIds: z.array(shortText).min(1).max(8)
 };
 const dailyDashboardV1DataSchema = z.object({ ...dailyDashboardDataFields,
-  schemaVersion: z.literal("day-dashboard/v1"), series: z.array(dailySeriesSchema).min(1).max(100)
+  schemaVersion: z.literal("day-dashboard/v1"), series: z.array(dailySeriesSchema).min(1).max(DAILY_DASHBOARD_MAX_SERIES)
 }).strict();
 const dailyDashboardV2DataSchema = z.object({ ...dailyDashboardDataFields,
   schemaVersion: z.literal(DAILY_DASHBOARD_VERSION),
-  series: z.array(dailySeriesSchema.extend({ periodStatistics: dailyPeriodStatisticsSchema })).min(1).max(100)
+  series: z.array(dailySeriesSchema.extend({ periodStatistics: dailyPeriodStatisticsSchema })).min(1).max(DAILY_DASHBOARD_MAX_SERIES)
 }).strict();
 export const dailyDashboardV2SuccessSchema = z.object({ success: z.literal(true), data: dailyDashboardV2DataSchema }).strict();
 export type DailyDashboardV2Success = z.infer<typeof dailyDashboardV2SuccessSchema>;
