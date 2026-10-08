@@ -4,6 +4,8 @@ import type { CalculationBasis } from "../features/dashboards/CalculationEvidenc
 import type { DashboardMetricCardModel, DashboardMetricTrendPoint } from "../features/dashboards/dashboard-metric-card-model";
 import { demoMetric } from "./extended-board-model";
 import { paymentBusinessAggregate, paymentDates, paymentWays, type PaymentRange } from "./payment-observations";
+import { liveMetricModel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveObservation } from "./live-reading-projection";
 
 export const PAYMENT_BUSINESS_METRICS = [
   { id: "M113", name: "拉单人数", unit: "人" },
@@ -18,6 +20,37 @@ export const PAYMENT_BUSINESS_METRICS = [
 ] as const;
 
 export const PAYMENT_DAILY_FORMULA = "同日充值成功次数 ÷ 同日拉单次数 × 100%";
+
+export function paymentOrderWays(live: LiveDashboardReading | null) {
+  return live?.metricIds.some(id => PAYMENT_BUSINESS_METRICS.some(metric => id === `${metric.id}.usdt`))
+    ? [...paymentWays, { id: "usdt", label: "USDT" }]
+    : paymentWays;
+}
+
+function paymentOrderSourceId(id: string, way: string) {
+  return way === "all" ? id : `${id}.${way}`;
+}
+
+export function paymentOrderObservation(live: LiveDashboardReading | null, id: string, way: string) {
+  if (!live) return null;
+  return liveObservation(live, paymentOrderSourceId(id, way), live.query.dateRange[1]) ?? {
+    value: null, unit: "", display: "—", state: "该范围待接入", basis: undefined, series: undefined,
+    result: live.state.status === "success" ? live.state.data : null
+  };
+}
+
+export function paymentOrderMetricModels(range: PaymentRange, way: string, compared: boolean, live: LiveDashboardReading | null): DashboardMetricCardModel[] {
+  if (!live) return paymentBusinessMetricModels(range, way, compared);
+  return PAYMENT_BUSINESS_METRICS.map(metric => {
+    const sourceId = paymentOrderSourceId(metric.id, way);
+    const original: DashboardMetricCardModel = {
+      metric: { id: sourceId, name: metric.name, definitionLabel: demoMetric(metric.id).definition,
+        aggregationLabel: `${live.query.dateRange.join(" 至 ")} · ${paymentOrderWays(live).find(item => item.id === way)?.label}` },
+      result: { status: "not_ready", label: "该范围待接入", contextLabel: "真实后台查询", retryable: false }
+    };
+    return live.metricIds.includes(sourceId) ? liveMetricModel(original, live) : original;
+  });
+}
 
 export function paymentBusinessDisplay(id: string, value: number) {
   const metric = PAYMENT_BUSINESS_METRICS.find(item => item.id === id)!;

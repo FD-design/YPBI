@@ -21,7 +21,7 @@ const boards = catalog.data.items;
 const url = (id = "5.2", extra = "") => `${base}/dashboards/public?board=${id}&pid=PH&start=2026-09-02&end=2026-09-08${extra}`;
 const card = (page: Page, name: string) => page.locator(".dashboard-metric-card").filter({ has: page.getByRole("link", { name, exact: true }) }).first();
 
-async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean; emptyCurrent?: boolean; zero?: boolean; zeroTypes?: boolean; statistics?: boolean } = {}) {
+async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean; emptyCurrent?: boolean; zero?: boolean; zeroTypes?: boolean; statistics?: boolean; scopedDimensions?: boolean } = {}) {
   const control = { fail: false, failPrevious: false, calls: [] as DailyDashboardQuery[] };
   await page.route("**/api/bi/v2/**", async route => {
     const path = new URL(route.request().url()).pathname;
@@ -45,6 +45,11 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
           newUserDiamondChargeAmt:10,newUserVipChargeAmt:8,newUserGoldChargeAmt:2,
           totalVistCount:1000,totalDownCountNoDedup:100,visiCountNoDedup:1000,totalDownCountByIp:80,ipStatTotalCount:800,
           totalAllCount:10,totalSurCount:7,alipayOrderFetchCount:6,alipayPaidOrderCount:4,wechatOrderFetchCount:4,wechatPaidOrderCount:3,
+          ...(opts.scopedDimensions ? {
+            androidOldUserLoginUserCount:45,iosOldUserLoginUserCount:20,
+            androidOldUserWatchUserCount:30,iosOldUserWatchUserCount:15,
+            usdtOrderFetchUserCount:2,usdtOrderFetchCount:3,usdtPaidOrderCount:1
+          } : {}),
           registerCount:100,"afterFirstData1.loginCnt":40,"afterFirstData3.loginCnt":30,"afterFirstData7.loginCnt":20,"afterFirstData30.loginCnt":10,
           "signInRate.raw.signed":20,adsClickedNewCount:6,adsClickedNewPerson:2,navClickedNewCount:1,navClickedNewPerson:1,newUserTotalClickedCount:7,newUserTotalClickedPerson:3,
           pid: query.pid, sumDate: date, loginUserCount: opts.zero ? 0 : (100 + n) * factor, registerUserCount: 20 + n, watchUserCount: 80 + n, totalChargeUserCount: 4, newUserChargeUserCount: 2, diamondChargeAmt: 40.5, adsCount: 20, navCount: 5, totalClickedCount: 26, adsClickedPerson: 10, navClickedPerson: 3, totalClickedPerson: 11 };
@@ -123,6 +128,55 @@ test("真实二维结束日缺失保留历史与下载", async ({page}) => {
   await panel.getByRole("button",{name:"导出活跃结构二维分析",exact:true}).first().click();
   const downloaded=page.waitForEvent("download");await page.getByRole("button",{name:"下载 XLSX",exact:true}).click();
   expect((await downloaded).suggestedFilename()).toContain("待验数");
+});
+
+for (const scenario of [
+  { board: "5.8", id: "M016", title: "活跃结构", metric: "日活跃用户数", overall: "108", android: "45", ios: "20" },
+  { board: "5.9", id: "M026", title: "消费结构", metric: "观影用户数", overall: "88", android: "30", ios: "15" },
+  { board: "5.9", id: "M081", title: "消费结构", metric: "活跃用户观影率", overall: "81.48", android: "66.67", ios: "75.00" }
+]) test(`真实老用户交叉独立读取、总体与计算输入不串用：${scenario.metric}`, async ({ page }) => {
+  await fixtures(page, { export: true, scopedDimensions: true });
+  await page.goto(url(scenario.board));
+  const panel = page.getByRole("article", { name: scenario.title, exact: true });
+  if (scenario.metric === "活跃用户观影率") {
+    await panel.getByRole("button", { name: /^消费结构指标：/ }).click();
+    await panel.getByRole("option", { name: "活跃用户观影率", exact: true }).click();
+  }
+  const matrix = panel.getByRole("table", { name: scenario.title + "二维交叉表", exact: true });
+  const scope = panel.getByLabel("分析范围", { exact: true });
+  await expect(matrix.getByRole("button", { name: /^Android · 新用户 · / })).toHaveCount(0);
+  await expect(matrix.getByRole("button", { name: /^iOS · 新用户 · / })).toHaveCount(0);
+  for (const [client, value, numerator, denominator] of [
+    ["Android", scenario.android, "30 人", "45 人"],
+    ["iOS", scenario.ios, "15 人", "20 人"]
+  ]) {
+    const cell = matrix.getByRole("button", { name: `${client} · 老用户 · ${value}`, exact: true });
+    await cell.click();
+    await expect(cell).toHaveAttribute("aria-pressed", "true");
+    await expect(panel.locator(".metric-summary__number strong")).toHaveText(value);
+    await expect(scope).toContainText(`当前读取：${client} · 老用户`);
+    await expect(card(page, scenario.metric).locator(".dashboard-metric-card__value strong")).toHaveText(scenario.overall);
+    if (scenario.metric === "活跃用户观影率") {
+      const evidence = panel.getByRole("region", { name: "计算依据", exact: true });
+      await expect(evidence.locator("dt").nth(0)).toHaveText(`分子 · ${client}老用户观影人数`);
+      await expect(evidence.locator("dt").nth(1)).toHaveText(`分母 · ${client}老用户活跃人数`);
+      await expect(evidence.locator("dd")).toHaveText([numerator, denominator, `${value} %`]);
+    }
+    await panel.getByRole("tab", { name: "表格", exact: true }).click();
+    const daily = panel.getByRole("table", { name: scenario.metric + "逐日数据", exact: true });
+    await expect(daily.locator("tbody tr")).toHaveCount(7);
+    const valueColumn = (await daily.locator("thead th").allTextContents()).indexOf("当前值");
+    expect(valueColumn).toBeGreaterThan(0);
+    await expect(daily.locator("tbody tr").last().locator("td").nth(valueColumn)).toHaveText(value);
+    if (scenario.metric === "活跃用户观影率") {
+      await expect(daily.locator("tbody tr").last()).toContainText(numerator);
+      await expect(daily.locator("tbody tr").last()).toContainText(denominator);
+    }
+    if (client === "iOS") await panel.screenshot({ path: `/private/tmp/ypbi-live-fix-${scenario.board}-${scenario.id}.png` });
+    await scope.getByRole("button", { name: "恢复总体", exact: true }).click();
+    await expect(panel.locator(".metric-summary__number strong")).toHaveText(scenario.overall);
+    if (scenario.metric === "活跃用户观影率") await expect(panel.getByRole("region", { name: "计算依据", exact: true }).locator("dd")).toHaveText(["88 人", "108 人", "81.48 %"]);
+  }
 });
 
 for (const board of boards) test(`原版结构保留：${board.title}`, async ({ page }) => {
@@ -209,7 +263,8 @@ test("支付总体真分母、支付方式真实计数隔离及阅读者导出�
   await expect(page.locator(".payment-business__summary")).toContainText("10.13");
   const evidence = page.getByRole("table", { name: "支付方式成功率核对", exact: true });
   await expect(evidence.locator("tbody tr").first().locator("td")).toHaveText(["支付宝", "4 次", "6 次", "66.67 %", "2026-09-08", "待验数"]);
-  await expect(evidence.locator("tbody tr").last().locator("td")).toHaveText(["微信", "3 次", "4 次", "75.00 %", "2026-09-08", "待验数"]);
+  await expect(evidence.getByRole("row").filter({ has: page.getByRole("cell", { name: "微信", exact: true }) }).locator("td")).toHaveText(["微信", "3 次", "4 次", "75.00 %", "2026-09-08", "待验数"]);
+  await expect(evidence.getByRole("row").filter({ has: page.getByRole("cell", { name: "USDT", exact: true }) })).toContainText("字段未返回");
   await page.getByRole("button", { name: "查看同口径数据表" }).first().click();
   const dialog = page.getByRole("dialog"); const overall = dialog.locator("tbody tr").first();
   await expect(overall.locator("td").last()).toContainText("108 人");
@@ -234,6 +289,50 @@ test("支付方式缺失日保留空输入，不用演示填补真实比率", as
     await expect(row).toContainText("当日无记录");
     await expect(row).not.toContainText("演示数据");
   }
+});
+
+for (const emptyEnd of [false, true]) test(`USDT 独立四项投影${emptyEnd ? "缺失日保留范围与来源状态" : "与真实输入同源"}，未接金额不补演示`, async ({ page }) => {
+  await fixtures(page, { export: true, scopedDimensions: true, emptyEnd });
+  await page.goto(url("5.11"));
+  const panel = page.getByRole("article", { name: "拉单与充值转化", exact: true });
+  await panel.getByRole("radio", { name: "USDT", exact: true }).check();
+  const summary = panel.locator(".payment-business__summary");
+  for (const [name, value] of [["拉单人数", "2"], ["拉单次数", "3"], ["充值成功次数", "1"], ["充值成功率", "33.33"]]) {
+    const metric = summary.getByRole("article", { name: name + "轻量诊断", exact: true });
+    await expect(metric.locator(".metric-summary__number strong")).toHaveText(emptyEnd ? "—" : value);
+    if (emptyEnd) await expect(metric.getByRole("status")).toHaveText("当日无记录");
+  }
+  for (const name of ["充值人数", "活跃用户付费率", "充值金额", "活跃用户人均充值金额（ARPU）", "付费用户人均充值金额（ARPPU）"]) {
+    const metric = summary.getByRole("article", { name: name + "轻量诊断", exact: true });
+    await expect(metric.locator(".metric-summary__number strong")).toHaveText("—");
+    await expect(metric.getByRole("status")).toHaveText("该范围待接入");
+    await expect(metric.locator(".metric-summary__number small")).toHaveCount(0);
+  }
+  await expect(summary).not.toContainText("演示数据");
+  const evidence = panel.getByRole("table", { name: "支付方式成功率核对", exact: true });
+  const usdt = evidence.getByRole("row").filter({ has: page.getByRole("cell", { name: "USDT", exact: true }) });
+  await expect(usdt.locator("td")).toHaveText(emptyEnd
+    ? ["USDT", "—", "—", "—", "2026-09-08", "待验数 · 当日无记录"]
+    : ["USDT", "1 次", "3 次", "33.33 %", "2026-09-08", "待验数"]);
+  if (!emptyEnd) await panel.screenshot({ path: "/private/tmp/ypbi-live-fix-payment-usdt.png" });
+  if (!emptyEnd) {
+    const rate = summary.getByRole("article", { name: "充值成功率轻量诊断", exact: true });
+    await rate.getByRole("button", { name: "计算依据", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "计算依据", exact: true });
+    await expect(dialog.locator("dd")).toHaveText(["1 次", "3 次", "33.33 %"]);
+    await expect(dialog).toContainText("USDT");
+    await dialog.getByRole("button", { name: "关闭详情", exact: true }).click();
+  }
+  await panel.getByRole("button", { name: "查看同口径数据表", exact: true }).click();
+  const data = page.getByRole("dialog", { name: "拉单与充值完整明细", exact: true });
+  const row = data.getByRole("row").filter({ has: page.getByRole("cell", { name: "USDT", exact: true }) });
+  await expect(row).not.toContainText("演示数据");
+  await expect(row.locator("td").nth(7)).toContainText("该范围待接入");
+  await expect(row.locator("td").nth(7)).not.toContainText("USD");
+  await expect(row.locator("td").last()).toContainText("该范围待接入");
+  await data.getByRole("button", { name: "关闭数据表", exact: true }).click();
+  await panel.getByRole("radio", { name: "总体", exact: true }).check();
+  await expect(summary.getByRole("article", { name: "充值成功率轻量诊断", exact: true }).locator(".metric-summary__number strong")).toHaveText(emptyEnd ? "—" : "70.00");
 });
 
 test("收藏和我的概览维持原工作台及本地对象，不切换假身份", async ({ page }) => {

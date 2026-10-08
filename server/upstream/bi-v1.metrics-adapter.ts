@@ -39,6 +39,16 @@ const errorSchema = z.object({
   err: z.string().min(1).max(1_000)
 }).loose();
 
+const scopeEnvelopeSchema = z.object({
+  code: z.literal(200),
+  msg: z.object({ rows: z.array(z.unknown()).max(100_000) })
+});
+const rowScopeSchema = z.object({
+  metricCode: z.string().optional().catch(undefined),
+  businessDate: z.iso.date().optional().catch(undefined),
+  dimensions: z.object({ pid: z.string().optional().catch(undefined) }).optional().catch(undefined)
+});
+
 export interface BiV1MetricQuery {
   pid: string;
   startDate: string;
@@ -125,7 +135,7 @@ function parseEnvelope(payload: unknown) {
   const success = successSchema.safeParse(payload);
   if (success.success) return success.data.msg;
   const problem = errorSchema.safeParse(payload);
-  if (problem.success) throw new UpstreamError("BI_V1_REQUEST_REJECTED", problem.data.err, 502);
+  if (problem.success) throw new UpstreamError("BI_V1_REQUEST_REJECTED", problem.data.err, [400, 422].includes(problem.data.code) ? problem.data.code : 502);
   throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 数据结构无法识别", 502);
 }
 
@@ -157,17 +167,23 @@ export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, quer
     metricCodes: metricCodes.join(","),
     includeIncomplete: "true"
   });
-  const message = parseEnvelope(payload);
   const requested = new Set(metricCodes);
-  for (const row of message.rows) {
-    if (!requested.has(row.metricCode) || row.dimensions.pid !== query.pid) {
+  // Scope checks precede value validation so a malformed value cannot turn a
+  // cross-PID, date or metric conflict into a recoverable schema error.
+  const scope = scopeEnvelopeSchema.safeParse(payload);
+  for (const rawRow of scope.success ? scope.data.msg.rows : []) {
+    const parsed = rowScopeSchema.safeParse(rawRow);
+    if (!parsed.success) continue;
+    const row = parsed.data;
+    if (row.metricCode !== undefined && !requested.has(row.metricCode as BiV1MetricCode)
+      || row.dimensions?.pid !== undefined && row.dimensions.pid !== query.pid) {
       throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
     }
     if (row.businessDate && (row.businessDate < query.startDate || row.businessDate > query.endDate)) {
       throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求日期外的数据", 502);
     }
   }
-  return message;
+  return parseEnvelope(payload);
 }
 
 export function aggregateBiV1MetricDays(
@@ -270,7 +286,44 @@ export function aggregateBiV1MetricDays(
   return days;
 }
 
+function canIsolateRequest(error: unknown) {
+  if (!(error instanceof UpstreamError)) return false;
+  if (error.code === "BI_V1_RESPONSE_INVALID") return true;
+  const rejected = error.code === "BI_V1_REQUEST_REJECTED" && [400, 422].includes(error.statusCode)
+    || error.code === "UPSTREAM_INVALID_REQUEST" && error.statusCode === 422;
+  // UpstreamClient normalizes business rejections to 422. Only an explicit
+  // metric-selection error is isolatable; access and other parameter errors stop.
+  return rejected && !/权限|鉴权|认证|登录|token|unauthorized|forbidden|permission|credential|authentication/i.test(error.message)
+    && /指标|metric/i.test(error.message)
+    && /未知|不支持|无效|非法|不存在|未开放|仅支持|只支持|unknown|unsupported|invalid|unrecognized|not supported|not found|not allowed|not available/i.test(error.message);
+}
+
 export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
-  const message = await queryBiV1Metrics(client, query);
-  return { message, days: aggregateBiV1MetricDays(message, query) };
+  const metricCodes = [...new Set(query.metricCodes)];
+  try {
+    const message = await queryBiV1Metrics(client, { ...query, metricCodes });
+    return { message, days: aggregateBiV1MetricDays(message, query) };
+  } catch (error) {
+    if (!metricCodes.length || !canIsolateRequest(error)) throw error;
+  }
+
+  const days: BiV1MetricDay[] = [];
+  for (let date = query.startDate; date <= query.endDate; date = nextDate(date)) days.push({ date, metrics: {} });
+  // The finite metric registry bounds this to one batch plus one sequential
+  // request per metric. Every retry keeps the same client, PID and date range.
+  for (const metricCode of metricCodes) {
+    if (metricCodes.length > 1) {
+      try {
+        const singleQuery = { ...query, metricCodes: [metricCode] };
+        const message = await queryBiV1Metrics(client, singleQuery);
+        aggregateBiV1MetricDays(message, singleQuery).forEach((day, index) => Object.assign(days[index].metrics, day.metrics));
+        continue;
+      } catch (error) {
+        if (!canIsolateRequest(error)) throw error;
+      }
+    }
+    for (const day of days) day.metrics[metricCode] = { ...unavailable(null), state: "source_failure" };
+  }
+  // Split requests have no single upstream envelope, watermark or rule version.
+  return { message: null, days };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { aggregateBiV1MetricDays, biV1MetricKey, queryBiV1Metrics, type BiV1MetricCode, type BiV1MetricDataStatus } from "./bi-v1.metrics-adapter";
+import { aggregateBiV1MetricDays, biV1MetricCodeSchema, biV1MetricKey, queryBiV1Metrics, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDataStatus } from "./bi-v1.metrics-adapter";
+import { UpstreamError } from "./client";
 
 const makeRow = (metricCode: BiV1MetricCode, unit: "count" | "ratio", value: number | null, numerator: number, denominator: number, dimensions: Record<string, unknown> = {}, dataStatus: BiV1MetricDataStatus = "READY") => ({
   metricCode,
@@ -19,6 +20,164 @@ const message = (rows: ReturnType<typeof makeRow>[]) => ({
   generatedAt: "2026-09-22T10:00:00+08:00",
   watermark: "2026-09-22 10:00:00.000",
   rows
+});
+
+describe("bi-v1 批量请求有界隔离", () => {
+  const query = { pid: "PH", startDate: "2020-01-01", endDate: "2020-01-01", metricCodes: ["M008", "M113", "M112", "M060", "M114"] as const };
+  const dated = (row: ReturnType<typeof makeRow>) => ({ ...row, businessDate: query.startDate });
+  const paymentRows = [
+    dated(makeRow("M113", "count", 4, 4, 0)), dated(makeRow("M112", "count", 4, 4, 0)),
+    dated(makeRow("M060", "count", 4, 4, 0)), dated(makeRow("M114", "ratio", 1, 4, 4))
+  ];
+
+  for (const rejection of ["400", "422", "client"] as const) {
+    test(`不支持的指标被${rejection}拒绝后保留支付4/4，失败项不成为真零或无记录`, async () => {
+      const calls: Record<string, string>[] = [];
+      let inFlight = 0, maxInFlight = 0;
+      const client = { get: async (path: string, params: Record<string, string>) => {
+        expect(path).toBe("/api/admin/bi/v1/metrics");
+        calls.push(params);
+        maxInFlight = Math.max(maxInFlight, ++inFlight);
+        await Promise.resolve();
+        inFlight--;
+        if (params.metricCodes.includes("M008")) {
+          if (rejection === "client") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "不支持的指标编码 M008", 422);
+          return { code: Number(rejection), err: "Unsupported metricCodes: M008" };
+        }
+        return { code: 200, msg: message(paymentRows.filter(row => params.metricCodes.split(",").includes(row.metricCode))) };
+      } };
+      const result = await readBiV1MetricDays(client, query);
+      expect(result.message).toBeNull();
+      expect(calls.map(call => call.metricCodes)).toEqual(["M008,M113,M112,M060,M114", ...query.metricCodes]);
+      expect(maxInFlight).toBe(1);
+      for (const call of calls) expect(call).toMatchObject({ pid: "PH", startDate: "2020-01-01", endDate: "2020-01-02", granularity: "day", includeIncomplete: "true" });
+      const metrics = result.days[0].metrics;
+      expect(metrics.M008).toEqual({ state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null });
+      for (const code of ["M113", "M112", "M060"]) expect(metrics[code]).toMatchObject({ state: "available", dataStatus: "READY", value: 4 });
+      expect(metrics.M114).toMatchObject({ state: "available", value: 1, numerator: 4, denominator: 4 });
+    });
+  }
+
+  test("正常批量只请求一次并原样保留上游消息", async () => {
+    const payload = message(paymentRows);
+    let calls = 0;
+    const result = await readBiV1MetricDays({ get: async () => { calls++; return { code: 200, msg: payload }; } }, { ...query, metricCodes: ["M113", "M112", "M060", "M114"] });
+    expect(calls).toBe(1);
+    expect(result.message).toEqual(payload);
+    expect(result.days[0].metrics.M114).toMatchObject({ value: 1, dataStatus: "READY" });
+  });
+
+  for (const invalidField of ["numerator", "denominator", "unit"] as const) {
+    test(`${invalidField}结构错误只隔离对应指标且不放宽字段契约`, async () => {
+      let calls = 0;
+      const rows = [
+        { ...dated(makeRow("M008", "count", null, 0, 0, {}, "SOURCE_INCOMPLETE")), [invalidField]: null },
+        ...paymentRows
+      ];
+      const result = await readBiV1MetricDays({ get: async (_path, params) => {
+        calls++;
+        return { code: 200, msg: { ...message([]), rows: rows.filter(row => params.metricCodes.split(",").includes(row.metricCode)) } };
+      } }, query);
+      expect(calls).toBe(query.metricCodes.length + 1);
+      expect(result.days[0].metrics.M008).toMatchObject({ state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null });
+      expect(result.days[0].metrics.M114).toMatchObject({ state: "available", value: 1, numerator: 4, denominator: 4 });
+    });
+  }
+
+  test("隔离后的真实零、空记录与未就绪状态各自保留，失败覆盖查询内每一天", async () => {
+    const rangeQuery = { ...query, endDate: "2020-01-02", metricCodes: ["M008", "M016", "M026", "M020", "M021", "M022"] as const };
+    const rows = [
+      dated(makeRow("M016", "count", 0, 0, 0)),
+      { ...dated(makeRow("M020", "ratio", null, 0, 0, {}, "NOT_MATURE")), businessDate: undefined },
+      { ...dated(makeRow("M021", "ratio", null, 0, 0, {}, "SOURCE_INCOMPLETE")), businessDate: undefined },
+      { ...dated(makeRow("M022", "ratio", null, 0, 0, {}, "FAILED")), businessDate: undefined }
+    ];
+    const result = await readBiV1MetricDays({ get: async (_path, params) => params.metricCodes.includes("M008")
+      ? { code: 400, err: "未知指标 M008" }
+      : { code: 200, msg: { ...message([]), rows: rows.filter(row => params.metricCodes === row.metricCode) } }
+    }, rangeQuery);
+    expect(result.days[0].metrics.M016).toMatchObject({ state: "available", value: 0 });
+    expect(result.days[1].metrics.M016).toMatchObject({ state: "no_record", value: null });
+    for (const day of result.days) {
+      expect(day.metrics.M008).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
+      expect(day.metrics.M026).toMatchObject({ state: "no_record", dataStatus: null, value: null });
+      expect(day.metrics.M020).toMatchObject({ state: "immature", dataStatus: "NOT_MATURE", value: null });
+      expect(day.metrics.M021).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null });
+      expect(day.metrics.M022).toMatchObject({ state: "source_failure", dataStatus: "FAILED", value: null });
+    }
+  });
+
+  test("所有指标失败时请求数不超过去重后的登记指标数加一，单指标不重复请求", async () => {
+    let calls = 0;
+    const client = { get: async () => { calls++; return { code: 400, err: "未知指标" }; } };
+    const codes = biV1MetricCodeSchema.options;
+    const result = await readBiV1MetricDays(client, { ...query, metricCodes: [...codes, ...codes] });
+    expect(calls).toBe(codes.length + 1);
+    expect(Object.keys(result.days[0].metrics)).toHaveLength(codes.length);
+    expect(Object.values(result.days[0].metrics).every(point => point.state === "source_failure" && point.value === null)).toBe(true);
+    calls = 0;
+    const single = await readBiV1MetricDays(client, { ...query, metricCodes: ["M008", "M008"] });
+    expect(calls).toBe(1);
+    expect(single.days[0].metrics.M008.state).toBe("source_failure");
+  });
+
+  for (const error of [
+    new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", 401),
+    new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", 403),
+    new UpstreamError("UPSTREAM_IP_RESTRICTED", "服务器出口 IP 未加入后台白名单", 403),
+    new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504),
+    new UpstreamError("UPSTREAM_NETWORK_ERROR", "无法连接后台接口", 502),
+    new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429),
+    new UpstreamError("UPSTREAM_INVALID_REQUEST", "当前账号没有 PID 权限", 422),
+    new UpstreamError("UPSTREAM_INVALID_REQUEST", "指标查询没有权限，token 无效", 422),
+    new UpstreamError("UPSTREAM_INVALID_REQUEST", "endDate 必须晚于 startDate", 422),
+    new UpstreamError("UPSTREAM_FAILED", "后台接口返回 500", 502)
+  ]) {
+    test(`${error.code}/${error.statusCode}/${error.message}立即停止，不触发单项重试`, async () => {
+      let calls = 0;
+      await expect(readBiV1MetricDays({ get: async () => { calls++; throw error; } }, query)).rejects.toBe(error);
+      expect(calls).toBe(1);
+    });
+  }
+
+  for (const code of [401, 403, 500, 2002]) {
+    test(`响应体业务码${code}不按指标参数错误重试`, async () => {
+      let calls = 0;
+      await expect(readBiV1MetricDays({ get: async () => { calls++; return { code, err: "metric query unavailable" }; } }, query)).rejects.toMatchObject({ code: "BI_V1_REQUEST_REJECTED" });
+      expect(calls).toBe(1);
+    });
+  }
+
+  for (const row of [
+    { ...paymentRows[0], dimensions: { pid: "OTHER" } },
+    { ...paymentRows[0], businessDate: "2019-12-31" },
+    { ...paymentRows[0], businessDate: "2020-01-02" },
+    { ...paymentRows[0], dimensions: { pid: "OTHER" }, businessDate: "invalid-date" },
+    { ...paymentRows[0], dimensions: { pid: "OTHER" }, metricCode: null },
+    { ...paymentRows[0], metricCode: "M999" }
+  ]) {
+    test(`范围冲突即使伴随空分子仍整批拒绝：${JSON.stringify(row.dimensions)}/${row.businessDate}/${row.metricCode}`, async () => {
+      let calls = 0;
+      await expect(readBiV1MetricDays({ get: async () => {
+        calls++;
+        return { code: 200, msg: { ...message([]), rows: [{ ...row, numerator: null }, ...paymentRows] } };
+      } }, query)).rejects.toMatchObject({ code: "BI_V1_SCOPE_CONFLICT" });
+      expect(calls).toBe(1);
+    });
+  }
+
+  test("单项恢复过程中遇到范围冲突或鉴权失败立即停止后续请求", async () => {
+    for (const failure of ["scope", "auth"] as const) {
+      const calls: string[] = [];
+      await expect(readBiV1MetricDays({ get: async (_path, params) => {
+        calls.push(params.metricCodes);
+        if (params.metricCodes.includes("M008")) return { code: 400, err: "未知指标 M008" };
+        if (failure === "auth") throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", 401);
+        return { code: 200, msg: message(paymentRows) };
+      } }, query)).rejects.toMatchObject({ code: failure === "auth" ? "UPSTREAM_AUTH_FAILED" : "BI_V1_SCOPE_CONFLICT" });
+      expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113"]);
+    }
+  });
 });
 
 describe("bi-v1 通用指标适配", () => {

@@ -2,9 +2,49 @@ import { expect, test } from "bun:test";
 import { metricRows } from "./topic-preview-export";
 import { paymentBusinessAggregate } from "./payment-observations";
 import { paymentOrderSheets } from "./PaymentOrderAnalysis";
-import { PAYMENT_BUSINESS_METRICS, paymentBusinessMetricModel, paymentBusinessMetricModels } from "./payment-order-reading";
+import { PAYMENT_BUSINESS_METRICS, paymentBusinessMetricModel, paymentBusinessMetricModels, paymentOrderMetricModels, paymentOrderObservation, paymentOrderWays } from "./payment-order-reading";
+import { DailyDashboardService } from "../../../server/v2/daily-dashboard.service";
+import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 
 const range = { start: "2026-09-02", end: "2026-09-08" };
+
+test("USDT 范围按登记目录接入，真实四指标与未知金额状态独立", async () => {
+  const values: Record<string, number> = { M113: 0, M112: 2, M060: 1, M114: .5 };
+  const rows = Object.entries(values).map(([metricCode, value]) => ({
+    metricCode, businessDate: range.end, dimensions: { pid: "PH", payment_method: "usdt" }, value,
+    numerator: metricCode === "M114" ? 1 : value, denominator: metricCode === "M114" ? 2 : 0,
+    unit: metricCode === "M114" ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "first-batch-v1"
+  }));
+  const data = await new DailyDashboardService({ get: async path => path === "/api/admin/bi/v1/metrics"
+    ? { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: null, rows } }
+    : { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] }
+  }).execute({ boardId: "5.11", pid: "PH", dateRange: [range.end, range.end] });
+  const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id), state: { status: "success", data, refreshing: false, refreshError: null }, platformName: "测试", controls: { dirty: false } } as LiveDashboardReading;
+  expect(paymentOrderWays(live).map(item => item.id)).toEqual(["all", "alipay", "wechat", "usdt"]);
+  expect(paymentOrderWays(null).map(item => item.id)).toEqual(["all", "alipay", "wechat"]);
+  const models = paymentOrderMetricModels(range, "usdt", false, live);
+  for (const model of models) {
+    const id = model.metric.id.split(".")[0];
+    if (id in values) {
+      expect(model.result.status).toBe("available");
+      if (model.result.status === "available") expect(model.result.value.raw).toBe(values[id]);
+    } else expect(model.result).toMatchObject({ status: "not_ready", label: "该范围待接入" });
+  }
+  expect(paymentOrderObservation(live, "M114", "usdt")).toMatchObject({ value: .5, basis: { numerator: { value: 1 }, denominator: { value: 2 } } });
+  expect(paymentOrderObservation(live, "M058", "usdt")).toMatchObject({ value: null, unit: "", display: "—", state: "该范围待接入", basis: undefined });
+  const exported = metricRows(models, () => "");
+  expect(exported.find(row => row[0] === "充值金额")?.[3]).toBeNull();
+  expect(exported.find(row => row[0] === "充值金额")?.[4]).toBe("");
+  const success = data.data.series.find(series => series.metric.id === "M114.usdt")!;
+  success.points[0] = { ...success.points[0], state: "no_value", value: null, sourceStatus: "PROCESSING" };
+  expect(paymentOrderWays(live).some(item => item.id === "usdt")).toBe(true);
+  expect(paymentOrderObservation(live, "M114", "usdt")).toMatchObject({ value: null, state: "计算中" });
+  expect(paymentOrderMetricModels(range, "usdt", false, live).find(model => model.metric.id === "M114.usdt")?.result).toMatchObject({ status: "no_values", label: "计算中" });
+  const failed = { ...live, state: { status: "failure", message: "来源失败" } } as LiveDashboardReading;
+  expect(paymentOrderWays(failed).some(item => item.id === "usdt")).toBe(true);
+  expect(paymentOrderMetricModels(range, "usdt", false, failed).find(model => model.metric.id === "M114.usdt")?.result.status).toBe("failed");
+  expect(paymentOrderObservation(failed, "M114", "usdt")).toMatchObject({ value: null, state: "读取失败" });
+});
 
 test("支付日报摘要读取同一支付方式的所选日值和精确 D−1、D−7", () => {
   const model = paymentBusinessMetricModel("M114", range, "alipay", true);

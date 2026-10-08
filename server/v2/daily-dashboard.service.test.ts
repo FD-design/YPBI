@@ -142,6 +142,55 @@ describe("bi-v1 通用指标渐进替换", () => {
     expect(point).toMatchObject({ state: "no_value", sourceStatus: "PROCESSING", value: null, inputs: [{ value: null }] });
   });
 
+  test("核心批次无关指标拒绝后支付4/4与支付看板一致，不被旧来源2/0覆盖", async () => {
+    const businessDate = "2020-01-01";
+    const metricCalls: string[][] = [];
+    let legacyPaymentCalls = 0;
+    const paymentRows = ["M113", "M112", "M060", "M114"].map(metricCode => ({
+      metricCode, businessDate, dimensions: { pid: "PH" }, value: metricCode === "M114" ? 1 : 4,
+      numerator: 4, denominator: metricCode === "M114" ? 4 : 0, unit: metricCode === "M114" ? "ratio" : "count",
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "payment-v1"
+    }));
+    const service = new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") {
+        const metricCodes = params.metricCodes.split(",");
+        metricCalls.push(metricCodes);
+        expect(params).toMatchObject({ pid: "PH", startDate: businessDate, endDate: "2020-01-02", granularity: "day", includeIncomplete: "true" });
+        if (metricCodes.includes("M018")) throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "不支持的指标编码 M018", 422);
+        return { code: 200, msg: {
+          metricVersion: "bi-v1", generatedAt: "2026-10-08T10:00:00+08:00", watermark: null,
+          rows: paymentRows.filter(row => metricCodes.includes(row.metricCode))
+        } };
+      }
+      if (path.endsWith("getRechargeSucRate")) {
+        legacyPaymentCalls++;
+        return { code: 200, msg: { pid: "PH", pageData: [], totalAllCount: 2, totalSurCount: 0 } };
+      }
+      if (path.includes("reletionsStatPlus")) return { data: [] };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 } };
+    } }, () => new Date("2026-10-08T10:00:00+08:00"));
+    const range = { pid: "PH", dateRange: [businessDate, businessDate] as [string, string] };
+    const core = await service.execute({ ...range, boardId: "5.2" });
+    const coreCalls = metricCalls.length;
+    const payment = await service.execute({ ...range, boardId: "5.11" });
+    expect(metricCalls[0]).toContain("M018");
+    expect(coreCalls).toBe(metricCalls[0].length + 1);
+    expect(metricCalls.slice(1, coreCalls).every(codes => codes.length === 1)).toBe(true);
+    expect(metricCalls).toHaveLength(coreCalls + 1);
+    expect(metricCalls[coreCalls]).not.toContain("M018");
+    expect(legacyPaymentCalls).toBe(2);
+    const point = (result: typeof core, id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    for (const id of ["M113", "M112", "M060", "M114"]) {
+      expect(point(core, id)).toEqual(point(payment, id));
+      expect(point(core, id)).toMatchObject({ state: "available", sourceStatus: "READY", value: id === "M114" ? 1 : 4 });
+    }
+    expect(point(core, "M114").inputs).toEqual([{ key: "totalSurCount", value: 4 }, { key: "totalAllCount", value: 4 }]);
+    expect(point(core, "M018")).toMatchObject({ state: "source_failure", value: null });
+    expect(point(core, "M018")).not.toHaveProperty("sourceStatus");
+    expect(dailyDashboardMatchesMapping(core)).toBe(true);
+    expect(dailyDashboardMatchesMapping(payment)).toBe(true);
+  });
+
   test("核心总览批次中的未就绪脏值不压掉其他 READY 指标", async () => {
     const metricRow = (metricCode: string, value: number, numerator = value, denominator = 0, unit: "count" | "ratio" = "count") => ({
       metricCode, businessDate: date, dimensions: { pid: "PH" }, value, numerator, denominator, unit,
