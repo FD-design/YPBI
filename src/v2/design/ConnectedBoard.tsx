@@ -39,11 +39,9 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
   const refresh = () => { retry(); previous.retry(); if (referenceQuery) reference.retry(); };
   const apply = () => {
     if (!dirty) { refresh(); return; }
-    requestAnimationFrame(() => {
-      const params = new URLSearchParams(window.location.search);
-      for (const [key, value] of Object.entries({ board: query.boardId, pid, start: range.start, end: range.end, compare: comparison })) params.set(key, value);
-      navigate("/dashboards/public?" + params, { historyState: window.history.state });
-    });
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries({ board: query.boardId, pid, start: range.start, end: range.end, compare: comparison })) params.set(key, value);
+    navigate("/dashboards/public?" + params, { historyState: window.history.state });
   };
   const exportData = () => {
     if (!canExport || state.status !== "success" || !state.data || dirty) return;

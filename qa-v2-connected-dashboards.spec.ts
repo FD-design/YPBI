@@ -235,6 +235,37 @@ test("真实周期对比、切平台、纯数值、历史返回不进入设计�
   expect(page.url()).not.toContain("design="); expect(control.calls.some(query => query.dateRange[1] === "2026-09-01")).toBe(true);
 });
 
+test("缺省入口修改日期在动画帧暂停时同步提交真实查询，刷新保留条件", async ({ page }) => {
+  const control = await fixtures(page);
+  await page.goto(`${base}/dashboards/public`);
+  const header = page.locator(".dashboard-header");
+  await header.getByRole("button", { name: /^日期范围：/ }).click();
+  const dates = page.getByRole("dialog", { name: "选择日期范围" });
+  await dates.getByLabel("开始日期", { exact: true }).fill("2020-01-01");
+  await dates.getByLabel("结束日期", { exact: true }).fill("2020-01-01");
+  await dates.getByRole("button", { name: "确认日期", exact: true }).click();
+  await expect(header.getByRole("button", { name: "日期范围：2020.01.01 — 2020.01.01", exact: true })).toBeVisible();
+  const appliedUrl = await header.getByRole("button", { name: "应用", exact: true }).evaluate(button => {
+    const requestFrame = window.requestAnimationFrame;
+    window.requestAnimationFrame = () => 0;
+    try {
+      (button as HTMLButtonElement).click();
+      return window.location.href;
+    } finally {
+      window.requestAnimationFrame = requestFrame;
+    }
+  });
+  const params = new URL(appliedUrl).searchParams;
+  expect(Object.fromEntries(params)).toMatchObject({ board: "5.2", pid: "PH", start: "2020-01-01", end: "2020-01-01", compare: "none" });
+  expect(JSON.parse(params.get("view")!)).toMatchObject({ range: { start: "2020-01-01", end: "2020-01-01" } });
+  await expect.poll(() => control.calls.some(query => query.pid === "PH" && query.dateRange[0] === "2020-01-01" && query.dateRange[1] === "2020-01-01")).toBe(true);
+  await expect(card(page, "日活跃用户数").locator("time.metric-summary__date")).toHaveAttribute("datetime", "2020-01-01");
+  await expect(card(page, "日活跃用户数").locator(".metric-summary__number strong")).toHaveText("101");
+  await page.reload();
+  await expect(header.getByRole("button", { name: "日期范围：2020.01.01 — 2020.01.01", exact: true })).toBeVisible();
+  await expect(card(page, "日活跃用户数").locator("time.metric-summary__date")).toHaveAttribute("datetime", "2020-01-01");
+});
+
 test("结束日缺失保留历史趋势与明细，真实0保持0", async ({ page }) => {
   await fixtures(page, { emptyEnd: true }); await page.goto(url("5.8"));
   const active = card(page, "日活跃用户数");
