@@ -237,7 +237,7 @@ describe("bi-v1 通用指标渐进替换", () => {
   });
 
   test("经营明细总体与交叉维度一次接入，不把已返回维度误判为待支持", async () => {
-    const metricRow = (metricCode: string, value: number, dimensions: Record<string, string> = {}, numerator = value, denominator = 0, unit: "count" | "ratio" = "count") => ({
+    const metricRow = (metricCode: string, value: number, dimensions: Record<string, string> = {}, numerator = value, denominator = 0, unit: "count" | "ratio" | "count_per_user" = "count") => ({
       metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, value, numerator, denominator, unit,
       dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "first-batch-v1"
     });
@@ -254,7 +254,7 @@ describe("bi-v1 通用指标渐进替换", () => {
       metricRow("M020", .8, {}, 8, 10, "ratio"), metricRow("M020", .75, { d0Platform: "Android" }, 3, 4, "ratio"),
       metricRow("M020", 1, { d0Platform: "iOS" }, 2, 2, "ratio"), metricRow("M020", .5, { acquisitionType: "natural" }, 2, 4, "ratio"),
       metricRow("M020", 1, { acquisitionType: "internal_channel" }, 2, 2, "ratio"),
-      metricRow("M110", 2, { userType: "new" }, 4, 2, "ratio"), metricRow("M111", .5, { userType: "new" }, 1, 2, "ratio"),
+      metricRow("M110", 2, { userType: "new" }, 4, 2, "count_per_user"), metricRow("M111", .5, { userType: "new" }, 1, 2, "ratio"),
       metricRow("M113", 4), metricRow("M113", 1, { payment_method: "alipay" }), metricRow("M113", 2, { payment_method: "wechat" }), metricRow("M113", 1, { payment_method: "usdt" }),
       metricRow("M112", 2, { payment_method: "usdt" }), metricRow("M060", 1, { payment_method: "usdt" }), metricRow("M114", .5, { payment_method: "usdt" }, 1, 2, "ratio")
     ];
@@ -330,29 +330,34 @@ describe("bi-v1 分维单位与状态回归", () => {
     metricCode, businessDate: date, dimensions: { pid: "PH" }, value: 1, numerator: 1, denominator: 0,
     unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1", ...overrides
   });
-  const execute = (rows: Record<string, unknown>[]) => new DailyDashboardService({ get: async path => {
+  const execute = (rows: Record<string, unknown>[], boardId = "5.2") => new DailyDashboardService({ get: async path => {
     if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
       metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows
     } };
     return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
-  } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId: "5.2", pid: "PH", dateRange: [date, date] });
+  } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [date, date] });
 
-  test("人均广告次数接受大于1的ratio并保留同批分子分母", async () => {
-    const result = await execute([metricRow("M110", {
-      dimensions: { pid: "PH", userType: "new" }, value: 2.5, numerator: 5, denominator: 2, unit: "ratio"
-    })]);
-    const series = result.data.series.find(item => item.metric.id === "M110.new")!;
-    expect(series.points[0]).toMatchObject({ state: "available", sourceStatus: "READY", value: 2.5,
-      inputs: [{ key: "newUserAdClickCount", value: 5 }, { key: "newUserActiveUserCount", value: 2 }] });
-    expect(series.metric).toMatchObject({ unit: "次/人", inputs: [{ unit: "次" }, { unit: "人" }] });
-    expect(series.periodStatistics.state).toBe("unsupported");
-    expect(dailyDashboardMatchesMapping(result)).toBe(true);
-  });
+  for (const cohortField of ["userCohort", "userType"] as const) {
+    for (const [numerator, denominator] of [[2, 3], [5, 2]] as const) {
+      test(`人均广告次数按${cohortField}读取count_per_user并保留${numerator}/${denominator}精确结果`, async () => {
+        const result = await execute([metricRow("M110", {
+          dimensions: { pid: "PH", [cohortField]: "new" }, value: numerator / denominator,
+          numerator, denominator, unit: "count_per_user"
+        })]);
+        const series = result.data.series.find(item => item.metric.id === "M110.new")!;
+        expect(series.points[0]).toMatchObject({ state: "available", sourceStatus: "READY", value: numerator / denominator,
+          inputs: [{ key: "newUserAdClickCount", value: numerator }, { key: "newUserActiveUserCount", value: denominator }] });
+        expect(series.metric).toMatchObject({ unit: "次/人", inputs: [{ unit: "次" }, { unit: "人" }] });
+        expect(series.periodStatistics.state).toBe("unsupported");
+        expect(dailyDashboardMatchesMapping(result)).toBe(true);
+      });
+    }
+  }
 
   for (const [numerator, denominator, value, state] of [[0, 2, 0, "available"], [0, 0, null, "zero_denominator"]] as const) {
     test(`人均广告次数保留${state}状态与真实输入`, async () => {
       const result = await execute([metricRow("M110", {
-        dimensions: { pid: "PH", userType: "new" }, value, numerator, denominator, unit: "ratio"
+        dimensions: { pid: "PH", userCohort: "new" }, value, numerator, denominator, unit: "count_per_user"
       })]);
       expect(result.data.series.find(item => item.metric.id === "M110.new")!.points[0]).toMatchObject({
         state, value, sourceStatus: "READY", inputs: [{ value: numerator }, { value: denominator }]
@@ -360,18 +365,40 @@ describe("bi-v1 分维单位与状态回归", () => {
     });
   }
 
-  test("人均广告次数拒绝计数单位，不把缺失分母当作0", async () => {
-    const result = await execute([metricRow("M110", { dimensions: { pid: "PH", userType: "new" } })]);
-    expect(result.data.series.find(item => item.metric.id === "M110.new")!.points[0]).toMatchObject({
-      state: "invalid_value", value: null, sourceStatus: "READY", inputs: [{ value: null }, { value: null }]
+  for (const unit of ["ratio", "count"] as const) {
+    test(`人均广告次数拒绝错误${unit}单位，不消费其数值与输入`, async () => {
+      const result = await execute([metricRow("M110", {
+        dimensions: { pid: "PH", userCohort: "new" }, unit,
+        value: unit === "count" ? 2 : 2 / 3, numerator: 2, denominator: unit === "count" ? 0 : 3
+      })]);
+      expect(result.data.series.find(item => item.metric.id === "M110.new")!.points[0]).toMatchObject({
+        state: "invalid_value", value: null, sourceStatus: "READY", inputs: [{ value: null }, { value: null }]
+      });
     });
+  }
+
+  test("普通比率拒绝count_per_user，保留同批合法人均广告结果", async () => {
+    const result = await execute([
+      metricRow("M110", { dimensions: { pid: "PH", userCohort: "new" }, value: 2 / 3, numerator: 2, denominator: 3, unit: "count_per_user" }),
+      metricRow("M111", { dimensions: { pid: "PH", userCohort: "new" }, value: .5, numerator: 1, denominator: 2, unit: "count_per_user" }),
+      metricRow("M114", { value: .5, numerator: 1, denominator: 2, unit: "count_per_user" }),
+      metricRow("M114", { dimensions: { pid: "PH", paymentMethod: "ali_pay" }, value: .5, numerator: 1, denominator: 2, unit: "count_per_user" })
+    ]);
+    const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    expect(point("M110.new")).toMatchObject({ state: "available", sourceStatus: "READY", value: 2 / 3,
+      inputs: [{ value: 2 }, { value: 3 }] });
+    for (const id of ["M111.new", "M114", "M114.alipay"]) {
+      expect(point(id)).toMatchObject({ state: "invalid_value", sourceStatus: "READY", value: null,
+        inputs: [{ value: null }, { value: null }] });
+    }
   });
 
   for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
     test(`广告分维和留存人数保留${dataStatus}而不消费附带数值`, async () => {
       const result = await execute([
         ...["M110", "M111"].map(code => metricRow(code, {
-          dimensions: { pid: "PH", userType: "new" }, value: .5, numerator: 1, denominator: 2, unit: "ratio", dataStatus
+          dimensions: { pid: "PH", userCohort: "new" }, value: .5, numerator: 1, denominator: 2,
+          unit: code === "M110" ? "count_per_user" : "ratio", dataStatus
         })),
         metricRow("M020", { value: .5, numerator: 1, denominator: 2, unit: "ratio", dataStatus })
       ]);
@@ -382,6 +409,77 @@ describe("bi-v1 分维单位与状态回归", () => {
         expect(point.inputs.every(input => input.value === null)).toBe(true);
       }
     });
+  }
+
+  const paymentCodes = ["M112", "M113", "M060", "M114"] as const;
+  const paymentRows = (dimensions: Record<string, string>, [requests, users, successes]: readonly [number, number, number], dataStatus = "READY") => [
+    metricRow("M112", { dimensions: { pid: "PH", ...dimensions }, value: requests, numerator: requests, dataStatus }),
+    metricRow("M113", { dimensions: { pid: "PH", ...dimensions }, value: users, numerator: users, dataStatus }),
+    metricRow("M060", { dimensions: { pid: "PH", ...dimensions }, value: successes, numerator: successes, dataStatus }),
+    metricRow("M114", { dimensions: { pid: "PH", ...dimensions }, value: successes / requests,
+      numerator: successes, denominator: requests, unit: "ratio", dataStatus })
+  ];
+  const paymentMethods = [
+    { id: "alipay", formal: "ali_pay", counts: [2, 1, 1] },
+    { id: "wechat", formal: "wx_pay", counts: [5, 3, 2] },
+    { id: "usdt", formal: "usdt_pay", counts: [11, 6, 7] }
+  ] as const;
+
+  for (const dimensionField of ["paymentMethod", "payment_method"] as const) {
+    for (const boardId of ["5.2", "5.11"]) {
+      for (const sourceValues of ["formal", "legacy"] as const) {
+        test(`${boardId}按${dimensionField}的${sourceValues}支付值精确分组，总体与unknown独立`, async () => {
+          const result = await execute([
+            ...paymentRows({}, [41, 23, 17]),
+            ...paymentMethods.flatMap(method => paymentRows({ [dimensionField]: sourceValues === "formal" ? method.formal : method.id }, method.counts)),
+            ...paymentRows({ [dimensionField]: "unknown" }, [101, 70, 89])
+          ], boardId);
+          const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+          for (const [method, requests, users, successes] of [["all", 41, 23, 17], ["alipay", 2, 1, 1], ["wechat", 5, 3, 2], ["usdt", 11, 6, 7]] as const) {
+            const values = [requests, users, successes, successes / requests];
+            paymentCodes.forEach((code, index) => {
+              const id = method === "all" ? code : `${code}.${method}`;
+              expect(point(id)).toMatchObject({ state: "available", value: values[index], sourceStatus: "READY" });
+              expect(point(id).inputs.map(input => input.value)).toEqual(code === "M114" ? [successes, requests] : [values[index]]);
+            });
+          }
+          expect(dailyDashboardMatchesMapping(result)).toBe(true);
+        });
+      }
+
+      test(`${boardId}仅有${dimensionField}=unknown时不生成总体或三种支付方式结果`, async () => {
+        const result = await execute(paymentRows({ [dimensionField]: "unknown" }, [101, 70, 89]), boardId);
+        for (const code of paymentCodes) for (const method of ["", ".alipay", ".wechat", ".usdt"]) {
+          const id = `${code}${method}`;
+          const point = result.data.series.find(series => series.metric.id === id)!.points[0];
+          expect(point).toMatchObject({
+            state: method || code === "M113" ? "invalid_value" : "no_value", value: null
+          });
+          expect(point).not.toHaveProperty("sourceStatus");
+          expect(point.inputs.every(input => input.value === null)).toBe(true);
+        }
+      });
+
+      for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
+        test(`${boardId}的${dimensionField}分组${dataStatus}状态独立于总体READY`, async () => {
+          for (const businessDate of [date, undefined]) {
+            const result = await execute([
+              ...paymentRows({}, [41, 23, 17]),
+              ...paymentMethods.flatMap(method => paymentRows({ [dimensionField]: method.formal }, method.counts, dataStatus)
+                .map(row => ({ ...row, businessDate })))
+            ], boardId);
+            const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+            paymentCodes.forEach((code, index) => {
+              expect(point(code)).toMatchObject({ state: "available", value: [41, 23, 17, 17 / 41][index], sourceStatus: "READY" });
+              for (const method of paymentMethods) {
+                expect(point(`${code}.${method.id}`)).toMatchObject({ state, value: null, sourceStatus: dataStatus });
+                expect(point(`${code}.${method.id}`).inputs.every(input => input.value === null)).toBe(true);
+              }
+            });
+          }
+        });
+      }
+    }
   }
 
   test("D1/D3/D7/D30人数使用同批精确分子，零基数保留人数真零", async () => {

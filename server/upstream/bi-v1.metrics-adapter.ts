@@ -11,6 +11,8 @@ export type BiV1MetricCode = z.infer<typeof biV1MetricCodeSchema>;
 export type BiV1MetricDataStatus = "READY" | "PROCESSING" | "NOT_MATURE" | "SOURCE_INCOMPLETE" | "FAILED";
 
 const dataStatusSchema = z.enum(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_INCOMPLETE", "FAILED"]);
+const metricUnitSchema = z.enum(["count", "ratio", "count_per_user"]);
+export type BiV1MetricUnit = z.infer<typeof metricUnitSchema>;
 const metricRowSchema = z.object({
   metricCode: biV1MetricCodeSchema,
   businessDate: z.iso.date().optional(),
@@ -18,7 +20,7 @@ const metricRowSchema = z.object({
   value: z.number().finite().nonnegative().nullable(),
   numerator: z.number().finite().nonnegative(),
   denominator: z.number().finite().nonnegative(),
-  unit: z.enum(["count", "ratio"]),
+  unit: metricUnitSchema,
   dataStatus: dataStatusSchema,
   metricVersion: z.literal("bi-v1"),
   ruleVersion: z.string().max(128)
@@ -62,7 +64,7 @@ export interface BiV1MetricPoint {
   value: number | null;
   numerator: number | null;
   denominator: number | null;
-  unit: "count" | "ratio" | null;
+  unit: BiV1MetricUnit | null;
 }
 
 export interface BiV1MetricDay {
@@ -77,8 +79,8 @@ const dimensionAliases: Readonly<Record<string, string>> = {
   natural: "natural", nature: "natural", organic: "natural", "自然新增": "natural",
   internal: "internal", internal_channel: "internal", internal_traffic: "internal", "内部导量": "internal",
   alipay: "alipay", ali_pay: "alipay", "支付宝": "alipay",
-  wechat: "wechat", wechat_pay: "wechat", wx: "wechat", "微信": "wechat",
-  usdt: "usdt",
+  wechat: "wechat", wechat_pay: "wechat", wx_pay: "wechat", wx: "wechat", "微信": "wechat",
+  usdt: "usdt", usdt_pay: "usdt",
   "android老用户": "android+old", android_old_user: "android+old",
   "ios老用户": "ios+old", ios_old_user: "ios+old"
 };
@@ -91,6 +93,7 @@ function normalizedDimensionValue(value: unknown) {
 const platformValues = ["android", "ios", "web"] as const;
 const userValues = ["new", "old", "android+old", "ios+old"] as const;
 const acquisitionValues = ["natural", "internal"] as const;
+const paymentValues = ["alipay", "wechat", "usdt", "unknown"] as const;
 const dimensionFieldValues: Readonly<Record<string, readonly string[]>> = {
   clientPlatform: platformValues,
   platform: platformValues,
@@ -101,7 +104,8 @@ const dimensionFieldValues: Readonly<Record<string, readonly string[]>> = {
   userCohort: userValues,
   acquisitionType: acquisitionValues,
   sourceType: acquisitionValues,
-  payment_method: ["alipay", "wechat", "usdt"]
+  payment_method: paymentValues,
+  paymentMethod: paymentValues
 };
 
 /**
@@ -116,10 +120,18 @@ export function biV1MetricKey(code: BiV1MetricCode, dimensions: Record<string, u
   }
   const entries = Object.entries(dimensions).filter(([key]) => key !== "pid").sort(([left], [right]) => left.localeCompare(right));
   const tokens: string[] = [];
+  let paymentToken: string | undefined;
   for (const [field, value] of entries) {
     const token = typeof value === "string" ? normalizedDimensionValue(value) : "";
     if (!Object.hasOwn(dimensionFieldValues, field) || !dimensionFieldValues[field].includes(token)) {
       return `${code}|unmapped:${JSON.stringify(entries)}`;
+    }
+    if (field === "payment_method" || field === "paymentMethod") {
+      if (paymentToken !== undefined) {
+        if (paymentToken !== token) return `${code}|unmapped:${JSON.stringify(entries)}`;
+        continue;
+      }
+      paymentToken = token;
     }
     tokens.push(token);
   }
@@ -265,7 +277,7 @@ export function aggregateBiV1MetricDays(
           const numerator = safeInteger(row.numerator, `${key} 分子`);
           const denominator = safeInteger(row.denominator, `${key} 分母`);
           if (denominator === 0 ? row.value !== null : row.value === null || Math.abs(row.value - numerator / denominator) > 1e-12) {
-            throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 比率与分子分母不一致`, 502);
+            throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 数值与分子分母不一致`, 502);
           }
           metrics[key] = denominator === 0
             ? { dataStatus: "READY", state: "zero_denominator", value: null, numerator, denominator, unit: row.unit }

@@ -9,7 +9,7 @@ import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { REALTIME_API } from "../upstream/realtime.adapter";
 import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-daily.adapter";
 import { BI_V1_PLAYBACK_API, readBiV1PlaybackDays, type BiV1PlaybackDay } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit } from "../upstream/bi-v1.metrics-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
 export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRechargeSucRate";
 export const CHECKIN_OVERVIEW_API = "/api/admin/dataDashboard/overview";
@@ -123,7 +123,7 @@ const baseMappings = {
   M067: { fields: ["diamondChargeAmt", "totalChargeUserCount"], inputIds: ["M058", "M059"], unit: AMOUNT_PER_USER_UNIT },
   M087: { fields: ["diamondChargeAmt", "loginUserCount"], inputIds: ["M058", "M016"], unit: AMOUNT_PER_USER_UNIT },
   M110: { fields: ["adsCount", "loginUserCount"], inputIds: ["M055", "M016"], inputNames: ["广告点击次数", "日活跃用户数"], unit: "次/人" },
-  "M110.new": { referenceMetricId: "M110", name: "活跃用户人均广告点击次数（新用户）", fields: ["newUserAdClickCount", "newUserActiveUserCount"], inputIds: ["M055", "M016"], inputNames: ["新用户广告点击次数", "新用户日活跃用户数"], inputUnits: ["次", "人"], unit: "次/人", biV1Metric: "M110", biV1Dimensions: ["new"], biV1Only: true },
+  "M110.new": { referenceMetricId: "M110", name: "活跃用户人均广告点击次数（新用户）", fields: ["newUserAdClickCount", "newUserActiveUserCount"], inputIds: ["M055", "M016"], inputNames: ["新用户广告点击次数", "新用户日活跃用户数"], inputUnits: ["次", "人"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user", biV1Dimensions: ["new"], biV1Only: true },
   M111: { fields: ["adsClickedPerson", "loginUserCount"], inputIds: ["M094", "M016"], inputNames: ["广告点击人数", "日活跃用户数"], unit: "%" },
   "M111.new": { referenceMetricId: "M111", name: "活跃用户广告点击渗透率（新用户）", fields: ["newUserAdClickUserCount", "newUserActiveUserCount"], inputIds: ["M094", "M016"], inputNames: ["新用户广告点击人数", "新用户日活跃用户数"], unit: "%", biV1Metric: "M111", biV1Dimensions: ["new"], biV1Only: true },
   "M059.new": { referenceMetricId: "M059", name: "新增付费人数", fields: ["newUserChargeUserCount"], inputIds: ["M059"], inputNames: ["新增付费人数"], unit: "人" },
@@ -135,7 +135,7 @@ const baseMappings = {
   "M094.total": { referenceMetricId: "M094", name: "总点击人数", fields: ["totalClickedPerson"], inputIds: ["M094"], unit: "人" }
 } as const;
 type CandidateId = keyof typeof baseMappings;
-type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
+type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Unit?: BiV1MetricUnit; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
 const mappings: Record<CandidateId, CandidateMapping> = baseMappings;
 // Each capability applies to this exact candidate projection and its existing daily source.
 const periodStatisticKinds: Partial<Record<CandidateId, readonly DailyPeriodStatistics["values"][number]["kind"][]>> = {
@@ -452,7 +452,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           ?? (mapping.biV1Dimensions && biV1Day?.metrics[mapping.biV1Metric]?.dataStatus !== "READY" ? biV1Day?.metrics[mapping.biV1Metric] : undefined) : undefined;
         if (biV1Point && (mapping.biV1Only || biV1Point.dataStatus && biV1Point.dataStatus !== "SOURCE_INCOMPLETE")) {
           const usesReturnedNumerator = "biV1Value" in mapping && mapping.biV1Value === "numerator";
-          const expectedSourceUnit = usesReturnedNumerator || mapping.fields.length === 2 ? "ratio" : "count";
+          const expectedSourceUnit = mapping.biV1Unit ?? (usesReturnedNumerator || mapping.fields.length === 2 ? "ratio" : "count");
           const unitMismatch = biV1Point.dataStatus === "READY" && biV1Point.unit !== expectedSourceUnit;
           const selectedValue = usesReturnedNumerator ? biV1Point.numerator : biV1Point.value;
           const selectedState = usesReturnedNumerator && biV1Point.dataStatus === "READY" && selectedValue !== null
@@ -460,7 +460,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             : biV1Point.state;
           const values = usesReturnedNumerator
             ? [biV1Point.numerator]
-            : expectedSourceUnit === "ratio"
+            : mapping.fields.length === 2
               ? [biV1Point.numerator, biV1Point.denominator]
               : [biV1Point.value];
           return {

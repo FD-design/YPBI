@@ -8,6 +8,49 @@ import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardC
 
 const range = { start: "2026-09-02", end: "2026-09-08" };
 
+for (const dimensionField of ["paymentMethod", "payment_method"] as const) {
+  for (const boardId of ["5.2", "5.11"]) {
+    for (const sourceValues of ["formal", "legacy"] as const) {
+      test(`${boardId}的${dimensionField}返回${sourceValues}值时支付专题读取各方式独立结果`, async () => {
+        const metricCodes = ["M112", "M113", "M060", "M114"] as const;
+        const groups = [
+          { method: "all", formal: "", counts: [41, 23, 17] },
+          { method: "alipay", formal: "ali_pay", counts: [2, 1, 1] },
+          { method: "wechat", formal: "wx_pay", counts: [5, 3, 2] },
+          { method: "usdt", formal: "usdt_pay", counts: [11, 6, 7] },
+          { method: "unknown", formal: "unknown", counts: [101, 70, 89] }
+        ] as const;
+        const rows = groups.flatMap(({ method, formal, counts: [requests, users, successes] }) => {
+          const values = [requests, users, successes, successes / requests];
+          return metricCodes.map((metricCode, index) => ({
+            metricCode, businessDate: range.end,
+            dimensions: { pid: "PH", ...(method === "all" ? {} : { [dimensionField]: sourceValues === "formal" ? formal : method }) },
+            value: values[index], numerator: metricCode === "M114" ? successes : values[index],
+            denominator: metricCode === "M114" ? requests : 0, unit: metricCode === "M114" ? "ratio" : "count",
+            dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1"
+          }));
+        });
+        const data = await new DailyDashboardService({ get: async path => path === "/api/admin/bi/v1/metrics"
+          ? { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: null, rows } }
+          : { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] }
+        }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [range.end, range.end] });
+        const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id),
+          state: { status: "success", data, refreshing: false, refreshError: null },
+          platformName: "测试", controls: { dirty: false } } as LiveDashboardReading;
+        for (const [method, requests, users, successes] of [["all", 41, 23, 17], ["alipay", 2, 1, 1], ["wechat", 5, 3, 2], ["usdt", 11, 6, 7]] as const) {
+          const values = [requests, users, successes, successes / requests];
+          metricCodes.forEach((code, index) => {
+            expect(paymentOrderObservation(live, code, method)).toMatchObject({ value: values[index] });
+          });
+          expect(paymentOrderObservation(live, "M114", method)).toMatchObject({
+            basis: { numerator: { value: successes }, denominator: { value: requests } }
+          });
+        }
+      });
+    }
+  }
+}
+
 test("USDT 范围按登记目录接入，真实四指标与未知金额状态独立", async () => {
   const values: Record<string, number> = { M113: 0, M112: 2, M060: 1, M114: .5 };
   const rows = Object.entries(values).map(([metricCode, value]) => ({

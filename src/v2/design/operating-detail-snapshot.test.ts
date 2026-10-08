@@ -3,11 +3,39 @@ import { DETAIL_COLUMNS, detailColumnKey, operatingDetailRows, operatingSummaryM
 import { OPERATING_BREAKDOWNS, galleryBreakdown } from "./operating-breakdown-preview";
 import { operatingColumnDocumentation, OPERATING_SUMMARY_IDS } from "./operating-detail-columns";
 import { retentionTargetDate } from "./operating-detail-snapshot";
-import { OPERATING_LIVE_IDS } from "./operating-live-model";
+import { OPERATING_LIVE_IDS, operatingLiveColumns, operatingLiveExportRows, operatingLiveRows } from "./operating-live-model";
+import { DailyDashboardService } from "../../../server/v2/daily-dashboard.service";
+import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 
 describe("经营明细单日快照", () => {
   const date = "2026-09-08";
   const rows = operatingDetailRows(date);
+  test("正式人均广告结果进入经营明细与导出时保留次/人及2/3原值", async () => {
+    const sourceRows = [{
+      metricCode: "M110", businessDate: date, dimensions: { pid: "PH", userCohort: "new" },
+      value: 2 / 3, numerator: 2, denominator: 3, unit: "count_per_user",
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1"
+    }];
+    const data = await new DailyDashboardService({ get: async path => path === "/api/admin/bi/v1/metrics"
+      ? { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: null, rows: sourceRows } }
+      : { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] }
+    }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId: "5.2", pid: "PH", dateRange: ["2026-09-01", date] });
+    const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id),
+      state: { status: "success", data, refreshing: false, refreshError: null },
+      platformName: "测试", controls: { dirty: false } } as LiveDashboardReading;
+    const columns = operatingLiveColumns(live);
+    const liveRows = operatingLiveRows(live, { PH: live.state });
+    const index = columns.findIndex(column => column.metric.id === "M110" && column.slice === "新用户");
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(columns[index]).toMatchObject({ unit: "次/人" });
+    expect(liveRows[0].values[index]).toMatchObject({ current: 2 / 3, evidence: { current: {
+      state: "available", unit: "次/人", inputs: [{ value: 2, unit: "次" }, { value: 3, unit: "人" }]
+    } } });
+    const exported = operatingLiveExportRows(liveRows, columns, date);
+    expect(exported[0][3 + index * 9]).toContain("次/人");
+    expect(exported[1][3 + index * 9]).toBe(2 / 3);
+  });
+
   test("93 个展示列同源引用适用维度，端别仅保留 Android 与 iOS", () => {
     expect(DETAIL_COLUMNS).toHaveLength(93);
     expect(new Set(DETAIL_COLUMNS.map(detailColumnKey)).size).toBe(93);
