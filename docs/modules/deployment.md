@@ -8,6 +8,10 @@
 
 本地完整`verify:release`通过，含1243项应用测试/14704断言、前后端类型检查和构建、指标投影及生产预览隔离；额外接口契约23项/71断言、部署归档4项通过。随后串行执行内测构建并通过71文件隔离检查。日志位于`outputs/20261009-bi-integration-fixes/combined-{release-verify,contracts,deploy-archive,internal-preview}.log`。支付专项此前浏览器回归已通过；本次未重复下载解析支付导出文件，线上完整93列与原始上游逐项对照仍独立验收。
 
+`3baa36b601cd6e3c840fd0f576f2d9a294cb9024`于20:04（UTC+08:00）[自动部署成功](https://github.com/FD-design/YPBI/actions/runs/37927507783)。公网根入口、经营深链、维护入口均200，新入口`index-pMUSrej5.js`及依赖返回正确资源类型；健康接口200，匿名会话401。Chrome刷新后确已加载同一入口，普通账号仍登录，但测试会话因API重启失效，页面返回`DATA_PREVIEW_SESSION_REQUIRED`。已停在数据源维护入口等待用户重新验证测试Token，未切回生产代替测试验数，未读取或记录凭据。
+
+静态检查证据：`outputs/20261009-bi-integration-fixes/postdeploy-static-3baa36b.json`。三处HTML缺少明确重新验证策略、缺失JS仍被SPA回退为200 HTML，共4项既有服务器问题保持，不能标记整套静态检查通过。支付真实页面值、渠道恢复及M006/M007真实日输入效果本次尚未验证，不据自动部署成功关闭这些验收项。
+
 ## 2026-10-09 M006／M007 非归因趋势本地修复
 
 M006／M007 恢复已确认 IP·天输入的有界回退：新接口 READY 优先，新来源未完成时只用同 PID、同业务日的既有注册人数与下载／访问 IP·天计算。不改用 M001／M003 次数，不补 0，不改 Token 隔离或页面结构。缺少回退输入时仍保留 bi-v1 的 SOURCE_INCOMPLETE 等状态；合法零分母显示“分母为0”，不显示0%。多日逐日结果可读取，周期合计比率仍不支持。单文件Bun回归177通过、0失败，覆盖两看板、允许回退状态、READY优先、缺失/脏值、PID日期错配及多日边界。完整回归与上线状态统一见本页合并发布记录。
@@ -44,7 +48,7 @@ M006／M007 恢复已确认 IP·天输入的有界回退：新接口 READY 优�
 
 证据：`outputs/20261009-bi-integration-fixes/postdeploy-page-bcc2035.json`、`postdeploy-compare-bcc2035.json`、`postdeploy-specialist-pages-bcc2035.json`。93列对照由同目录`compare-operating-page.mjs`执行；无业务数据写入、回算或需求表修改。
 
-我方代码审查确认动态获客缺少通用适配器已有的明确指标拒绝隔离。最小修复已在本地完成，适用边界见数据模块；不能据此声称已定位或解决线上channel失败原因。独立代码复核无P0/P1问题；定点184项测试/823断言、完整`npm test`1227项/14446断言、`npm run typecheck`及`npm run build`均通过。定点日志`/private/tmp/ypbi-acquisition-isolation-tests.log`，其他日志为同输出目录`channel-isolation-{test,typecheck,build}.log`。尚未提交、推送或部署；线上仍为`bcc2035`。不触碰服务器配置、凭据、数据、口径和公共契约。
+我方代码审查确认动态获客缺少通用适配器已有的明确指标拒绝隔离。修复适用边界见数据模块；不能据此声称已定位或解决线上channel失败原因。独立代码复核无P0/P1问题；定点184项测试/823断言、当时完整`npm test`1227项/14446断言、`npm run typecheck`及`npm run build`均通过。定点日志`/private/tmp/ypbi-acquisition-isolation-tests.log`，其他日志为同输出目录`channel-isolation-{test,typecheck,build}.log`。随后随`3baa36b`合并发布，最新状态见本页首节。不触碰服务器配置、凭据、数据、口径和公共契约。
 
 M058总充值金额、M102观影总时长及相关付费派生继续保留原映射：仍需新版机器单位与同群结果的原始响应证据，不推测单位编码或拼接不同人群。M006／M007已知归因限制、生产支付SLA／历史范围、既有服务器静态资源配置问题继续保留各自状态；本批不登记新增后端缺陷。
 
