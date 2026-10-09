@@ -1,3 +1,5 @@
+import { metricBusinessDefinition } from "../../../../contracts/metric-description.ts";
+
 const INTERNAL_METRIC_REFERENCE_PATTERN = /\b(?:DM|M)\d{3}\b/gi;
 const INTERNAL_DOCUMENT_REFERENCE_PATTERN = /\bMD-\d+\b|\b01[AB]\b/gi;
 
@@ -137,7 +139,7 @@ type MetricExplanationSource = {
 };
 
 export function metricBusinessExplanation(metric: MetricExplanationSource, names: ReadonlyMap<string, string>) {
-  const description = formatMetricAuthorityText(metric.authority.recommendedDefinition || metric.authority.definition, names);
+  const description = formatMetricAuthorityText(metricBusinessDefinition(metric.authority), names);
   let formula = formatMetricAuthorityText(metric.authority.registeredFormula, names);
   if (/率|分布/.test(metric.name) && formula.includes("÷") && !formula.includes("100%")) formula += " × 100%";
   // 当前规则版本的释义覆盖首帧门槛、短视频分档与统一规则版本。

@@ -73,4 +73,22 @@ describe("V2 metric definitions catalog", () => {
     expect(projectLegacyV2MetricCatalog([disabled])).toEqual([]);
     expect(projectLegacyV2MetricCatalog([stale])).toEqual([]);
   });
+
+  test("旧兼容目录的普通说明采用业务定义并解析同义引用，准入元数据不变", () => {
+    const current = structuredClone(v2MetricDefinitions.items.find(item => item.id === "M016")!);
+    current.ypbiMapping.status = "configured";
+    current.ypbiMapping.mappingVersion = "m016-pday-sum-v1";
+    current.ypbiMapping.authorityVersion = current.authority.version;
+    current.authority.definition = "现有技术实现的历史描述。";
+    current.authority.recommendedDefinition = "业务日内至少成功登录一次的去重用户数。";
+    const before = structuredClone(current);
+    const projected = projectLegacyV2MetricCatalog([current]);
+    expect(projected).toHaveLength(1);
+    expect(projected[0].definition).toBe(current.authority.recommendedDefinition);
+    expect(current).toEqual(before);
+    for (const recommendedDefinition of [null, "", "与现有定义一致"]) {
+      const fallback = projectLegacyV2MetricCatalog([{ ...current, authority: { ...current.authority, recommendedDefinition } }]);
+      expect(fallback[0]).toEqual({ ...projected[0], definition: current.authority.definition });
+    }
+  });
 });

@@ -4,6 +4,7 @@ import { topicCard, topicDailyCard, datesIn } from "./topic-preview-fixtures";
 import { topicScopeCells, topicScopeExport, topicScopeModel, topicLiveScopeId } from "./topic-scope-model";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { DailyDashboardService } from "../../../server/v2/daily-dashboard.service";
+import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 
 test("二维读数、摘要与原总体同源；比率按同范围分子分母计算", () => {
   for (const id of ["M016", "M026", "M101", "M102", "M081", "M036"]) {
@@ -51,6 +52,31 @@ test("真实接口只读独立范围；单维存在不代表交叉存在，也�
   const rows=topicScopeExport("M016",{...DEFAULT_TOPIC_VIEW,compared:true},live);
   expect(rows.every(row=>row.length===rows[0].length)).toBe(true);
   expect(JSON.stringify(rows)).not.toContain("194,319");
+});
+
+test("消费结构复用M036三端独立结果，详情导出保留基数且不推新老交叉", () => {
+  const query = { boardId: "5.9", pid: "PH", dateRange: ["2020-01-01", "2020-01-01"] as [string, string] };
+  const data: DailyDashboardSuccess = { success: true, data: { schemaVersion: "day-dashboard/v1", query, queryId: "watch-platform-fixture", fetchedAt: "2026-10-09T00:00:00Z", timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: ["bi-v1.playback"],
+    series: [["M036", 7, 8], ["M036.android", 2, 2], ["M036.ios", 2, 2], ["M036.web", 3, 4]].map(([id, numerator, denominator]) => ({
+      metric: { id: String(id), name: "有效观影率", referenceMetricId: "M036", authorityVersion: "fixture", unit: "%", definition: "同平台有效观看次数占起播次数比例", formula: "有效观看次数 ÷ 起播次数 × 100%", sourceNote: "同客户端独立结果", inputs: [{ key: "effective", name: "有效观看次数", unit: "次" }, { key: "started", name: "起播次数", unit: "次" }] },
+      points: [{ date: query.dateRange[1], value: Number(numerator) / Number(denominator), state: "available", sourceStatus: "READY", inputs: [{ key: "effective", value: Number(numerator) }, { key: "started", value: Number(denominator) }] }]
+    })) } };
+  const live = { query, metricIds: data.data.series.map(item => item.metric.id), state: { status: "success", data, refreshing: false, refreshError: null }, platformName: "PH", controls: { dirty: false } } as LiveDashboardReading;
+  for (const [client, expected, numerator, denominator] of [["android", 1, 2, 2], ["ios", 1, 2, 2], ["web", .75, 3, 4]] as const) {
+    const model = topicScopeModel("M036", DEFAULT_TOPIC_VIEW, { client, audience: "overall" }, live);
+    expect(model.result.status).toBe("available");
+    if (model.result.status !== "available") throw new Error("missing independent client reading");
+    expect(model.result.value.raw).toBe(expected);
+    expect(model.result.calculation).toMatchObject({ numerator: { value: numerator }, denominator: { value: denominator } });
+    expect(model.result.trend.current[0].value?.raw).toBe(expected);
+    expect(topicScopeModel("M036", DEFAULT_TOPIC_VIEW, { client, audience: "new" }, live).result.status).toBe("not_ready");
+    expect(topicScopeModel("M036", DEFAULT_TOPIC_VIEW, { client, audience: "existing" }, live).result.status).toBe("not_ready");
+  }
+  const exported = topicScopeExport("M036", DEFAULT_TOPIC_VIEW, live);
+  expect(exported.some(row => row[0] === "Web" && row[1] === "总体" && row[3] === "摘要" && row[5] === 75)).toBe(true);
+  data.data.series[3].points[0] = { ...data.data.series[3].points[0], value: null, state: "source_failure", sourceStatus: "FAILED" };
+  expect(topicScopeModel("M036", DEFAULT_TOPIC_VIEW, { client: "web", audience: "overall" }, live).result.status).toBe("failed");
+  expect(topicScopeModel("M036", DEFAULT_TOPIC_VIEW, { client: "android", audience: "overall" }, live).result.status).toBe("available");
 });
 
 test("活跃与消费共用 Android/iOS 新老用户独立交叉结果及来源状态", async () => {

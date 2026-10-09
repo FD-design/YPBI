@@ -45,6 +45,8 @@ import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { liveDailyReferenceRows, liveExportMetadata, liveMetricModel, livePeriodStatus, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { LiveSeriesDetails, LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
 import { ConnectedPlaybackDiagnosis } from "./ConnectedPlaybackDiagnosis";
+import { ConnectedCategoryDimension } from "./ConnectedCategoryDimension";
+import { paymentDimensionCross, paymentDimensionRows, paymentDimensionSheet, paymentDimensionSupported, paymentDimensionUnit } from "./payment-dimension-model";
 
 const SECTION_GUIDANCE: Record<string, readonly (string | undefined)[]> = {
   "5.10": ["member.core", undefined, undefined, "member.paywall"],
@@ -116,6 +118,9 @@ const calculationInput = (input: { value: number | null; unit: string } | undefi
 export function BoardDimension({ spec, view, pending, open, onSelectionChange }: { spec: ExtendedBoard["dimensions"][number]; view: ExtendedView; pending: boolean; open: OpenPreviewReading; onSelectionChange?: (value: DimensionSelection) => void }) {
   const live = useLiveDashboard();
   if (spec.title === "播放质量诊断" && live) return <ConnectedPlaybackDiagnosis spec={spec} live={live} pending={pending} open={open} onSelectionChange={onSelectionChange} />;
+  if (spec.title === "付费结构" && live) return <ConnectedCategoryDimension spec={spec} live={live} pending={pending} open={open} onSelectionChange={onSelectionChange}
+    source={{ rows: paymentDimensionRows, sheet: paymentDimensionSheet, supported: paymentDimensionSupported, unit: paymentDimensionUnit, cross: paymentDimensionCross, guidanceKey: "member.structure" }}
+    renderSelect={props => <BoardSelect {...props} />} />;
   return <DemoBoardDimension spec={spec} view={view} pending={pending} open={open} onSelectionChange={onSelectionChange} />;
 }
 function DemoBoardDimension({ spec, view, pending, open, onSelectionChange }: { spec: ExtendedBoard["dimensions"][number]; view: ExtendedView; pending: boolean; open: OpenPreviewReading; onSelectionChange?: (value: DimensionSelection) => void }) {

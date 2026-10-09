@@ -6,6 +6,7 @@ import {
   type PlatformCatalogItem
 } from "../../contracts/bi-v2";
 import { platformRegistry } from "../platforms/registry";
+import { metricBusinessDefinition } from "../../contracts/metric-description";
 import { getV2MetricDefinition, hasCurrentExecutableMetricMapping } from "./metric-definitions";
 
 export function projectLegacyV2MetricCatalog(
@@ -24,7 +25,7 @@ export function projectLegacyV2MetricCatalog(
     id: M016_METRIC_ID,
     code: m016Definition.code,
     name: m016Definition.name,
-    definition: m016Definition.authority.definition,
+    definition: metricBusinessDefinition(m016Definition.authority),
     // 旧目录仍使用固定展示类型；完整定义源当前尚未登记标准指标单位字段。
     unit: "人",
     valueType: "integer",

@@ -6,6 +6,7 @@ import type { IdentityResolution } from "../identity/identity-provider";
 import { UpstreamError } from "../upstream/client";
 import { currentUpstreamRequestProfile } from "../upstream/request-profile";
 import { DailyDashboardService, dailyDashboardCatalog, dailyDashboardMatchesMapping, dailyDashboardProjectionDocumentation, type DailyDashboardExecutor } from "./daily-dashboard.service";
+import { getV2MetricDefinition } from "./metric-definitions";
 import { v2BiPlugin } from "./plugin";
 
 const query = { boardId: "5.2", pid: "PH", dateRange: ["2026-09-05", "2026-09-06"] as [string, string] };
@@ -15,6 +16,278 @@ const row = (fields: Record<string, unknown> = {}) => ({ pid: "PH", sumDate: "20
 const emptyMetrics = { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-10-09T00:00:00Z", watermark: null, rows: [] } };
 const service = (rows: Record<string, unknown>[] = [row()], envelope = {}) => new DailyDashboardService({ get: async (path) => path === "/api/admin/bi/v1/metrics" ? emptyMetrics : path.endsWith("pDaySum") ? ({ code: 200, msg: { pageData: rows, totalCount: rows.length, ...envelope } }) : path.includes("reletionsStatPlus") ? {data:[]} : {msg:{pageData:[],totalData:[],totalCount:0}} });
 const getSeries = async (id: string, fields: Record<string, unknown> = {}) => (await service([row(fields)]).execute(query)).data.series.find(series => series.metric.id === id)!;
+
+describe("M006/M007复用已有READY基础指标", () => {
+  const date = "2020-01-01";
+  const codes = ["M006", "M007"] as const;
+  const keys = ["totalDownCountByIp", "ipStatTotalCount"] as const;
+  const metricRow = (metricCode: string, value: number, extra: Record<string, unknown> = {}) => ({
+    metricCode, businessDate: date, dimensions: { pid: "PH" }, value, numerator: value, denominator: 0,
+    unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "ready-facts-v1", ...extra
+  });
+  const facts = () => [metricRow("M008", 3), metricRow("M095", 3), metricRow("M002", 4), metricRow("M001", 800), metricRow("M003", 900)];
+  const direct = (status = "SOURCE_INCOMPLETE") => codes.map(code => metricRow(code, 999, { unit: "ratio", denominator: 1, dataStatus: status }));
+  const execute = async (rows: Array<Record<string, unknown> & { metricCode: string }>, boardId = "5.2", dateRange: [string, string] = [date, date], legacy?: Record<string, unknown>) => {
+    const requests: Record<string, string>[] = [];
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") {
+        requests.push(params);
+        return { code: 200, msg: { ...emptyMetrics.msg, rows: params.dimensionFilters || params.dimensions ? []
+          : rows.filter(row => params.metricCodes.split(",").includes(row.metricCode)) } };
+      }
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, registerUserCount: 99 })], totalCount: 1 } };
+      if (path.includes("channelStatByTypeV2")) return { msg: { pageData: [], totalData: [{ pid: "PH", sumDate: date,
+        totalDownCountNoDedup: 1000, visiCountNoDedup: 2000, ...legacy }] } };
+      if (path.includes("/bi/v1/playback")) return emptyMetrics;
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-10-09T00:00:00Z")).execute({ boardId, pid: "PH", dateRange });
+    const series = (id: string) => result.data.series.find(series => series.metric.id === id)!;
+    return { result, requests, series, points: () => codes.map(id => series(id).points[0]) };
+  };
+
+  for (const boardId of ["5.2", "5.7"]) {
+    test(`${boardId} 请求基础依赖，3/3和3/4直接可读且优于旧渠道值`, async () => {
+      const { result, requests, series, points } = await execute([...facts(), ...direct()], boardId, [date, date], { registerUserCount: 9, totalDownCountByIp: 1, ipStatTotalCount: 1 });
+      const overall = requests.find(request => !request.dimensions && !request.dimensionFilters)!;
+      for (const code of ["M008", "M095", "M002", ...codes]) expect(overall.metricCodes.split(",")).toContain(code);
+      expect(overall).toMatchObject({ pid: "PH", startDate: date, endDate: "2020-01-02" });
+      points().forEach((point, index) => expect(point).toEqual({ date, state: "available", sourceStatus: "READY", value: [1, .75][index],
+        inputs: [{ key: "registerUserCount", value: 3 }, { key: keys[index], value: [3, 4][index] }] }));
+      expect(series("M006").metric.formula).toBe("单日注册用户数（去重） ÷ 单日下载 IP·天 × 100%");
+      expect(series("M007").metric.inputs.map(input => input.unit)).toEqual(["人", "IP·天"]);
+      expect(dailyDashboardMatchesMapping(result)).toBe(true);
+      const stale = structuredClone(result);
+      stale.data.series.find(series => series.metric.id === "M006")!.metric.sourceNote = "旧渠道字段回退";
+      expect(dailyDashboardMatchesMapping(stale)).toBe(false);
+    });
+  }
+
+  for (const status of ["SOURCE_INCOMPLETE", "PROCESSING", "NOT_MATURE", "FAILED", "no_record"]) {
+    test(`独立比率${status}时只用已就绪基础事实，不消费比率脏值`, async () => {
+      const { points } = await execute([...facts(), ...(status === "no_record" ? [] : direct(status))]);
+      expect(points().map(point => point.value)).toEqual([1, .75]);
+      expect(points().every(point => point.sourceStatus === "READY")).toBe(true);
+    });
+  }
+
+  test("合法直返正值、真零、零分母和超过100%优先于基础计算", async () => {
+    for (const [numerator, denominator] of [[1, 2], [0, 2], [0, 0], [4, 1]]) {
+      const rows = codes.map(code => metricRow(code, numerator / (denominator || 1), {
+        unit: "ratio", numerator, denominator, value: denominator ? numerator / denominator : null
+      }));
+      const { points } = await execute([...facts(), ...rows]);
+      points().forEach(point => expect(point).toMatchObject({ sourceStatus: "READY", state: denominator ? "available" : "zero_denominator",
+        value: denominator ? numerator / denominator : null, inputs: [{ value: numerator }, { value: denominator }] }));
+    }
+  });
+
+  test("直接比率值或单位无效时仍可复用合法基础事实", async () => {
+    for (const override of [{ value: .9 }, { unit: "count" }]) {
+      const { points } = await execute([...facts(), ...codes.map(code => metricRow(code, .5, { unit: "ratio", numerator: 1, denominator: 2, ...override }))]);
+      expect(points().map(point => point.value)).toEqual([1, .75]);
+    }
+  });
+
+  test("基础数真零、零分母与合法超过100%分别保留", async () => {
+    for (const [registered, download, visit] of [[0, 3, 4], [0, 0, 0], [3, 0, 0], [9, 3, 4]]) {
+      const { points } = await execute([metricRow("M008", registered), metricRow("M095", download), metricRow("M002", visit), ...direct()]);
+      points().forEach((point, index) => expect(point).toMatchObject({ sourceStatus: "READY",
+        state: [download, visit][index] ? "available" : "zero_denominator", value: [download, visit][index] ? registered / [download, visit][index] : null }));
+    }
+  });
+
+  for (const code of ["M008", "M095", "M002"]) {
+    for (const status of ["PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED", "missing"]) {
+      test(`${code} ${status}不能用其携带数值、旧注册人数或普通访问/下载次数补齐`, async () => {
+        const rows = facts().flatMap(row => row.metricCode !== code ? [row] : status === "missing" ? [] : [{ ...row, dataStatus: status }]);
+        const { points } = await execute([...rows, ...direct()]);
+        points().forEach((point, index) => {
+          const affected = code === "M008" || code === (index ? "M002" : "M095");
+          expect(point.value).toBe(affected ? null : [1, .75][index]);
+          if (affected) expect(point.state).not.toBe("available");
+        });
+      });
+    }
+  }
+
+  test("基础字段错误、错误PID或越界日期不生成派生比率", async () => {
+    for (const override of [{ numerator: null }, { dimensions: { pid: "OTHER" } }, { businessDate: "2019-12-31" }, { businessDate: "2020-01-02" }]) {
+      const { points } = await execute([...facts().map(row => row.metricCode === "M008" ? { ...row, ...override } : row), ...direct()]);
+      expect(points().every(point => point.value === null && point.state !== "available")).toBe(true);
+    }
+  });
+
+  test("额外交叉维度不能作为总体输入，合法相邻比率继续返回", async () => {
+    const { points } = await execute([...facts().map(row => row.metricCode === "M095" ? { ...row, dimensions: { pid: "PH", userCohort: "new" } } : row), ...direct()]);
+    expect(points()[0].value).toBeNull();
+    expect(points()[1]).toMatchObject({ state: "available", value: .75 });
+  });
+
+  test("多日逐日计算，缺日不补0，不累加注册UV生成周期比率", async () => {
+    const rows = [metricRow("M008", 3), metricRow("M095", 3), metricRow("M002", 4),
+      ...[metricRow("M008", 9), metricRow("M095", 3), metricRow("M002", 6)].map(row => ({ ...row, businessDate: "2020-01-02" }))];
+    const { series } = await execute(rows, "5.7", [date, "2020-01-03"]);
+    expect(series("M006").points.map(point => point.value)).toEqual([1, 3, null]);
+    expect(series("M007").points.map(point => point.value)).toEqual([.75, 1.5, null]);
+    for (const code of codes) expect(series(code).periodStatistics).toMatchObject({ state: "unsupported", values: [] });
+  });
+
+  test("共享指标详情优先正式建议定义，保留明确覆盖与引用现有定义的哨兵", async () => {
+    const definitions = dailyDashboardProjectionDocumentation();
+    const explicit = new Set(["M101", "M102", "M098"]);
+    for (const item of definitions) {
+      if (explicit.has(item.id)) continue;
+      const authority = getV2MetricDefinition(item.referenceMetricId)!.authority;
+      const expected = authority.recommendedDefinition && !/^与现有定义一致[。.]?$/.test(authority.recommendedDefinition)
+        ? authority.recommendedDefinition : authority.definition;
+      expect(item.definition).toBe(expected);
+    }
+    for (const code of ["M067", "M087", "M088", "M064"]) expect(definitions.find(item => item.id === code)!.definition).not.toMatch(/未登记|两套/);
+    expect(definitions.find(item => item.id === "M102")!.definition).toBe("所选平台单日播放成功后的前台观看时长总和，由秒换算为小时。");
+    expect(definitions.find(item => item.id === "M006")!.definition).toBe("下载访问后形成注册的转化趋势");
+    const { result } = await execute(facts(), "5.10");
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+    const stale = structuredClone(result);
+    stale.data.series.find(series => series.metric.id === "M067")!.metric.definition = getV2MetricDefinition("M067")!.authority.definition;
+    expect(dailyDashboardMatchesMapping(stale)).toBe(false);
+  });
+});
+
+describe("专题看板复用已接通的结构切片", () => {
+  const date = "2020-01-01";
+  const execute = async (boardId: "5.9" | "5.10", incomplete?: string) => {
+    const requests: Record<string, string>[] = [];
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") {
+        requests.push(params);
+        expect(params).toMatchObject({ pid: "PH", startDate: date, endDate: "2020-01-02", granularity: "day", includeIncomplete: "true" });
+        const filters = JSON.parse(params.dimensionFilters ?? "{}");
+        const scoped = (metricCode: string, numerator: number, denominator: number, unit: string) => ({
+          metricCode, businessDate: date, dimensions: { pid: "PH", ...filters },
+          numerator, denominator, value: denominator ? numerator / denominator : numerator, unit,
+          dataStatus: filters.clientPlatform === incomplete ? "SOURCE_INCOMPLETE" : "READY",
+          metricVersion: "bi-v1", ruleVersion: "effective_play_v2"
+        });
+        const platform = filters.clientPlatform;
+        const rows = platform && Object.keys(filters).length === 1 && params.metricCodes.split(",").includes("M036")
+          ? [scoped("M036", platform === "web" ? 3 : 2, platform === "web" ? 4 : 2, "ratio")]
+          : [];
+        return { code: 200, msg: { ...emptyMetrics.msg, rows } };
+      }
+      if (path.includes("/bi/v1/playback")) return emptyMetrics;
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-10-09T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [date, date] });
+    return { result, requests };
+  };
+
+  test("消费5.9读取Android2/2、iOS2/2、Web3/4有效观影率，保留独立维度输入", async () => {
+    const { result, requests } = await execute("5.9");
+    for (const [platform, numerator, denominator] of [["android", 2, 2], ["ios", 2, 2], ["web", 3, 4]] as const) {
+      const scoped = requests.filter(request => request.dimensionFilters === JSON.stringify({ clientPlatform: platform }));
+      expect(scoped).toHaveLength(1);
+      expect(scoped[0].dimensions).toBe("clientPlatform");
+      expect(scoped[0].metricCodes.split(",")).toContain("M036");
+      const series = result.data.series.find(series => series.metric.id === `M036.${platform}`)!;
+      expect(series.metric.referenceMetricId).toBe("M036");
+      expect(series.points[0]).toMatchObject({ state: "available", sourceStatus: "READY", value: numerator / denominator, inputs: [{ value: numerator }, { value: denominator }] });
+      expect(series.periodStatistics).toMatchObject({ state: "unsupported", values: [] });
+    }
+    expect(result.data.series.some(series => /^M0(?:34|97)\./.test(series.metric.id))).toBe(false);
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+    const stale = structuredClone(result);
+    stale.data.series = stale.data.series.filter(series => !series.metric.id.startsWith("M036."));
+    expect(dailyDashboardMatchesMapping(stale)).toBe(false);
+  });
+
+  test("付费5.10不增加没有对应视图的获客来源切片，经营5.2保留既有投影", async () => {
+    const { result, requests } = await execute("5.10");
+    expect(requests.some(request => JSON.parse(request.dimensionFilters ?? "{}").sourceType)).toBe(false);
+    expect(result.data.series.some(series => ["M058.nature", "M058.internal"].includes(series.metric.id))).toBe(false);
+    expect(dailyDashboardCatalog(true).data.items.find(item => item.id === "5.2")!.metricIds).toEqual(expect.arrayContaining(["M058.nature", "M058.internal"]));
+    expect(result.data.series.some(series => series.metric.id.startsWith("M058.android"))).toBe(false);
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("新增切片未就绪时保留状态，相邻真实切片可用且不影响总体", async () => {
+    const watch = await execute("5.9", "web");
+    expect(watch.result.data.series.find(series => series.metric.id === "M036.web")!.points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null });
+    expect(watch.result.data.series.find(series => series.metric.id === "M036.android")!.points[0]).toMatchObject({ state: "available", value: 1 });
+    expect(watch.result.data.series.find(series => series.metric.id === "M036")!.points[0].value).toBeNull();
+  });
+});
+
+describe("播放5.12直接复用M103同日起播用户数分子", () => {
+  const date = "2020-01-01";
+  const metricRow = (extra: Record<string, unknown> = {}) => ({ metricCode: "M103", businessDate: date,
+    dimensions: { pid: "PH" }, numerator: 5, denominator: 6, value: 5 / 6, unit: "ratio", dataStatus: "READY",
+    metricVersion: "bi-v1", ruleVersion: "active-user-start-v1", ...extra });
+  const execute = async (rows: Record<string, unknown>[], dateRange: [string, string] = [date, date]) => {
+    const requests: Record<string, string>[] = [];
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") {
+        requests.push(params);
+        return { code: 200, msg: { ...emptyMetrics.msg, rows: params.dimensions || params.dimensionFilters ? [] : rows } };
+      }
+      if (path.includes("/bi/v1/playback")) return emptyMetrics;
+      return { msg: { pageData: [row({ sumDate: date, startUserCount: 99, watchUserCount: 999 })], totalData: [], totalCount: 1 }, data: [] };
+    } }, () => new Date("2026-10-09T00:00:00Z")).execute({ boardId: "5.12", pid: "PH", dateRange });
+    return { result, requests, series: result.data.series.find(series => series.metric.id === "M030")! };
+  };
+
+  test("整体READY 5/6投影5人，请求仅复用M103且保留待验数", async () => {
+    const { result, requests, series } = await execute([metricRow()]);
+    const overall = requests.filter(request => !request.dimensions && !request.dimensionFilters);
+    expect(overall).toHaveLength(1);
+    expect(overall[0]).toMatchObject({ pid: "PH", startDate: date, endDate: "2020-01-02", granularity: "day", includeIncomplete: "true" });
+    expect(overall[0].metricCodes.split(",")).toContain("M103");
+    expect(overall[0].metricCodes.split(",")).not.toContain("M030");
+    expect(overall[0].metricCodes.split(",")).not.toContain("M026");
+    expect(series.metric).toMatchObject({ referenceMetricId: "M030", unit: "人", inputs: [{ key: "startUserCount", unit: "人" }] });
+    expect(series.metric.sourceNote).toContain("M103 同日、同 PID、全用户范围");
+    expect(series.points[0]).toEqual({ date, state: "available", sourceStatus: "READY", value: 5, inputs: [{ key: "startUserCount", value: 5 }] });
+    expect(result.data.validationStatus).toBe("pending_validation");
+    expect(series.periodStatistics).toMatchObject({ state: "unsupported", values: [] });
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+    const stale = structuredClone(result);
+    stale.data.series = stale.data.series.filter(item => item.metric.id !== "M030");
+    expect(dailyDashboardMatchesMapping(stale)).toBe(false);
+    const catalog = dailyDashboardCatalog(true).data.items;
+    expect(catalog.find(item => item.id === "5.12")!.pendingMetricNames).not.toContain("起播用户数");
+    expect(catalog.find(item => item.id === "5.2")!.metricIds).not.toContain("M030");
+  });
+
+  for (const status of ["PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED", "missing"] as const) {
+    test(`${status}不能消费携带分子或从旧起播/观影人数补齐`, async () => {
+      const { series } = await execute(status === "missing" ? [] : [metricRow({ dataStatus: status })]);
+      expect(series.points[0].value).toBeNull();
+      expect(series.points[0].state).not.toBe("available");
+      expect(series.points[0].inputs).toEqual([{ key: "startUserCount", value: null }]);
+      if (status !== "missing") expect(series.points[0].sourceStatus).toBe(status);
+    });
+  }
+
+  test("READY零分母保留真实零起播人数，不把比率无值当人数缺失", async () => {
+    const { series } = await execute([metricRow({ numerator: 0, denominator: 0, value: null })]);
+    expect(series.points[0]).toMatchObject({ state: "available", sourceStatus: "READY", value: 0, inputs: [{ value: 0 }] });
+  });
+
+  test("非法比率、单位、非整数人数与范围错配不生成总体人数", async () => {
+    for (const extra of [{ value: .9 }, { unit: "count" }, { numerator: 1.5, value: .25 },
+      { dimensions: { pid: "OTHER" } }, { dimensions: { pid: "PH", clientPlatform: "android" } },
+      { businessDate: "2019-12-31" }, { businessDate: "2020-01-02" }]) {
+      const { series } = await execute([metricRow(extra)]);
+      expect(series.points[0].value).toBeNull();
+      expect(series.points[0].state).not.toBe("available");
+    }
+  });
+
+  test("多日仅输出逐日起播UV，缺日不补零且不造区间去重人数", async () => {
+    const { series } = await execute([metricRow(), metricRow({ businessDate: "2020-01-02", numerator: 3, denominator: 4, value: .75 })], [date, "2020-01-03"]);
+    expect(series.points.map(point => point.value)).toEqual([5, 3, null]);
+    expect(series.points[2].state).toBe("no_record");
+    expect(series.periodStatistics).toMatchObject({ state: "unsupported", values: [] });
+  });
+});
 
 describe("观影秒值接入与既有播放发起来源", () => {
   const date="2026-09-12",q={...query,boardId:"5.9",dateRange:[date,date] as [string,string]};
@@ -43,7 +316,7 @@ describe("观影秒值接入与既有播放发起来源", () => {
     expect(dailyDashboardMatchesMapping(r)).toBe(true);
     expect((await make().execute({...q,boardId:"5.2"})).data.sourceApiIds).toHaveLength(7);
     const playback=await make().execute({...q,boardId:"5.12"});
-    expect(playback.data.series.map(series=>series.metric.id)).toEqual(["M101","M034","M036","M097", "M034.android", "M036.android", "M097.android", "M034.ios", "M036.ios", "M097.ios", "M034.web", "M036.web", "M097.web"]);
+    expect(playback.data.series.map(series=>series.metric.id)).toEqual(["M101","M034","M036","M097", "M030", "M034.android", "M036.android", "M097.android", "M034.ios", "M036.ios", "M097.ios", "M034.web", "M036.web", "M097.web"]);
     expect(playback.data.sourceApiIds).toEqual(["/api/admin/home/pRealDayLine","/api/admin/bi/v1/playback","/api/admin/bi/v1/metrics"]);
   });
   test("同日时长真零、缺失、非法值与零分母分开，实时失败不污染时长",async()=>{

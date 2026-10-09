@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import plan from "../../contracts/official-dashboards.json";
 import { DAILY_DASHBOARD_VERSION, DAILY_STATISTICS_VERSION, dailyDashboardV2SuccessSchema, type DailyDashboardQuery, type DailyDashboardSuccess, type DailyDashboardV2Success, type DailyPeriodStatistics, type DailyReadingMetric } from "../../contracts/daily-dashboard";
+import { metricBusinessDefinition } from "../../contracts/metric-description";
 import { getV2MetricDefinition } from "./metric-definitions";
 import { P_DAY_SUM_API } from "../upstream/overview.adapter";
 import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
@@ -96,8 +97,8 @@ const baseMappings = {
   "M095": {"referenceMetricId":"M095","name":"落地页下载IP数（去重）","fields":["landingDownloadIpCount"],"inputIds":["M095"],"inputNames":["落地页下载IP数（去重）"],"inputUnits":["IP"],"unit":"IP","biV1Metric":"M095","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；按接口登记的业务日和下载目标去重规则读取，不由下载点击次数估算。"},
   "M005": {"referenceMetricId":"M005","name":"落地页访问-下载点击转化率","fields":["totalDownCountNoDedup","visiCountNoDedup"],"inputIds":["M005","M005"],"inputNames":["下载点击次数","落地页访问次数"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M005"},
   "M099": {"referenceMetricId":"M099","name":"落地页访问-下载点击转化率（去重）","fields":["landingDownloadIpCount","landingVisitIpCount"],"inputIds":["M095","M002"],"inputNames":["落地页下载IP数（去重）","落地页访问IP数（去重）"],"inputUnits":["IP","IP"],"unit":"%","biV1Metric":"M099","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；仅采用同一业务日、同一查询范围的分子、分母和比率。多日统一 IP 去重未提供前，不把每日去重 IP 相加或平均每日比率。"},
-  "M006": {"referenceMetricId":"M006","name":"落地页下载点击-注册转化率","fields":["registerUserCount","totalDownCountByIp"],"inputIds":["M006","M006"],"inputNames":["注册用户数（区间去重）","下载 IP·天合计"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M006","legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：注册用户数（区间去重）÷下载 IP·天合计。优先读取 bi-v1 READY 同批输入；新版结果未完成时可使用同 PID、同业务日的既有渠道统计输入直接计算，不解释为同一用户漏斗、不补0。"},
-  "M007": {"referenceMetricId":"M007","name":"落地页访问-注册转化率","fields":["registerUserCount","ipStatTotalCount"],"inputIds":["M007","M007"],"inputNames":["注册用户数（区间去重）","访问 IP·天合计"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M007","legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：注册用户数（区间去重）÷落地页访问 IP·天合计。优先读取 bi-v1 READY 同批输入；新版结果未完成时可使用同 PID、同业务日的既有渠道统计输入直接计算，不解释为同一用户漏斗、不补0。"},
+  "M006": {"referenceMetricId":"M006","name":"落地页下载点击-注册转化率","fields":["registerUserCount","totalDownCountByIp"],"inputIds":["M008","M095"],"inputNames":["单日注册用户数（去重）","单日下载 IP·天"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M006","fallbackFrom":["M008","M095"],"legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：单日注册用户数÷单日下载 IP·天。优先读取合法 bi-v1 READY 同批比率；比率不可用时使用同 PID、同业务日的 READY M008 与 M095 直接相除，允许超过100%，零分母保持未定义。基础结果不可用时保留已确认的完整旧渠道事实兼容；不混用新旧输入、不使用点击次数、不补0。区间注册去重未提供前仅展示逐日结果，不解释为同一用户漏斗。"},
+  "M007": {"referenceMetricId":"M007","name":"落地页访问-注册转化率","fields":["registerUserCount","ipStatTotalCount"],"inputIds":["M008","M002"],"inputNames":["单日注册用户数（去重）","单日访问 IP·天"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M007","fallbackFrom":["M008","M002"],"legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：单日注册用户数÷单日访问 IP·天。优先读取合法 bi-v1 READY 同批比率；比率不可用时使用同 PID、同业务日的 READY M008 与 M002 直接相除，允许超过100%，零分母保持未定义。基础结果不可用时保留已确认的完整旧渠道事实兼容；不混用新旧输入、不使用访问次数、不补0。区间注册去重未提供前仅展示逐日结果，不解释为同一用户漏斗。"},
   "M016.web": { "referenceMetricId": "M016", "name": "日活跃用户数（Web）", "fields": ["webLoginUserCount"], "inputIds": ["M016"], "inputNames": ["Web 日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["web"] },
   "M008.web": { "referenceMetricId": "M008", "name": "新增用户数（Web）", "fields": ["webNewUserCount"], "inputIds": ["M008"], "inputNames": ["Web 新增用户数"], "unit": "人", "biV1Metric": "M008", "biV1Dimensions": ["web"] },
   "M026.web": { "referenceMetricId": "M026", "name": "观影用户数（Web）", "fields": ["webWatchUserCount"], "inputIds": ["M026"], "inputNames": ["Web 观影用户数"], "unit": "人", "biV1Metric": "M026", "biV1Dimensions": ["web"] },
@@ -153,6 +154,7 @@ const baseMappings = {
   M059: { fields: ["payingUserCount"], inputIds: ["M059"], unit: "人", biV1Metric: "M059", biV1Only: true, sourceNote: "来自 bi-v1 M059 同日同PID的付费用户独立去重结果；仅展示 READY 计数，其他状态保持原样。" },
   M081: { fields: ["watchUserCount", "loginUserCount"], inputIds: ["M026", "M016"], unit: "%", biV1Metric: "M081" },
   M103: { fields: ["startUserCount", "activeUserCount"], inputIds: ["M030", "M016"], inputNames: ["起播用户数", "日活跃用户数"], inputUnits: ["人", "人"], unit: "%", biV1Metric: "M103", biV1Only: true, sourceNote: "来自 bi-v1 用户观看域；单日按起播用户数除以日活跃用户数。多日结果必须按用户人天总分子、总分母重算，不平均每日比率。" },
+  M030: { fields: ["startUserCount"], inputIds: ["M030"], inputNames: ["单日起播用户数（去重）"], inputUnits: ["人"], unit: "人", biV1Metric: "M103", biV1Value: "numerator", biV1Only: true, sourceNote: "直接读取 bi-v1 M103 同日、同 PID、全用户范围的起播用户数分子；仅使用 READY 的直接去重计数，其他状态保留原样。提供单日及逐日结果，不累加日人数生成区间去重人数，不以观影用户数替代。" },
   M061: { fields: ["activePayingUserCount", "activeUserCount"], inputIds: ["M061", "M016"], inputNames: ["同日活跃且支付成功的去重用户数", "同范围日活跃用户数"], inputUnits: ["人", "人"], unit: "%", biV1Metric: "M061", biV1Only: true, sourceNote: "来自 bi-v1 M061 的同日同 PID 活跃付费交集分子、完整活跃基数与 READY 比率；当前提供逐日结果。" },
   M008: { fields: ["registerUserCount"], inputIds: ["M008"], unit: "人", biV1Metric: "M008" },
   M064: { fields: ["registrationDayPayingUserCount", "registeredUserCount"], inputIds: ["M064", "M008"], inputNames: ["注册当日付费去重用户数", "同注册批次新增用户数"], inputUnits: ["人", "人"], unit: "%", biV1Metric: "M064", biV1Only: true, sourceNote: "来自 bi-v1 M064 的同注册批次、同平台与 PID 的注册当日付费分子、新增基数与 READY 比率；当前提供逐日结果。" },
@@ -172,7 +174,7 @@ const baseMappings = {
   "M094.total": { referenceMetricId: "M094", name: "总点击人数", fields: ["totalClickedPerson"], inputIds: ["M094"], unit: "人" }
 } as const;
 type CandidateId = keyof typeof baseMappings;
-type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Unit?: BiV1MetricUnit; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; legacyFallback?: "available_or_zero_denominator"; derivedFrom?: readonly [CandidateId, CandidateId]; derivedInputMultipliers?: readonly [number, number]; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
+type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Unit?: BiV1MetricUnit; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; legacyFallback?: "available_or_zero_denominator"; fallbackFrom?: readonly [CandidateId, CandidateId]; derivedFrom?: readonly [CandidateId, CandidateId]; derivedInputMultipliers?: readonly [number, number]; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
 const mappings: Record<CandidateId, CandidateMapping> = baseMappings;
 function dimensionFilters(tokens: readonly string[] = []): BiV1MetricDimensionFilters {
   const filters: BiV1MetricDimensionFilters = {};
@@ -220,6 +222,16 @@ const periodStatisticKinds: Partial<Record<CandidateId, readonly DailyPeriodStat
   "M094.new": ["daily_average"], "M094.navigation.new": ["daily_average"], "M094.total.new": ["daily_average"]
 };
 type DailyPoint = DailyDashboardV2Success["data"]["series"][number]["points"][number];
+function derivedPoint(mapping: CandidateMapping, date: string, sources: DailyPoint[]): DailyPoint {
+  const inputs = mapping.fields.map((key, index) => ({ key, value: sources[index].state === "available" && sources[index].value !== null
+    ? sources[index].value! * (mapping.derivedInputMultipliers?.[index] ?? 1) : null }));
+  const unavailable = sources.find(point => point.state !== "available" || point.value === null);
+  if (unavailable) return { date, value: null, state: unavailable.state === "available" ? "no_value" : unavailable.state, inputs,
+    ...(unavailable.sourceStatus ? { sourceStatus: unavailable.sourceStatus } : {}) };
+  return { date, value: inputs[1].value === 0 ? null : inputs[0].value! / inputs[1].value! / (mapping.resultDivisor ?? 1),
+    state: inputs[1].value === 0 ? "zero_denominator" : "available", inputs,
+    ...(sources.every(point => point.sourceStatus === "READY") ? { sourceStatus: "READY" as const } : {}) };
+}
 function periodStatistics(id: CandidateId, points: readonly DailyPoint[], query: DailyDashboardQuery, today: string): DailyPeriodStatistics {
   const dayCount = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
   const context = { aggregationVersion: DAILY_STATISTICS_VERSION, dateRange: query.dateRange, dayCount };
@@ -252,12 +264,12 @@ const playbackDetailMetricIds: readonly CandidateId[] = [
   "M034.android", "M036.android", "M097.android", "M034.ios", "M036.ios", "M097.ios", "M034.web", "M036.web", "M097.web"
 ];
 const boardMetrics: Record<string, readonly CandidateId[]> = {
-  "5.2": (Object.keys(mappings) as CandidateId[]).filter(id => !mappings[id].checkin && !retentionDetailMetricIds.includes(id) && !playbackDetailMetricIds.includes(id)),
+  "5.2": (Object.keys(mappings) as CandidateId[]).filter(id => id !== "M030" && !mappings[id].checkin && !retentionDetailMetricIds.includes(id) && !playbackDetailMetricIds.includes(id)),
   "5.14": ["M075"],
-  "5.12": ["M101", "M034", "M036", "M097", ...playbackDetailMetricIds],
+  "5.12": ["M101", "M034", "M036", "M097", "M030", ...playbackDetailMetricIds],
   "5.7": ["M001", "M002", "M003", "M095", "M005", "M099", "M006", "M007", "M008", "M008.android", "M008.ios", "M008.web", "M008.nature", "M008.internal", "M059.new", "M064"],
   "5.8": ["M016", "M016.android", "M016.ios", "M016.web", "M016.new", "M016.old", "M016.androidNew", "M016.iosNew", "M016.androidOld", "M016.iosOld", "M018", "M020", "M020.android", "M020.ios", "M020.natural", "M020.internal", "M021", "M022", "M023", ...retentionDetailMetricIds, "M115.d1", "M115.d3", "M115.d7", "M115.d30"],
-  "5.9": ["M026", "M081", "M103", "M101", "M102", "M098", "M034", "M036", "M097", "M026.android", "M026.ios", "M026.web", "M026.new", "M026.old", "M026.androidNew", "M026.iosNew", "M026.androidOld", "M026.iosOld", "M081.android", "M081.ios", "M081.web", "M081.new", "M081.old", "M081.androidNew", "M081.iosNew", "M081.androidOld", "M081.iosOld"],
+  "5.9": ["M026", "M081", "M103", "M101", "M102", "M098", "M034", "M036", "M097", "M026.android", "M026.ios", "M026.web", "M026.new", "M026.old", "M026.androidNew", "M026.iosNew", "M026.androidOld", "M026.iosOld", "M081.android", "M081.ios", "M081.web", "M081.new", "M081.old", "M081.androidNew", "M081.iosNew", "M081.androidOld", "M081.iosOld", "M036.android", "M036.ios", "M036.web"],
   "5.10": ["M059", "M058", "M061", "M067", "M087", "M059.new", "M064", "M058.new", "M088", "M067.new", "M065", "M066", "M065.new", "M066.new"],
   "5.11": ["M059", "M058", "M061", "M067", "M087", "M113", "M112", "M060", "M114",
     "M112.alipay", "M113.alipay", "M060.alipay", "M114.alipay",
@@ -265,7 +277,7 @@ const boardMetrics: Record<string, readonly CandidateId[]> = {
     "M112.usdt", "M113.usdt", "M060.usdt", "M114.usdt", "M112.unknown", "M113.unknown", "M060.unknown", "M114.unknown", "M084", "M086", "M090"]
 };
 const pending: Record<string, string[]> = {
-  "5.12": ["M083", "M031", "M030", "M032"],
+  "5.12": ["M083", "M031", "M032"],
   "5.2": [], "5.7": [],
   "5.8": [], "5.9": ["M040", "M041", "M042"],
   "5.10": [], "5.11": [],
@@ -289,6 +301,7 @@ function sourceMetricIds(ids: readonly CandidateId[]): CandidateId[] {
     const dependencies = mappings[id].derivedFrom;
     if (dependencies) dependencies.forEach(visit);
     else sources.add(id);
+    mappings[id].fallbackFrom?.forEach(visit);
   };
   ids.forEach(visit);
   return [...sources];
@@ -315,6 +328,7 @@ export function dailyDashboardMatchesMapping(result: DailyDashboardSuccess) {
   const ids = boardMetrics[result.data.query.boardId] ?? [];
   const sources = sourceApis(ids);
   if (!isDeepStrictEqual(result.data.sourceApiIds, sources)) return false;
+  if (!isDeepStrictEqual(result.data.series.map(series => series.metric.id), ids)) return false;
   if (result.data.schemaVersion === DAILY_DASHBOARD_VERSION && result.data.acquisitionGroups) {
     if (result.data.query.boardId !== "5.7") return false;
     for (const dimension of ["channel", "downloadPlatform"] as const) {
@@ -337,7 +351,7 @@ function metric(id: CandidateId): DailyReadingMetric {
   const definition = getV2MetricDefinition(referenceMetricId);
   if (!definition) throw new Error("Daily reading metric definition missing");
   return { id, referenceMetricId, name: mapping.name ?? definition.name, unit: mapping.unit, authorityVersion: definition.authority.version,
-    definition: mapping.definition ?? definition.authority.definition,
+    definition: mapping.definition ?? metricBusinessDefinition(definition.authority),
     formula: mapping.formula ?? (mapping.fields.length === 2 ? mapping.inputNames ? mapping.inputNames.join(" ÷ ") + (mapping.unit === "%" ? " × 100%" : "") : definition.authority.registeredFormula : null),
     sourceNote: mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null),
     inputs: mapping.fields.map((key, index) => ({ key, name: mapping.inputNames?.[index] ?? mapping.name ?? getV2MetricDefinition(mapping.inputIds[index])!.name, unit: mapping.inputUnits?.[index] ?? (mapping.fields.length === 1 ? mapping.unit : mapping.payment ? "次" : key.endsWith("Amt") ? AMOUNT_UNIT : ["adsCount", "navCount", "totalClickedCount", "adsClickedNewCount", "totalVistCount", "navClickedNewCount", "newUserTotalClickedCount", "totalDownCountNoDedup", "visiCountNoDedup"].includes(key) ? "次" : ["totalDownCountByIp", "ipStatTotalCount"].includes(key) ? "IP·天" : "人") }))
@@ -568,15 +582,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const projectPoint = (id: CandidateId, date: string): DailyPoint => {
         const mapping = mappings[id];
         if (mapping.derivedFrom) {
-          const sources = mapping.derivedFrom.map(source => pointFor(source, date));
-          const inputs = mapping.fields.map((key, index) => ({ key, value: sources[index].state === "available" && sources[index].value !== null
-            ? sources[index].value! * (mapping.derivedInputMultipliers?.[index] ?? 1) : null }));
-          const unavailable = sources.find(point => point.state !== "available" || point.value === null);
-          if (unavailable) return { date, value: null, state: unavailable.state === "available" ? "no_value" : unavailable.state, inputs,
-            ...(unavailable.sourceStatus ? { sourceStatus: unavailable.sourceStatus } : {}) };
-          return { date, value: inputs[1].value === 0 ? null : inputs[0].value! / inputs[1].value! / (mapping.resultDivisor ?? 1),
-            state: inputs[1].value === 0 ? "zero_denominator" : "available", inputs,
-            ...(sources.every(point => point.sourceStatus === "READY") ? { sourceStatus: "READY" as const } : {}) };
+          return derivedPoint(mapping, date, mapping.derivedFrom.map(source => pointFor(source, date)));
         }
         if (mapping.biV1Playback) {
           const code = id as "M034" | "M036" | "M097";
@@ -592,6 +598,13 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         }
         const biV1Day = (id === "M018" ? monthlyDays : biV1MetricDays).get(date);
         const biV1Point = mapping.biV1Metric ? biV1Day?.metrics[biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions)] : undefined;
+        if (mapping.fallbackFrom && !(biV1Point?.dataStatus === "READY" && biV1Point.unit === "ratio"
+          && (biV1Point.state === "available" || biV1Point.state === "zero_denominator"))) {
+          const sources = mapping.fallbackFrom.map(source => pointFor(source, date));
+          if (sources.every(point => point.sourceStatus === "READY" && point.state === "available" && point.value !== null)) {
+            return derivedPoint(mapping, date, sources);
+          }
+        }
         if (biV1Point) {
           if (!mapping.biV1Only && (!biV1Point.dataStatus || biV1Point.dataStatus === "SOURCE_INCOMPLETE")) {
             const legacyPoint = projectLegacyPoint(id, date);

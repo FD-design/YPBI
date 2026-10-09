@@ -14,6 +14,17 @@ const catalog = JSON.parse(readFileSync(new URL("../../../../server/v2/generated
 const names = new Map<string, string>(catalog.items.map((item: { id: string; name: string }) => [item.id, item.name]));
 const explanation = (id: string) => metricBusinessExplanation(catalog.items.find((item: { id: string }) => item.id === id), names);
 
+test("普通指标描述引用业务定义，引用哨兵回溯且计算规则不变", () => {
+  const metric = { name: "人均收入", authority: { definition: "现有后台未登记。", recommendedDefinition: "每名付费用户平均贡献的实际支付金额。", registeredFormula: "实际支付金额 ÷ 付费用户数" } };
+  const recommended = metricBusinessExplanation(metric, names);
+  assert.equal(recommended.description, metric.authority.recommendedDefinition);
+  const referenced = metricBusinessExplanation({ ...metric, authority: { ...metric.authority, definition: "按付费用户去重计算。", recommendedDefinition: "与现有定义一致" } }, names);
+  assert.equal(referenced.description, "按付费用户去重计算。");
+  assert.equal(referenced.formula, recommended.formula);
+  assert.equal(referenced.calculation, recommended.calculation);
+  assert.equal(metric.authority.definition, "现有后台未登记。");
+});
+
 test("全部指标展示释义可读，不包含协议代码且不修改权威源", () => {
   const before = JSON.stringify(catalog);
   for (const metric of catalog.items) {
