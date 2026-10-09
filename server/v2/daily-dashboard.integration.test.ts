@@ -47,7 +47,8 @@ const acquisitionGroups: { id: string; retentionId: string; filters: Filters; re
 const paymentGroups = [
   { id: "alipay", filters: { paymentMethod: "ali_pay" }, orders: 8, users: 6, paid: 4 },
   { id: "wechat", filters: { paymentMethod: "wx_pay" }, orders: 12, users: 9, paid: 3 },
-  { id: "usdt", filters: { paymentMethod: "usdt_pay" }, orders: 6, users: 5, paid: 2 }
+  { id: "usdt", filters: { paymentMethod: "usdt_pay" }, orders: 6, users: 5, paid: 2 },
+  { id: "unknown", filters: { paymentMethod: "unknown" }, orders: 6, users: 3, paid: 3 }
 ];
 
 function requestDrivenUpstream(failure: "none" | "cross" | "legacy_fallback" = "none") {
@@ -55,6 +56,8 @@ function requestDrivenUpstream(failure: "none" | "cross" | "legacy_fallback" = "
   const rows = [
     makeRow("M016", {}, 6), makeRow("M026", {}, 4), makeRow("M081", {}, 4, 6, "ratio"),
     makeRow("M008", {}, 10), makeRow("M101", {}, 3),
+    makeRow("M059", {}, 5), makeRow("M059", { userCohort: "new" }, 3),
+    makeRow("M094", {}, 4), makeRow("M094", { userCohort: "new" }, 2),
     makeRow("M020", {}, 8, 10, "ratio"), makeRow("M021", {}, 7, 10, "ratio"),
     makeRow("M022", {}, 6, 10, "ratio"), makeRow("M023", {}, 5, 10, "ratio"),
     makeRow("M112", {}, 26), makeRow("M113", {}, 20), makeRow("M060", {}, 9), makeRow("M114", {}, 9, 26, "ratio"),
@@ -148,6 +151,10 @@ describe("日看板按实际请求范围读取模拟上游", () => {
     const result = await service.execute({ ...range, boardId: "5.2" });
     expectReady(result, "M018", 6);
     expectReady(result, "M101", 3);
+    expectReady(result, "M059", 5);
+    expectReady(result, "M059.new", 3);
+    expectReady(result, "M094.ads", 4);
+    expectReady(result, "M094.new", 2);
     expect(calls.filter(call => call.path.endsWith("pRealDayLine"))).toHaveLength(1);
     expectReady(result, "M110.new", 2 / 3);
     expect(point(result, "M110.new").inputs.map(input => input.value)).toEqual([2, 3]);

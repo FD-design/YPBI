@@ -37,7 +37,7 @@ for (const dimensionField of ["paymentMethod", "payment_method"] as const) {
         const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id),
           state: { status: "success", data, refreshing: false, refreshError: null },
           platformName: "测试", controls: { dirty: false } } as LiveDashboardReading;
-        for (const [method, requests, users, successes] of [["all", 41, 23, 17], ["alipay", 2, 1, 1], ["wechat", 5, 3, 2], ["usdt", 11, 6, 7]] as const) {
+        for (const [method, requests, users, successes] of [["all", 41, 23, 17], ["alipay", 2, 1, 1], ["wechat", 5, 3, 2], ["usdt", 11, 6, 7], ["unknown", 101, 70, 89]] as const) {
           const values = [requests, users, successes, successes / requests];
           metricCodes.forEach((code, index) => {
             expect(paymentOrderObservation(live, code, method)).toMatchObject({ value: values[index] });
@@ -63,7 +63,7 @@ test("USDT 范围按登记目录接入，真实四指标与未知金额状态独
     : { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] }
   }).execute({ boardId: "5.11", pid: "PH", dateRange: [range.end, range.end] });
   const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id), state: { status: "success", data, refreshing: false, refreshError: null }, platformName: "测试", controls: { dirty: false } } as LiveDashboardReading;
-  expect(paymentOrderWays(live).map(item => item.id)).toEqual(["all", "alipay", "wechat", "usdt"]);
+  expect(paymentOrderWays(live).map(item => item.id)).toEqual(["all", "alipay", "wechat", "usdt", "unknown"]);
   expect(paymentOrderWays(null).map(item => item.id)).toEqual(["all", "alipay", "wechat"]);
   const models = paymentOrderMetricModels(range, "usdt", false, live);
   for (const model of models) {
@@ -87,6 +87,26 @@ test("USDT 范围按登记目录接入，真实四指标与未知金额状态独
   expect(paymentOrderWays(failed).some(item => item.id === "usdt")).toBe(true);
   expect(paymentOrderMetricModels(range, "usdt", false, failed).find(model => model.metric.id === "M114.usdt")?.result.status).toBe("failed");
   expect(paymentOrderObservation(failed, "M114", "usdt")).toMatchObject({ value: null, state: "读取失败" });
+});
+
+test("未知支付方式独立登记与取值，不由总体扣除已知方式，不与 USDT 绑定", async () => {
+  const data = await new DailyDashboardService({ get: async path => path === "/api/admin/bi/v1/metrics"
+    ? { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: null, rows: [
+      { metricCode: "M113", businessDate: range.end, dimensions: { pid: "PH" }, value: 99, numerator: 99, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "test-v1" },
+      { metricCode: "M113", businessDate: range.end, dimensions: { pid: "PH", paymentMethod: "unknown" }, value: 0, numerator: 0, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "test-v1" }
+    ] } }
+    : { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] }
+  }).execute({ boardId: "5.11", pid: "PH", dateRange: [range.end, range.end] });
+  const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id), state: { status: "success", data, refreshing: false, refreshError: null }, platformName: "测试", controls: { dirty: false } } as LiveDashboardReading;
+  expect(paymentOrderWays({ ...live, metricIds: ["M113", "M113.unknown"] }).map(item => item.id)).toEqual(["all", "alipay", "wechat", "unknown"]);
+  expect(paymentOrderObservation(live, "M113", "unknown")).toMatchObject({ value: 0 });
+  expect(paymentOrderObservation(live, "M112", "unknown")).toMatchObject({ value: null });
+  expect(paymentOrderObservation(live, "M058", "unknown")).toMatchObject({ value: null, state: "该范围待接入" });
+  const users = data.data.series.find(series => series.metric.id === "M113.unknown")!;
+  users.points[0] = { ...users.points[0], state: "no_value", value: null, sourceStatus: "SOURCE_INCOMPLETE" };
+  expect(paymentOrderObservation(live, "M113", "unknown")).toMatchObject({ value: null });
+  const failed = { ...live, state: { status: "failure", message: "来源失败" } } as LiveDashboardReading;
+  expect(paymentOrderObservation(failed, "M113", "unknown")).toMatchObject({ value: null, state: "读取失败" });
 });
 
 test("支付日报摘要读取同一支付方式的所选日值和精确 D−1、D−7", () => {

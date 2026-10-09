@@ -22,6 +22,23 @@ const message = (rows: ReturnType<typeof makeRow>[]) => ({
   rows
 });
 
+describe("bi-v1 付费与广告独立人数", () => {
+  test("M059/M094使用count计数并保留独立新用户范围", async () => {
+    const rows = [makeRow("M059", "count", 3, 3, 0, { userCohort: "new" }), makeRow("M094", "count", 2, 2, 0, { userCohort: "new" })];
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
+      expect(params.metricCodes).toBe("M059,M094");
+      expect(JSON.parse(params.dimensionFilters)).toEqual({ userCohort: "new" });
+      return { code: 200, msg: message(rows) };
+    } }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M059", "M094"], dimensionFilters: { userCohort: "new" }, dimensions: ["userCohort"] });
+    expect(result.days[0].metrics[biV1MetricKey("M059", ["new"])])
+      .toMatchObject({ state: "available", dataStatus: "READY", value: 3, numerator: 3, denominator: 0, unit: "count" });
+    expect(result.days[0].metrics[biV1MetricKey("M094", ["new"])])
+      .toMatchObject({ state: "available", dataStatus: "READY", value: 2, numerator: 2, denominator: 0, unit: "count" });
+    expect(result.days[0].metrics.M059).toBeUndefined();
+    expect(result.days[0].metrics.M094).toBeUndefined();
+  });
+});
+
 describe("bi-v1 批量请求有界隔离", () => {
   const query = { pid: "PH", startDate: "2020-01-01", endDate: "2020-01-01", metricCodes: ["M008", "M113", "M112", "M060", "M114"] as const };
   const dated = (row: ReturnType<typeof makeRow>) => ({ ...row, businessDate: query.startDate });

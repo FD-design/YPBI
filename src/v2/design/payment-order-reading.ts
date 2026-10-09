@@ -22,9 +22,10 @@ export const PAYMENT_BUSINESS_METRICS = [
 export const PAYMENT_DAILY_FORMULA = "同日充值成功次数 ÷ 同日拉单次数 × 100%";
 
 export function paymentOrderWays(live: LiveDashboardReading | null) {
-  return live?.metricIds.some(id => PAYMENT_BUSINESS_METRICS.some(metric => id === `${metric.id}.usdt`))
-    ? [...paymentWays, { id: "usdt", label: "USDT" }]
-    : paymentWays;
+  if (!live) return paymentWays;
+  const additionalWays = [{ id: "usdt", label: "USDT" }, { id: "unknown", label: "未知支付方式" }];
+  return [...paymentWays, ...additionalWays.filter(way => live.metricIds.some(id =>
+    PAYMENT_BUSINESS_METRICS.some(metric => id === `${metric.id}.${way.id}`)))];
 }
 
 function paymentOrderSourceId(id: string, way: string) {

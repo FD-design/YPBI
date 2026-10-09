@@ -5,7 +5,7 @@ export const BI_V1_METRICS_API = "/api/admin/bi/v1/metrics";
 
 export const biV1MetricCodeSchema = z.enum([
   "M001", "M002", "M003", "M005", "M006", "M007", "M008", "M016", "M018", "M020", "M021", "M022", "M023", "M026",
-  "M034", "M036", "M060", "M081", "M084", "M086", "M090", "M095", "M097", "M099", "M101", "M103", "M110", "M111", "M112", "M113", "M114", "M115"
+  "M034", "M036", "M059", "M060", "M081", "M084", "M086", "M090", "M094", "M095", "M097", "M099", "M101", "M103", "M110", "M111", "M112", "M113", "M114", "M115"
 ]);
 export type BiV1MetricCode = z.infer<typeof biV1MetricCodeSchema>;
 export type BiV1MetricDataStatus = "READY" | "PROCESSING" | "NOT_MATURE" | "SOURCE_INCOMPLETE" | "FAILED";

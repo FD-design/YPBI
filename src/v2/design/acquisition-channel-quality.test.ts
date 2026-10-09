@@ -124,7 +124,7 @@ test("只在原来源渠道表增强；真实类型分支、首屏六卡和原�
   expect(page.match(/<ChannelQuality /g)).toHaveLength(1);
   expect(page).toContain('const channelQuality = dimension === "channel"');
   expect(page).toContain('{section("channel")}{section("target")}{section("type")}');
-  expect(page).toContain('dimension==="type"');
+  expect(page).toContain('dimension === "type"');
   expect(page).toContain('renderCards(ACQUISITION_IDS.slice(0, 6))');
   expect(visuals).not.toContain('label="落地页趋势指标"');
   expect(visuals).toContain('onLocate("channel")');

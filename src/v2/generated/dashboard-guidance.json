@@ -167,12 +167,12 @@
   {
     "key": "payment.order",
     "title": "拉单与充值转化",
-    "description": "按总体、微信和支付宝核对日报订单链路规模与成功率。"
+    "description": "按总体及已接入的支付方式核对日报订单链路规模与成功率。"
   },
   {
     "key": "payment.method",
     "title": "支付方式比较",
-    "description": "比较微信、支付宝的拉单次数、充值成功率和充值金额。"
+    "description": "比较已接入支付方式的拉单次数、充值成功率和充值金额；未返回的指标保留缺失状态。"
   },
   {
     "key": "playback.core",

@@ -43,6 +43,7 @@ import { CompactMetricReading } from "../features/dashboards/CompactMetricReadin
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { liveDailyReferenceRows, liveExportMetadata, liveMetricModel, livePeriodStatus, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { LiveSeriesDetails, LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
+import { ConnectedPlaybackDiagnosis } from "./ConnectedPlaybackDiagnosis";
 
 const SECTION_GUIDANCE: Record<string, readonly (string | undefined)[]> = {
   "5.10": ["member.core", undefined, undefined, "member.paywall"],
@@ -112,6 +113,11 @@ const differenceValue = (id: string, difference: number) => demoUnit(id) === "%"
 type DimensionSelection = { id: string; group: string; order: BoardSortOrder };
 const calculationInput = (input: { value: number | null; unit: string } | undefined) => input?.value === null || input?.value === undefined ? "—" : `${input.value.toLocaleString("zh-CN")} ${input.unit}`;
 export function BoardDimension({ spec, view, pending, open, onSelectionChange }: { spec: ExtendedBoard["dimensions"][number]; view: ExtendedView; pending: boolean; open: OpenPreviewReading; onSelectionChange?: (value: DimensionSelection) => void }) {
+  const live = useLiveDashboard();
+  if (spec.title === "播放质量诊断" && live) return <ConnectedPlaybackDiagnosis spec={spec} live={live} pending={pending} open={open} onSelectionChange={onSelectionChange} />;
+  return <DemoBoardDimension spec={spec} view={view} pending={pending} open={open} onSelectionChange={onSelectionChange} />;
+}
+function DemoBoardDimension({ spec, view, pending, open, onSelectionChange }: { spec: ExtendedBoard["dimensions"][number]; view: ExtendedView; pending: boolean; open: OpenPreviewReading; onSelectionChange?: (value: DimensionSelection) => void }) {
   const [id, setId] = useState(spec.ids[0]), [group, setGroup] = useState(spec.groups[0]), [search, setSearch] = useState(""), [order, setOrder] = useState<BoardSortOrder>("position"), [top, setTop] = useState("10");
   const groups = spec.title === "作者与社区明细" ? [id === "M049" ? "作者" : id === "M050" ? "帖子" : "内容类型"] : spec.groups;
   const actualGroup = groups.includes(group) ? group : groups[0];
