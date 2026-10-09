@@ -6,14 +6,18 @@ export const BI_V1_METRICS_API = "/api/admin/bi/v1/metrics";
 
 export const biV1MetricCodeSchema = z.enum([
   "M001", "M002", "M003", "M005", "M006", "M007", "M008", "M016", "M018", "M020", "M021", "M022", "M023", "M026",
-  "M034", "M036", "M059", "M060", "M081", "M084", "M086", "M090", "M094", "M095", "M097", "M099", "M101", "M103", "M110", "M111", "M112", "M113", "M114", "M115"
+  "M034", "M036", "M058", "M059", "M060", "M061", "M064", "M081", "M084", "M086", "M090", "M094", "M095", "M097", "M099", "M101", "M102", "M103", "M110", "M111", "M112", "M113", "M114", "M115"
 ]);
 export type BiV1MetricCode = z.infer<typeof biV1MetricCodeSchema>;
 export type BiV1MetricDataStatus = "READY" | "PROCESSING" | "NOT_MATURE" | "SOURCE_INCOMPLETE" | "FAILED";
+const expectedRuleVersionsSchema = z.partialRecord(biV1MetricCodeSchema, z.string().min(1).max(128));
 
 const dataStatusSchema = z.enum(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_INCOMPLETE", "FAILED"]);
-const metricUnitSchema = z.enum(["count", "ratio", "count_per_user"]);
+const metricUnitSchema = z.enum(["count", "ratio", "count_per_user", "seconds", "currency"]);
 export type BiV1MetricUnit = z.infer<typeof metricUnitSchema>;
+const requiredMetricUnits: Partial<Record<BiV1MetricCode, BiV1MetricUnit>> = {
+  M058: "currency", M061: "ratio", M064: "ratio", M102: "seconds"
+};
 const metricRowSchema = z.object({
   metricCode: biV1MetricCodeSchema,
   businessDate: z.iso.date().optional(),
@@ -75,6 +79,8 @@ export interface BiV1MetricQuery {
   dimensionFilters?: BiV1MetricDimensionFilters;
   dimensions?: readonly BiV1MetricDimension[];
   granularity?: "day" | "summary";
+  // Local admission rules are never forwarded to the upstream API.
+  expectedRuleVersions?: Partial<Record<BiV1MetricCode, string>>;
 }
 
 type DimensionConflict = { metricCode: BiV1MetricCode; businessDate?: string };
@@ -186,6 +192,12 @@ function queryDimensions(query: BiV1MetricQuery) {
   };
 }
 
+function queryRuleVersions(query: BiV1MetricQuery) {
+  const rules = expectedRuleVersionsSchema.safeParse(query.expectedRuleVersions ?? {});
+  if (!rules.success) throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 本地规则版本约束无效", 422);
+  return rules.data;
+}
+
 function matchesDimensionScope(dimensions: Record<string, unknown>, scope: ReturnType<typeof queryDimensions>) {
   const recognized = recognizedDimensions(dimensions);
   const expectedFields = new Set([...Object.keys(scope.filters), ...scope.dimensions]);
@@ -262,10 +274,18 @@ function safeInteger(value: number, label: string) {
   return value;
 }
 
+function safeScalar(value: number | null, label: string) {
+  if (value === null || !Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) {
+    throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${label} 不是安全的非负数值`, 502);
+  }
+  return value;
+}
+
 export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
   const metricCodes = [...new Set(query.metricCodes)];
   if (!metricCodes.length) throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 指标列表不能为空", 422);
   const scopeDimensions = queryDimensions(query);
+  queryRuleVersions(query);
   const payload = await client.get(BI_V1_METRICS_API, {
     pid: query.pid,
     startDate: query.startDate,
@@ -306,6 +326,7 @@ export function aggregateBiV1MetricDays(
   const invalidGlobalMetrics = new Set<string>();
   const invalidMetricDays = new Set<string>();
   queryDimensions(query);
+  const expectedRuleVersions = queryRuleVersions(query);
   if (query.granularity === "summary") throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 汇总结果不能按日聚合", 422);
   // Validate access scope before excluding rows with unrelated dimensions.
   for (const row of message.rows) {
@@ -379,6 +400,21 @@ export function aggregateBiV1MetricDays(
           continue;
         }
         try {
+          const expectedRuleVersion = expectedRuleVersions[row.metricCode];
+          if (expectedRuleVersion !== undefined && row.ruleVersion !== expectedRuleVersion) {
+            throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 规则版本不符合本地准入条件`, 502);
+          }
+          const requiredUnit = requiredMetricUnits[row.metricCode];
+          if (requiredUnit && row.unit !== requiredUnit) {
+            throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 单位与指标契约不一致`, 502);
+          }
+          if (row.unit === "seconds" || row.unit === "currency") {
+            if (row.unit !== requiredUnit) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 未登记该标量单位`, 502);
+            const value = safeScalar(row.value, `${key} 数值`);
+            if (row.numerator !== value || row.denominator !== 0) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 标量分子分母不一致`, 502);
+            metrics[key] = { dataStatus: "READY", state: "available", value, numerator: value, denominator: 0, unit: row.unit };
+            continue;
+          }
           if (row.unit === "count") {
             const value = safeInteger(row.value!, `${key} 数值`);
             if (row.numerator !== value || row.denominator !== 0) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 计数分子分母不一致`, 502);

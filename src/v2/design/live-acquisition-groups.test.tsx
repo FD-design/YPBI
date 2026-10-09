@@ -185,7 +185,30 @@ test("逐日详情和导出保留真实日期、输入、规则版本及刷新�
   const result = model(live), html = renderToStaticMarkup(<LiveAcquisitionMetricDetails row={result.rows[0]} id="M005" />);
   for (const text of ["2020-01-01", "40.00%", "同渠道分子", "actual/v3", "刷新失败，保留上次查询结果"]) expect(html).toContain(text);
   const summary = acquisitionGroupWorkbook(live, "channel")[1].rows.find(row => row[4] === acquisitionMetric("M005").name)!;
-  expect(summary[5]).toBe(.4); expect(summary[9]).toBe("actual/v3"); expect(summary[12]).toContain("刷新失败");
+  expect(summary[5]).toBe(.4); expect(summary[6]).toBe("原始比值"); expect(summary[9]).toBe("actual/v3"); expect(summary[12]).toContain("刷新失败");
+});
+
+test("渠道与下载目标两期汇总和逐日导出保留原始比值，次数单位保持", () => {
+  const live = reading(), before = reading(["2019-12-30", "2019-12-31"]);
+  live.comparison = { label: "上一等长周期", query: before.query, state: before.state };
+  for (const dimension of ["channel", "downloadPlatform"] as const) {
+    const sheets = acquisitionGroupWorkbook(live, dimension).slice(1);
+    for (const sheet of sheets) {
+      const rows = sheet.rows.slice(1);
+      expect(new Set(rows.map(row => row[0]))).toEqual(new Set(["当前期", "对比期"]));
+      for (const row of rows) {
+        const count = [acquisitionMetric("M001").name, acquisitionMetric("M003").name].includes(String(row[4]));
+        expect(row[6]).toBe(count ? "次" : "原始比值");
+      }
+    }
+    if (dimension === "channel") {
+      expect(sheets[0].rows.find(row => row[4] === acquisitionMetric("M005").name)?.[5]).toBe(.4);
+      expect(sheets[1].rows.find(row => row[4] === acquisitionMetric("M005").name)?.[5]).toBe(.2);
+    } else {
+      expect(sheets[0].rows[1][5]).toBe(80);
+      expect(sheets[1].rows[1][5]).toBe(0);
+    }
+  }
 });
 
 test("动态渠道和下载目标悬停仅用紧凑读数，完整表格和导出留在点击详情", () => {

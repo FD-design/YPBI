@@ -90,7 +90,7 @@ export function acquisitionGroupInputs(value: AcquisitionGroupValue) {
 export function acquisitionGroupWorkbook(live: LiveDashboardReading, dimension: AcquisitionGroupDimension): WorkbookSheet[] {
   const model = acquisitionGroupModel(live, dimension), label = ACQUISITION_GROUP_LABELS[dimension];
   const records = model.rows.flatMap(row => model.ids.flatMap(id => [{ period: "当前期", key: row.key, reading: row.current[id] }, ...(row.previous ? [{ period: "对比期", key: row.key, reading: row.previous[id] }] : [])]));
-  const row = (period: string, key: string, metric: DailyReadingMetric, point: AcquisitionGroupValue) => [period, point.date, live.query.pid, key, metric.name, point.value, metric.unit, acquisitionGroupInputs(point), point.state, point.ruleVersion, point.fetchedAt, point.watermark, point.freshness];
+  const row = (period: string, key: string, metric: DailyReadingMetric, point: AcquisitionGroupValue) => [period, point.date, live.query.pid, key, metric.name, point.value, metric.unit === "%" ? "原始比值" : metric.unit, acquisitionGroupInputs(point), point.state, point.ruleVersion, point.fetchedAt, point.watermark, point.freshness];
   const head = ["周期", "日期区间", "平台", label, "指标", "数值", "单位", "实际输入", "状态", "规则版本", "查询时间", "数据至", "刷新状态"];
   return [{ name: "数据说明", rows: [...liveExportMetadata(live), ["分组范围", ACQUISITION_GROUP_LIMIT], ["当前状态", model.current.status], ...(model.previous ? [["对比状态", model.previous.status]] : [])] },
     { name: `${label}汇总`, rows: [head, ...records.map(record => row(record.period, record.key, record.reading.metric, record.reading.summary))] },

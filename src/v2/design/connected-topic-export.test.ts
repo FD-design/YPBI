@@ -66,6 +66,7 @@ describe("真实留存专题整页导出", () => {
       expect(rows("当前期-M024")[1].slice(0, 4)).toEqual([activeDate, .5, 5, 10]);
       expect(rows("周期统计").slice(1).map(row => [row[0], row[2], row[6]])).toEqual([["当前期", "M016", 100], ["对比期", "M016", 90]]);
       expect(rows("日值比较基准").slice(1).map(row => row[0])).toEqual(["M016", "M016", "M024", "M024"]);
+      expect(rows("日值比较基准").slice(1).map(row => [row[4], row[5]])).toEqual([[90, "人"], [null, ""], [.4, "原始比值"], [null, ""]]);
       expect(JSON.stringify(sheets)).not.toContain("987654");
       expect(JSON.stringify({ live, cohortLive })).toBe(before);
     });

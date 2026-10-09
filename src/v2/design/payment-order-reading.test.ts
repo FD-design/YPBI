@@ -1,13 +1,30 @@
 import { expect, test } from "bun:test";
 import { metricRows } from "./topic-preview-export";
 import { paymentBusinessAggregate } from "./payment-observations";
-import { paymentOrderSheets } from "./PaymentOrderAnalysis";
+import { paymentOrderReferenceSheet, paymentOrderSheets } from "./PaymentOrderAnalysis";
 import { PAYMENT_BUSINESS_METRICS, paymentBusinessMetricModel, paymentBusinessMetricModels, paymentLinkMetricModel, paymentOrderMetricModels, paymentOrderObservation, paymentOrderWays } from "./payment-order-reading";
 import { DailyDashboardService } from "../../../server/v2/daily-dashboard.service";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { extendedDailyMetricModel } from "./extended-board-model";
 
 const range = { start: "2026-09-02", end: "2026-09-08" };
+
+test("真实支付比较基准导出标明原始比值，金额与人均单位及空值保持", () => {
+  const observations = [["M061", 5 / 6, "%"], ["M064", 1, "%"], ["M058", 162.02, "元"], ["M087", 162.02 / 6, "元/人"], ["M114", null, "%"]] as const;
+  const references = observations.flatMap(([metricId, value, unit]) => ["2026-09-07", "2026-09-01"].map((date, index) => ({
+    metricId, label: index === 0 ? "较前一天" : "较上周同日", date, value, unit, display: "", state: value === null ? "no_value" as const : "available" as const,
+    inputs: [{ key: "numerator", value: value === null ? null : 5 }], fetchedAt: "2026-10-09T12:00:00Z", reason: value === null ? "字段未返回" : "已返回"
+  })));
+  const sheet = paymentOrderReferenceSheet(references, new Map([["M061", "活跃用户付费率"]]));
+  expect(sheet.rows).toHaveLength(11);
+  references.forEach((reference, index) => {
+    const row = sheet.rows[index + 1];
+    expect(row[3]).toBe(reference.date); expect(row[4]).toBe(reference.value);
+    expect(row[5]).toBe(reference.unit === "%" ? "原始比值" : reference.unit);
+    expect(row[7]).toBe(reference.reason);
+  });
+  expect(sheet.rows[1][1]).toBe("活跃用户付费率");
+});
 
 test("正式支付链路卡只读取真实状态，成功、观察中、来源不完整、失败和零业务均不回退演示值", async () => {
   const rows = [

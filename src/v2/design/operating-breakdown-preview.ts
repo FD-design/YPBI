@@ -9,7 +9,7 @@ export const OPERATING_BREAKDOWNS: Record<string, typeof clients[]> = {
   M016: [users, clients], M026: [users, clients], M081: [users, clients],
   M008: [clients, acquisition],
   M020: [{ ...clients, title: "按注册时客户端", note: "按注册时客户端分组；次日返访允许跨客户端。" }, { ...acquisition, title: "按注册时获客类型" }],
-  M058: [{ id: "new-users", title: "新用户范围", slices: ["新用户"], note: "只统计注册当日充值。" }, { ...acquisition, title: "新用户充值按获客类型", note: "自然新增与内部导量是新用户的来源切片，不能与新用户值相加。" }],
+  M058: [{ id: "new-users", title: "新用户范围", slices: ["新用户"], note: "只统计注册当日充值。" }, { ...acquisition, title: "充值按获客类型", note: "按注册时来源统计对应用户的充值，覆盖新老用户；各来源与新用户是不同切分口径，分别查看。" }],
   ...Object.fromEntries(["M059", "M061", "M067", "M111"].map(id=>[id,[{ id: "new-users", title: "新用户范围", slices: ["新用户"], note: id === "M061" ? `引用${summaryColumn("M064").metric.name}：${summaryColumn("M064").metric.definition}` : "仅查看本表已登记的新用户视图；不推算老用户结果。" }]]))
 };
 export function operatingDimensionLabel(id: string) {

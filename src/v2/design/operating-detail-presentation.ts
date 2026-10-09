@@ -10,7 +10,10 @@ export function formatDetailValue(value: number | null, kind: DetailValueKind, i
     const dollar = unit?.startsWith("USD") || unit === undefined;
     return `${dollar ? "$" : ""}${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}${includeUnit ? dollar ? unit?.endsWith("/人") ? "/人" : "" : " " + unit : ""}`;
   }
-  const number = value.toLocaleString("en-US", { maximumFractionDigits: kind === "average" ? 2 : 0 });
+  const precision = kind === "duration" && value !== 0 && Math.abs(value) < 1
+    ? { maximumSignificantDigits: 4 }
+    : { maximumFractionDigits: kind === "average" || kind === "duration" ? 2 : 0 };
+  const number = value.toLocaleString("en-US", precision);
   return includeUnit ? `${number} ${unit ?? (kind === "duration" ? "小时" : kind === "events" ? "次" : kind === "average" ? "次/人" : "人")}` : number;
 }
 

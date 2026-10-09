@@ -10,6 +10,15 @@ import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardC
 describe("经营明细单日快照", () => {
   const date = "2026-09-08";
   const rows = operatingDetailRows(date);
+  test("充值来源覆盖新老用户，与注册当日充值分别拆解", () => {
+    const groups = OPERATING_BREAKDOWNS.M058;
+    expect(groups.find(group => group.id === "new-users")).toMatchObject({ slices: ["新用户"], note: "只统计注册当日充值。" });
+    const acquisition = groups.find(group => group.id === "acquisition")!;
+    expect(acquisition).toMatchObject({ title: "充值按获客类型", slices: ["自然新增", "内部导量"] });
+    expect(acquisition.note).toContain("注册时来源");
+    expect(acquisition.note).toContain("覆盖新老用户");
+    expect(acquisition.note).not.toContain("新用户的来源切片");
+  });
   test("正式人均广告结果进入经营明细与导出时保留次/人及2/3原值", async () => {
     const sourceRows = [{
       metricCode: "M110", businessDate: date, dimensions: { pid: "PH", userCohort: "new" },

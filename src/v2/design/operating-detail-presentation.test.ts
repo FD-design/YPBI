@@ -17,6 +17,16 @@ test("百分率用百分点而不是相对增长，持平保留中性", () => {
   assert.deepEqual(detailChange(0, 100, "count"), { direction: "down", display: "↓ 100.0%" });
 });
 
+test("小时保留小数，秒换算后的正时长与真实零可区分", () => {
+  assert.equal(formatDetailValue(64 / 3600, "duration", true, "小时"), "0.01778 小时");
+  assert.equal(formatDetailValue(64 / 3600, "duration", false, "小时"), "0.01778");
+  assert.equal(formatDetailValue(1.25, "duration", true, "小时"), "1.25 小时");
+  assert.equal(formatDetailValue(0, "duration", true, "小时"), "0 小时");
+  for (const value of [1 / 3600, 1e-9, Number.MIN_VALUE]) {
+    assert.ok(Number(formatDetailValue(value, "duration", false, "小时")) > 0);
+  }
+});
+
 test("零基准增长率、缺失与非法数值不生成变化", () => {
   for (const current of [0, 100, -100]) assert.equal(detailChange(current, 0, "count"), null);
   for (const value of [null, NaN, Infinity, -Infinity]) {

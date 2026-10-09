@@ -28,6 +28,16 @@ test("日比较精确日期、率百分点和零基准语义", () => {
   expect(dailyComparison(point(range.end, 0), point("2026-09-07", 10), "次", "较前一天")).toMatchObject({ status: "available", display: "-100.00%" });
   expect(dailyComparison(point(range.end, null), point("2026-09-07", 10), "次", "较前一天").status).toBe("unavailable");
 });
+test("时长旧规则日值无效时，新版有效日值保留且比较不可用", () => {
+  for (const [unit, value] of [["小时", 64 / 3600], ["分钟/人", 64 / 4 / 60]] as const) {
+    const current: DailyReadingPoint = { date: "2020-01-02", value, display: String(value), state: "available" };
+    const previous: DailyReadingPoint = { date: "2020-01-01", value: null, display: "—", state: "invalid_value", reason: "来源规则版本不符合当前口径" };
+    const comparison = dailyComparison(current, previous, unit, "较前一天");
+    expect(comparison).toMatchObject({ status: "unavailable", label: "较前一天" });
+    expect(comparison.detail).toContain(previous.reason!);
+    expect(current.value).toBe(value);
+  }
+});
 test("微小真实变化不显示带方向的0.00，极小值保留界限", () => {
   expect(dailyComparison(point(range.end, .0002), point("2026-09-07", .00021), "%", "较前一天")).toMatchObject({ display: "-0.0010 个百分点", direction: "down" });
   expect(dailyComparison(point(range.end, .0002100001), point("2026-09-07", .00021), "%", "较前一天")).toMatchObject({ display: "+<0.0001 个百分点", direction: "up" });

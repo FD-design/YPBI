@@ -44,7 +44,7 @@ export function connectedTopicExportSheets(live: LiveDashboardValue, cohortLive:
       }))] },
     ...(live.comparison ? [{ name: "日值比较基准", rows: [["指标", "参考", "平台", "日期", "结果（原始值）", "单位", "计算输入", "状态", "查询时间", "刷新状态"],
       ...dayReferences.map(point => [current?.data.series.find(series => series.metric.id === point.metricId)?.metric.name ?? point.metricId,
-        point.label, live.query.pid, point.date, point.value, point.unit,
+        point.label, live.query.pid, point.date, point.value, point.unit === "%" ? "原始比值" : point.unit,
         point.calculation ? `${point.calculation.numerator.name}：${point.calculation.numerator.value ?? "—"} ${point.calculation.numerator.unit}；${point.calculation.denominator.name}：${point.calculation.denominator.value ?? "—"} ${point.calculation.denominator.unit}` : "",
         point.reason ?? "该日未返回", point.fetchedAt, point.freshness ?? "本次查询结果"])] }] : []),
     ...periods.flatMap(period => nonCohortSeries(period.result).map(series => ({ name: period.name + "-" + series.metric.name, rows: [

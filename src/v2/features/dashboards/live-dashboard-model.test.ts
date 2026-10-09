@@ -63,7 +63,12 @@ test("留存率分母0不丢掉真实留存人数0",async()=>{
   expect(rows[0].base).toBe(0);expect(rows[0].cells[0]).toMatchObject({rate:null,count:0,status:"分母为0 · 待验数"});
 });
 test("支付总体ARPPU与占比保留计算依据；不完整分类不闭合",async()=>{
-  const result=await new DailyDashboardService({get:async(path,params)=>path.endsWith("pDaySum")?{msg:{pageData:[{pid:"PH",sumDate:query.dateRange[0],diamondChargeAmt:100,totalChargeUserCount:10}],totalCount:1}}:path.includes("channelStatByTypeV2")?{msg:{pageData:[],totalData:[{vipChargeAmt:70,goldChargeAmt:30}]}}:{data:[],msg:{pageData:[]}}}).execute({...query,boardId:"5.10"});
+  const result=await new DailyDashboardService({get:async(path,params)=>{
+    if(path === "/api/admin/bi/v1/metrics")return{code:200,msg:{...emptyMetrics.msg,rows:params.dimensionFilters?[]:[
+      {metricCode:"M058",value:100,unit:"currency"},{metricCode:"M059",value:10,unit:"count"}
+    ].filter(row=>params.metricCodes.split(",").includes(row.metricCode)).map(row=>({...row,businessDate:query.dateRange[0],dimensions:{pid:"PH"},numerator:row.value,denominator:0,dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:row.metricCode==="M058"?"paid-order-value-v1":"payment-ui-fixture-v1"}))}};
+    return path.endsWith("pDaySum")?{msg:{pageData:[{pid:"PH",sumDate:query.dateRange[0],diamondChargeAmt:999,totalChargeUserCount:99}],totalCount:1}}:path.includes("channelStatByTypeV2")?{msg:{pageData:[],totalData:[{vipChargeAmt:70,goldChargeAmt:30}]}}:{data:[],msg:{pageData:[]}};
+  }}).execute({...query,boardId:"5.10"});
   const live=reading(result);live.query=result.data.query;live.metricIds=result.data.series.map(s=>s.metric.id);
   expect(connectedPaymentUnit(live)).toBe("元");expect(connectedPaymentUnit(live,"arppu")).toBe("元/人");
   expect(connectedPaymentPoints(live,"product","share")[0].overallBasis?.numerator.unit).toBe("元");
@@ -186,22 +191,44 @@ test("经营下载保留逐周期实际输入与0，不把演示字段纳入真�
   expect(exported.some(row=>row[index("列键")]==="M018:overall")).toBe(false);
 });
 test("总体缺失时真实金额切片仍用元，不沿用演示USD",async()=>{
-  const date="2026-09-09",r=await new DailyDashboardService({get:async(path)=>path.endsWith("pDaySum")?{msg:{pageData:[{pid:"PH",sumDate:date,newUserDiamondChargeAmt:30}],totalCount:1}}:{msg:{pageData:[],totalData:[],totalCount:0},data:[]}}).execute({...query,dateRange:["2026-09-02",date]});
+  const date="2026-09-09",r=await new DailyDashboardService({get:async(path,params)=>{
+    if(path === "/api/admin/bi/v1/metrics")return{code:200,msg:{...emptyMetrics.msg,rows:params.metricCodes.split(",").includes("M058")&&params.dimensionFilters&&JSON.parse(params.dimensionFilters).userCohort==="new"?[{
+      metricCode:"M058",businessDate:date,dimensions:{pid:"PH",userCohort:"new"},value:30,numerator:30,denominator:0,unit:"currency",dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:"paid-order-value-v1"
+    }]:[]}};
+    return path.endsWith("pDaySum")?{msg:{pageData:[{pid:"PH",sumDate:date,diamondChargeAmt:999,newUserDiamondChargeAmt:999}],totalCount:1}}:{msg:{pageData:[],totalData:[],totalCount:0},data:[]};
+  }}).execute({...query,dateRange:["2026-09-02",date]});
   const live={...reading(r),query:{...query,dateRange:[date,date] as [string,string]},metricIds:Object.values(OPERATING_LIVE_IDS)};
   const resources={PH:{status:"success" as const,data:r,refreshing:false,refreshError:null}},rows=operatingLiveRows(live,resources),model=operatingLiveSummary(live,resources,rows,"PH").find(m=>m.metric.id==="M058")!;
   expect(model.result.status).not.toBe("available");expect(operatingDetailBreakdown(model,rows,"PH",date).unit).toBe("元");
   expect(operatingLiveColumns(live).find(column=>column.metric.id==="M058")?.unit).toBe("元");
   const calculationRows=operatingLiveCalculationRows(rows,operatingLiveColumns(live));
-  expect(calculationRows.some(row=>row.includes("新增充值金额")&&row.includes(30)&&row.includes("元"))).toBe(true);
+  const currentSlice=calculationRows.find(row=>row[3]==="M058:新用户"&&row[4]==="当日")!;
+  expect(currentSlice[2]).toBe("总充值金额（新用户）");
+  expect(currentSlice.slice(7,10)).toEqual(["新用户注册当日充值金额",30,"元"]);
 });
-test("经营时长表头、字段说明和计算导出保留接口候选边界",async()=>{
-  const date="2026-09-09",r=await new DailyDashboardService({get:async(path)=>path.endsWith("pDaySum")?{msg:{pageData:[],totalCount:0}}:path.includes("channelStatByTypeV2")?{msg:{pageData:[],totalData:[{totalUserWatchTime:7200,watchUserCount:4}]}}:{msg:{pageData:[],totalCount:0},data:[]}}).execute({...query,dateRange:["2026-09-02",date]});
+test("经营时长表头、字段说明和计算导出保留播放成功后前台观看口径",async()=>{
+  const date="2026-09-09",r=await new DailyDashboardService({get:async(path,params)=>{
+    if(path === "/api/admin/bi/v1/metrics")return{code:200,msg:{...emptyMetrics.msg,rows:params.dimensionFilters?[]:[
+      {metricCode:"M102",value:64,unit:"seconds",ruleVersion:"foreground-watch-duration-v1"},{metricCode:"M026",value:4,unit:"count",ruleVersion:"watch-users-fixture-v1"}
+    ].filter(row=>params.metricCodes.split(",").includes(row.metricCode)).map(row=>({...row,businessDate:date,dimensions:{pid:"PH"},numerator:row.value,denominator:0,dataStatus:"READY",metricVersion:"bi-v1"}))}};
+    return path.endsWith("pDaySum")?{msg:{pageData:[],totalCount:0}}:path.includes("channelStatByTypeV2")?{msg:{pageData:[],totalData:[{totalUserWatchTime:7200,watchUserCount:99}]}}:{msg:{pageData:[],totalCount:0},data:[]};
+  }}).execute({...query,dateRange:["2026-09-02",date]});
   const live={...reading(r),metricIds:r.data.series.map(series=>series.metric.id)},columns=operatingLiveColumns(live),column=columns.find(item=>item.metric.id==="M102")!;
   expect(column.unit).toBe("小时");
-  expect(column.metric.definition).toContain("未额外剔除暂停、缓冲及后台时间");
-  expect(column.metric.definition).toContain("字段单位、完整性和区间去重分母待验数");
+  expect(column.metric.definition).toContain("播放成功后的前台观看时长");
+  expect(column.metric.definition).toContain("foreground-watch-duration-v1");
+  for(const id of ["M102","M098"]){
+    const metric=r.data.series.find(series=>series.metric.id===id)!.metric;
+    expect(metric.sourceNote).toContain("foreground-watch-duration-v1");
+    expect(JSON.stringify(metric)).not.toContain("后台时间");
+    expect(JSON.stringify(metric)).not.toContain("暂定");
+  }
   const resources={PH:{status:"success" as const,data:r,refreshing:false,refreshError:null}},rows=operatingLiveRows(live,resources);
-  expect(operatingLiveCalculationRows(rows,columns).some(row=>row.includes(7200)&&row.includes("秒（暂定）")&&row.some(cell=>typeof cell==="string"&&cell.includes("未额外剔除暂停")))).toBe(true);
+  expect(rows[0].values[columns.indexOf(column)].current).toBe(64/3600);
+  const calculationRows=operatingLiveCalculationRows(rows,columns);
+  expect(calculationRows.some(row=>row.includes(64)&&row.includes("秒")&&row.some(cell=>typeof cell==="string"&&cell.includes("foreground-watch-duration-v1")))).toBe(true);
+  expect(r.data.series.find(series=>series.metric.id==="M098")!.points.find(point=>point.date===date)).toMatchObject({value:64/4/60,inputs:[{value:64},{value:4}]});
+  expect(JSON.stringify(calculationRows)).not.toContain("秒（暂定）");
 });
 test("留存按共同批次比较，不用缺一批的对比期生成变化",async()=>{
   const service=new DailyDashboardService({get:async(path,params)=>path.includes("reletionsStatPlus")?{data:[0,1].map(i=>{const d=new Date(Date.parse(params.registerDate.slice(0,10))+i*86400000).toISOString().slice(0,10);return{pid:"PH",sumDate:d,registerCount:i?300:100,afterFirstData1:{date:new Date(Date.parse(d)+86400000).toISOString().slice(0,10),loginCnt:i?90:10}};})}:{msg:{pageData:[],totalCount:0}}},()=>new Date("2026-09-12T00:00:00Z"));

@@ -12,13 +12,15 @@ const basis = (numerator = "新增用户有效观影人数", denominator = "新�
 
 test("带单位换算的计算依据保留源公式，不自行拼出缺少换算因子的等式", () => {
   const converted: CalculationBasis = {
-    formula: "接口记录观影时长（暂按秒） ÷ 同范围观影用户数 ÷ 60",
-    scope: "同平台同日 · 待验数", numerator: { name: "接口记录观影时长", value: 7200, unit: "秒（暂定）" },
+    formula: "播放成功后的前台观看时长（秒） ÷ 同范围观影用户数 ÷ 60",
+    scope: "同平台同日 · 待验数", numerator: { name: "播放成功后的前台观看时长", value: 7200, unit: "秒" },
     denominator: { name: "同范围观影用户数", value: 4, unit: "人" }, result: "30 分钟/人", percentage: false
   };
   const html = renderToStaticMarkup(<CalculationEvidence basis={converted} />);
   expect(html).toContain("÷ 60");
-  expect(html).toContain("7,200 秒（暂定）");
+  expect(html).toContain("播放成功后的前台观看时长");
+  expect(html).toContain("7,200 秒");
+  expect(html).not.toContain("暂定");
   expect(html).toContain("4 人");
   expect(html).toContain("30 分钟/人");
   expect(html).not.toContain("7,200 ÷ 4");
