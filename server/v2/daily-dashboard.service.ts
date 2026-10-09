@@ -11,6 +11,7 @@ import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-dai
 import { BI_V1_PLAYBACK_API, readBiV1PlaybackDays, type BiV1PlaybackDay } from "../upstream/bi-v1.adapter";
 import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension } from "../upstream/bi-v1.metrics-adapter";
 import { readBiV1MonthlyMetricDays } from "../upstream/bi-v1.monthly-adapter";
+import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
 export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRechargeSucRate";
 export const CHECKIN_OVERVIEW_API = "/api/admin/dataDashboard/overview";
@@ -300,6 +301,15 @@ export function dailyDashboardMatchesMapping(result: DailyDashboardSuccess) {
   const ids = boardMetrics[result.data.query.boardId] ?? [];
   const sources = sourceApis(ids);
   if (!isDeepStrictEqual(result.data.sourceApiIds, sources)) return false;
+  if (result.data.schemaVersion === DAILY_DASHBOARD_VERSION && result.data.acquisitionGroups) {
+    if (result.data.query.boardId !== "5.7") return false;
+    for (const dimension of ["channel", "downloadPlatform"] as const) {
+      const grouped = result.data.acquisitionGroups[dimension];
+      if (grouped.dimension !== dimension || grouped.groups.some(group => group.series.length !== ACQUISITION_GROUP_METRICS[dimension].length
+        || group.series.some((series, index) => series.metric.id !== ACQUISITION_GROUP_METRICS[dimension][index]
+          || !isDeepStrictEqual(series.metric, acquisitionMetric(ACQUISITION_GROUP_METRICS[dimension][index]))))) return false;
+    }
+  }
   return result.data.series.every(series => {
     if (!(series.metric.id in mappings)) return false;
     const id = series.metric.id as CandidateId;
@@ -318,6 +328,9 @@ function metric(id: CandidateId): DailyReadingMetric {
     sourceNote: mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null),
     inputs: mapping.fields.map((key, index) => ({ key, name: mapping.inputNames?.[index] ?? mapping.name ?? getV2MetricDefinition(mapping.inputIds[index])!.name, unit: mapping.inputUnits?.[index] ?? (mapping.fields.length === 1 ? mapping.unit : mapping.payment ? "次" : key.endsWith("Amt") ? AMOUNT_UNIT : ["adsCount", "navCount", "totalClickedCount", "adsClickedNewCount", "totalVistCount", "navClickedNewCount", "newUserTotalClickedCount", "totalDownCountNoDedup", "visiCountNoDedup"].includes(key) ? "次" : ["totalDownCountByIp", "ipStatTotalCount"].includes(key) ? "IP·天" : "人") }))
   };
+}
+function acquisitionMetric(id: AcquisitionGroupMetric): DailyReadingMetric {
+  return { ...metric(id), sourceNote: "来自 bi-v1 同平台、同维度、同日期范围的独立分组结果；日值与区间汇总分别直读，分组键保留原值。仅使用 READY 数值，不从分组推算总体或占比；分组全量完整性未知。" };
 }
 const badSource = () => new UpstreamError("DAILY_SOURCE_CONFLICT", "日汇总数据结构或范围异常", 502);
 function assertScopeEcho(row: Record<string, unknown>, pid: string, date: string) {
@@ -525,7 +538,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         }
       }
     })();
-    await Promise.all([dailyTask, cohortTask, paymentTask, channelTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
+    const acquisitionTask = query.boardId === "5.7" ? readBiV1AcquisitionGroups(this.client, query, acquisitionMetric) : Promise.resolve(undefined);
+    const [acquisitionGroups] = await Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, channelTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
     const pointCache = new Map<string, DailyPoint>();
     const pointFor = (id: CandidateId, date: string): DailyPoint => {
       const key = `${id}|${date}`;
@@ -628,6 +642,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     return dailyDashboardV2SuccessSchema.parse({ success: true, data: {
       schemaVersion: DAILY_DASHBOARD_VERSION, query, queryId: randomUUID(), fetchedAt,
       timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: sourceApis(ids),
+      ...(acquisitionGroups ? { acquisitionGroups } : {}),
       series: ids.map(id => {
         const points = Array.from({ length: days }, (_, i) => pointFor(id, new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10)));
         return { metric: metric(id), points, periodStatistics: periodStatistics(id, points, query, today) };

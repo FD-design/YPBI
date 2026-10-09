@@ -14,14 +14,42 @@ import type { AcquisitionDetailReading } from "./acquisition-view-state";
 import { downloadPreviewWorkbook } from "./preview-workbook";
 import { CHANNEL_QUALITY_GROUPS, CHANNEL_QUALITY_IDS, CHANNEL_QUALITY_WATERMARK, channelQualityChange, channelQualityGroup, channelQualityRows, channelQualitySheets, channelQualityValue, filterChannelQualityRows, readChannelQuality, type ChannelQualityReading, type ChannelQualityRow } from "./acquisition-channel-quality";
 import "./acquisition-channel-quality.css";
+import { ACQUISITION_GROUP_LIMIT, acquisitionGroupValue, type AcquisitionGroupModel } from "./live-acquisition-groups";
+import { LiveAcquisitionAllDetails, LiveAcquisitionMetricDetails, LiveAcquisitionMetricHint } from "./LiveAcquisitionDetails";
 
-type Props = { filters: AcquisitionFilters; mixed: boolean; pending: boolean; detail: AcquisitionDetailReading; update: (patch: Partial<AcquisitionDetailReading>) => void; open: (title: string, content: ReactNode) => void; unavailableReason?: string; exportControl?: ReactNode };
+type Props = { filters: AcquisitionFilters; mixed: boolean; pending: boolean; detail: AcquisitionDetailReading; update: (patch: Partial<AcquisitionDetailReading>) => void; open: (title: string, content: ReactNode) => void; unavailableReason?: string; exportControl?: ReactNode; liveModel?: AcquisitionGroupModel };
 const input = (value: number | null | undefined) => value == null ? "—" : value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 export function exportChannelQuality(filters: AcquisitionFilters, mixed: boolean) {
   downloadPreviewWorkbook("渠道质量", [{ name: "00_导出说明", rows: [["项目", "内容"], ["数据来源", "演示数据；独立渠道观察事实，不代表已接入真实渠道用户关联"], ["日期", acquisitionRangeLabel(filters)], ["范围", "全部渠道、四个指标组和全部逐日依据，不受搜索、排序、分页和指标组选择裁剪"], ["币种", "USD（演示币种）"], ["数据至", CHANNEL_QUALITY_WATERMARK]] }, ...channelQualitySheets(filters, mixed)]);
 }
 
-export function ChannelQuality({ filters, mixed, pending, detail, update, open, unavailableReason, exportControl }: Props) {
+export function ChannelQuality(props: Props) {
+  return props.liveModel ? <LiveChannelQuality {...props} model={props.liveModel} /> : <DemoChannelQuality {...props} />;
+}
+
+function LiveChannelQuality({ model, detail, update, open, exportControl }: Props & { model: AcquisitionGroupModel }) {
+  const group = channelQualityGroup(detail.qualityGroup), ids = model.ids.filter(id => (group.ids as readonly string[]).includes(id));
+  const sortId = ids.find(id => id === detail.sort.id) ?? ids[0];
+  const source = ids.length ? model.rows : [];
+  const rows = source.filter(row => row.name.toLocaleLowerCase().includes(detail.search.trim().toLocaleLowerCase())).sort((a, b) => {
+    const left = a.current[sortId]?.summary.value ?? null, right = b.current[sortId]?.summary.value ?? null;
+    return left === null ? right === null ? 0 : 1 : right === null ? -1 : (left - right) * (detail.sort.descending ? -1 : 1);
+  });
+  const page = Math.min(detail.page, Math.max(0, Math.ceil(rows.length / 50) - 1));
+  const unsupported = `${group.label}渠道指标待支持：尚未登记同渠道的${group.label}查询结果。`;
+  return <div className="channel-quality" data-data-origin={model.unavailableReason ? "unavailable" : "pending"}>
+    <div className="channel-quality__toolbar"><SegmentedControl label="渠道质量指标组" value={group.value} options={CHANNEL_QUALITY_GROUPS.map(item => ({ value: item.value, label: item.label }))} onChange={qualityGroup => update({ qualityGroup })} /><span className="channel-quality__sort">{sortId ? `按${acquisitionMetric(sortId).name}${detail.sort.descending ? "降序" : "升序"}` : "当前指标组待支持"}</span><Button size="sm" icon={Table2} onClick={() => open("渠道质量完整明细", <LiveAcquisitionAllDetails model={model} exportAction={exportControl} />)}>完整明细</Button></div>
+    <p className="channel-quality__scope">{ids.length ? `按原始渠道编码展示；区间值使用后端同渠道汇总，对比按相同渠道编码匹配。${ACQUISITION_GROUP_LIMIT}` : unsupported}</p>
+    <div className="v2-table-scroll ui-result-table__viewport" tabIndex={0} role="region" aria-label="渠道质量结果"><table className="acquisition-preview__table"><thead><tr><th>来源渠道</th>{ids.map(id => <th key={id} className="is-number" aria-sort={sortId === id ? detail.sort.descending ? "descending" : "ascending" : "none"}><div className="acquisition-preview__column"><FloatingHint content={acquisitionMetric(id).definition}><button type="button" aria-label={`查看${acquisitionMetric(id).name}说明`} onClick={() => open(acquisitionMetric(id).name, <p>{source[0]?.current[id].metric.definition ?? acquisitionMetric(id).definition}</p>)}>{acquisitionMetric(id).name}<Info aria-hidden="true" /></button></FloatingHint><button type="button" aria-label={`排序${acquisitionMetric(id).name}`} onClick={() => update({ sort: { id, descending: sortId === id ? !detail.sort.descending : true }, page: 0 })}>{sortId === id ? detail.sort.descending ? <ArrowDown /> : <ArrowUp /> : <ArrowUpDown />}</button></div></th>)}</tr></thead>
+      <tbody>{rows.slice(page * 50, page * 50 + 50).map(row => <tr key={row.key}><td><button type="button" className="acquisition-preview__value" onClick={() => open(`${row.name} · 渠道质量`, <LiveAcquisitionAllDetails model={model} rows={[row]} exportAction={exportControl} />)}>{row.name}</button></td>{ids.map(id => {
+        const current = row.current[id], previous = row.previous?.[id], change = channelQualityChange(id, current.summary.value, previous?.summary.value);
+        return <td key={id} className="is-number"><FloatingHint content={<LiveAcquisitionMetricHint row={row} id={id} />}><button type="button" className="acquisition-preview__value" aria-label={`${row.name} · ${current.metric.name}详情`} onClick={() => open(`${row.name} · ${current.metric.name}`, <LiveAcquisitionMetricDetails row={row} id={id} exportAction={exportControl} />)}>{acquisitionGroupValue(current.metric, current.summary.value)}</button></FloatingHint>{current.summary.state !== "已返回" && <small className="channel-quality__status">{current.summary.state}</small>}{previous && detail.showChange !== "none" && <div className="ui-metric-comparison"><ChangeValue direction={change ? changeDirection(change.value) : null}>{change?.label ?? "不可比"}</ChangeValue></div>}</td>;
+      })}</tr>)}{!rows.length && <tr><td colSpan={ids.length + 1}>{!ids.length ? unsupported : model.unavailableReason ?? (source.length ? "没有匹配的渠道结果" : model.emptyReason)}</td></tr>}</tbody></table></div>
+    <Pagination label="获客明细分页" total={rows.length} page={page} pageSize={50} onPage={page => update({ page })} />
+  </div>;
+}
+
+function DemoChannelQuality({ filters, mixed, pending, detail, update, open, unavailableReason, exportControl }: Props) {
   const source = useMemo(() => unavailableReason ? [] : channelQualityRows(filters, mixed), [filters, mixed, unavailableReason]);
   const group = channelQualityGroup(detail.qualityGroup), ids: readonly string[] = group.ids;
   const sortId = CHANNEL_QUALITY_IDS.includes(detail.sort.id) ? detail.sort.id : "M008";

@@ -269,7 +269,7 @@ test("缺省入口修改日期在动画帧暂停时同步提交真实查询，�
 test("结束日缺失保留历史趋势与明细，真实0保持0", async ({ page }) => {
   await fixtures(page, { emptyEnd: true }); await page.goto(url("5.8"));
   const active = card(page, "日活跃用户数");
-  await expect(active).toContainText("当日无记录");
+  await expect(active).toContainText("当日未返回记录");
   await expect(active.getByRole("region", { name: "日活跃用户数折线视图" })).toBeVisible();
   await active.getByRole("button", { name: "查看同口径数据表" }).click();
   await expect(page.getByRole("dialog")).toContainText("2026-09-07");
@@ -317,7 +317,7 @@ test("支付方式缺失日保留空输入，不用演示填补真实比率", as
     await expect(row.locator("td").nth(1)).toHaveText("—");
     await expect(row.locator("td").nth(2)).toHaveText("—");
     await expect(row.locator("td").nth(3)).toHaveText("—");
-    await expect(row).toContainText("当日无记录");
+    await expect(row).toContainText("当日未返回记录");
     await expect(row).not.toContainText("演示数据");
   }
 });
@@ -331,7 +331,7 @@ for (const emptyEnd of [false, true]) test(`USDT 独立四项投影${emptyEnd ? 
   for (const [name, value] of [["拉单人数", "2"], ["拉单次数", "3"], ["充值成功次数", "1"], ["充值成功率", "33.33"]]) {
     const metric = summary.getByRole("article", { name: name + "轻量诊断", exact: true });
     await expect(metric.locator(".metric-summary__number strong")).toHaveText(emptyEnd ? "—" : value);
-    if (emptyEnd) await expect(metric.getByRole("status")).toHaveText("当日无记录");
+    if (emptyEnd) await expect(metric.getByRole("status")).toHaveText("当日未返回记录");
   }
   for (const name of ["充值人数", "活跃用户付费率", "充值金额", "活跃用户人均充值金额（ARPU）", "付费用户人均充值金额（ARPPU）"]) {
     const metric = summary.getByRole("article", { name: name + "轻量诊断", exact: true });
@@ -343,7 +343,7 @@ for (const emptyEnd of [false, true]) test(`USDT 独立四项投影${emptyEnd ? 
   const evidence = panel.getByRole("table", { name: "支付方式成功率核对", exact: true });
   const usdt = evidence.getByRole("row").filter({ has: page.getByRole("cell", { name: "USDT", exact: true }) });
   await expect(usdt.locator("td")).toHaveText(emptyEnd
-    ? ["USDT", "—", "—", "—", "2026-09-08", "待验数 · 当日无记录"]
+    ? ["USDT", "—", "—", "—", "2026-09-08", "待验数 · 当日未返回记录"]
     : ["USDT", "1 次", "3 次", "33.33 %", "2026-09-08", "待验数"]);
   if (!emptyEnd) await panel.screenshot({ path: "/private/tmp/ypbi-live-fix-payment-usdt.png" });
   if (!emptyEnd) {
@@ -407,7 +407,7 @@ test("专题刷新发出真实请求，对比期刷新失败保留标识", async
 
 test("详细图点击对比线保留对比日期，当前期全空仍显示对比趋势", async ({ page }) => {
   await fixtures(page, { emptyCurrent: true }); await page.goto(url("5.8", "&compare=previous"));
-  const active = card(page, "日活跃用户数"); await expect(active).toContainText("当日无记录");
+  const active = card(page, "日活跃用户数"); await expect(active).toContainText("当日未返回记录");
   const chart = active.getByRole("img", { name: "日活跃用户数逐日折线趋势", exact: true });
   await chart.scrollIntoViewIfNeeded();
   const point = await chart.evaluate(async el => {
@@ -427,7 +427,7 @@ test("详细图点击对比线保留对比日期，当前期全空仍显示对�
 test("空结束日紧凑卡仍可缩放，链路计算入口使用真实输入", async ({ page }) => {
   await fixtures(page, { emptyEnd: true });
   await page.goto(`${base}/dashboards/public?board=5.2&pid=PH&start=2026-08-01&end=2026-09-08`);
-  const active = card(page, "日活跃用户数"); await expect(active).toContainText("当日无记录");
+  const active = card(page, "日活跃用户数"); await expect(active).toContainText("当日未返回记录");
   await expect(active.getByRole("slider", { name: "图表起始日期" })).toBeVisible();
   await active.getByRole("slider", { name: "图表起始日期" }).focus(); await page.keyboard.press("ArrowRight");
   await expect(active.getByRole("slider", { name: "图表起始日期" })).toHaveValue("1");
@@ -463,11 +463,11 @@ test("真实落地诊断沿用结束日与独立参考日，详情导出不回�
   await page.goto(url("5.7", "&compare=previous"));
   const missingVisit = page.getByRole("article", { name: "落地页访问次数轻量诊断", exact: true });
   await expect(missingVisit.locator(".metric-summary__number strong")).toHaveText("—");
-  await expect(missingVisit.getByRole("status").filter({ hasText: "当日无记录" })).toBeVisible();
+  await expect(missingVisit.getByRole("status").filter({ hasText: "当日未返回记录" })).toBeVisible();
   await expect(missingVisit.locator(".compact-metric-reading__trend svg")).toBeVisible();
   await missingVisit.getByRole("button", { name: "查看趋势与数据", exact: true }).click();
   const missingDialog = page.getByRole("dialog", { name: "落地页访问次数 · 完整趋势与数据", exact: true });
-  await expect(missingDialog.getByRole("status")).toContainText("当日无记录");
+  await expect(missingDialog.getByRole("status")).toContainText("当日未返回记录");
   await expect(missingDialog.getByRole("region", { name: "落地页访问次数折线视图", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 

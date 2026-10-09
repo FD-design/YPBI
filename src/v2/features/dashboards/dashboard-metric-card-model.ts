@@ -2,6 +2,7 @@ import type { ChangeDirection } from "../../../components/ui/change-presentation
 import type { CalculationBasis } from "./CalculationEvidence";
 
 export type DashboardMetricDirection = ChangeDirection;
+export const dashboardNoRecordLabels = { day: "当日未返回记录", range: "当前范围未返回记录" } as const;
 
 export interface DashboardMetricIdentity {
   id: string;
@@ -127,8 +128,8 @@ const UNAVAILABLE_PRESENTATION: Record<DashboardMetricUnavailableStatus, Dashboa
     tone: "loading"
   },
   no_records: {
-    label: "当前范围无记录",
-    description: "查询成功，但没有业务记录；不会补成 0。",
+    label: dashboardNoRecordLabels.range,
+    description: "本次查询未返回匹配记录，数值保持为空。",
     tone: "neutral"
   },
   no_values: {

@@ -2,8 +2,12 @@ import type { GroupedTrendPoint } from "../features/dashboards/GroupedTrend";
 import { liveExportMetadata, livePeriodStatus, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { acquisitionDates } from "./acquisition-preview-model";
 import type { WorkbookSheet } from "./preview-workbook";
+import { CHART_PALETTE } from "../../theme/tokens";
+import { ACQUISITION_GROUP_LIMIT, acquisitionGroupModel, acquisitionGroupWorkbook } from "./live-acquisition-groups";
 
 export const DOWNLOAD_TARGET_UNAVAILABLE = "下载目标维度待接入：当前仅提供总体下载点击次数，目标分组及占比待接入。";
+// Chart-local IDs cannot collide with GroupedTrend's reserved overall ID.
+const downloadGroupId = (key: string) => JSON.stringify(["downloadPlatform", key]);
 
 export function acquisitionDownloadPeriod(live: LiveDashboardReading, before = false) {
   const period = before ? live.comparison : live;
@@ -30,24 +34,39 @@ export function acquisitionDownloadPeriod(live: LiveDashboardReading, before = f
   });
 }
 
-/** M003 supplies the overall daily count only; target groups never inherit it. */
-export function acquisitionDownloadPoints(live: LiveDashboardReading, mode: string): GroupedTrendPoint[] {
+/** Overall counts and target groups retain their independent server results. */
+export function acquisitionDownloadPoints(live: LiveDashboardReading, mode: string, model = acquisitionGroupModel(live, "downloadPlatform")): GroupedTrendPoint[] {
   const previous = acquisitionDownloadPeriod(live, true);
   return acquisitionDownloadPeriod(live).map((point, index) => {
     const before = previous[index];
-    const state = mode === "count" ? `${point.state} · ${point.freshness}` : DOWNLOAD_TARGET_UNAVAILABLE;
-    return { date: point.date, overall: mode === "count" ? point.value : null, values: {},
-      states: { __overall: state + (before ? `；对比 ${before.date} · ${before.state} · ${before.freshness}` : "") },
-      ...(before ? { comparison: { date: before.date, overall: mode === "count" ? before.value : null, values: {} } } : {}) };
+    const state = mode === "count" ? `${point.state} · ${point.freshness}` : model.unavailableReason ? DOWNLOAD_TARGET_UNAVAILABLE : `占比待接入：${ACQUISITION_GROUP_LIMIT}`;
+    return { date: point.date, overall: mode === "count" ? point.value : null,
+      values: Object.fromEntries(model.rows.map(row => [downloadGroupId(row.key), mode === "count" ? row.current.M003.points[index]?.value ?? null : null])),
+      states: { __overall: state + (before ? `；对比 ${before.date} · ${before.state} · ${before.freshness}` : ""),
+        ...Object.fromEntries(model.rows.map(row => { const current = row.current.M003.points[index], previous = row.previous?.M003.points[index]; return [downloadGroupId(row.key), mode === "count" ? `${current?.state ?? "当日未返回"} · ${current?.freshness ?? ""}${previous ? `；对比 ${previous.date} · ${previous.state} · ${previous.freshness}` : ""}` : `占比待接入：${ACQUISITION_GROUP_LIMIT}`]; })) },
+      ...(before ? { comparison: { date: before.date, overall: mode === "count" ? before.value : null,
+        values: Object.fromEntries(model.rows.map(row => [downloadGroupId(row.key), mode === "count" ? row.previous?.M003.points[index]?.value ?? null : null])) } } : {}) };
   });
 }
 
+export function acquisitionDownloadModel(live: LiveDashboardReading, mode: string) {
+  const model = acquisitionGroupModel(live, "downloadPlatform");
+  const groups = model.rows.map((row, index) => ({ id: downloadGroupId(row.key), label: row.name, color: CHART_PALETTE[index % CHART_PALETTE.length] }));
+  return { groups, readings: model.rows, available: false, total: null,
+    notice: model.unavailableReason ? model.unavailableReason.includes("维度待接入") ? DOWNLOAD_TARGET_UNAVAILABLE : model.unavailableReason
+      : `${model.current.status === "已返回" ? "" : `${model.current.status}。`}${ACQUISITION_GROUP_LIMIT}`,
+    items: groups.map((group, index) => { const row = model.rows[index]; return { ...group, value: row.current.M003.summary.value,
+      ...(row.previous ? { comparison: row.previous.M003.summary.value } : {}) }; }), points: acquisitionDownloadPoints(live, mode, model) };
+}
+
 export function acquisitionDownloadWorkbook(live: LiveDashboardReading): WorkbookSheet[] {
+  const model = acquisitionGroupModel(live, "downloadPlatform"), grouped = Boolean(model.current.extension || model.previous?.extension);
   return [
-    { name: "数据说明", rows: [...liveExportMetadata(live), ["下载目标", DOWNLOAD_TARGET_UNAVAILABLE], ["导出范围", "总体下载点击次数的逐日结果、实际输入及状态；目标分组与占比未接入"]] },
+    { name: "数据说明", rows: [...liveExportMetadata(live), ["下载目标", grouped ? ACQUISITION_GROUP_LIMIT : DOWNLOAD_TARGET_UNAVAILABLE], ["导出范围", grouped ? "总体逐日结果及已返回下载目标的汇总、逐日输入和两期状态" : "总体下载点击次数的逐日结果、实际输入及状态；目标分组与占比未接入"], ["当前分组状态", model.current.status], ...(model.previous ? [["对比分组状态", model.previous.status]] : [])] },
     { name: "总体下载点击", rows: [["周期", "日期", "平台", "指标", "点击次数", "计算输入", "状态", "查询时间", "刷新状态"],
       ...[{ label: "当前期", before: false }, ...(live.comparison ? [{ label: "对比期", before: true }] : [])].flatMap(period =>
         acquisitionDownloadPeriod(live, period.before).map(point => [period.label, point.date, live.query.pid, "下载点击次数", point.value,
-          point.inputs.map(input => `${input.name}：${input.value ?? "—"} ${input.unit}`).join("；"), point.state, point.fetchedAt, point.freshness]))] }
+          point.inputs.map(input => `${input.name}：${input.value ?? "—"} ${input.unit}`).join("；"), point.state, point.fetchedAt, point.freshness]))] },
+    ...(grouped ? acquisitionGroupWorkbook(live, "downloadPlatform").slice(1) : [])
   ];
 }

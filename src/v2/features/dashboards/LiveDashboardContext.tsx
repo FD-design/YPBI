@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../../contracts/daily-dashboard";
 import type { V2ResourceState } from "../../api/useV2Resource";
-import type { DashboardMetricCardModel } from "./dashboard-metric-card-model";
+import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "./dashboard-metric-card-model";
 import type { CalculationBasis } from "./CalculationEvidence";
 import type { DateRangeValue } from "../../../components/ui/date-range-model";
 import { dailyMetricReading, dailyReferenceDates, periodMetricReading, type DailyReadingPoint } from "./daily-reading-model";
@@ -38,7 +38,7 @@ export function liveExportMetadata(live: LiveDashboardReading) {
     ["对比日期", live.comparison?.query.dateRange.join(" 至 ") ?? "未启用对比"], ["对比状态", livePeriodStatus(live, true)],
     ["数据性质", "真实接口候选结果，待验数；完整性未知，数据水位未返回"]];
 }
-export const liveStateLabel = { available: "已返回", no_record: "当日无记录", no_value: "字段未返回", invalid_value: "数据异常", zero_denominator: "分母为0", immature: "未成熟", source_failure: "来源读取失败" };
+export const liveStateLabel = { available: "已返回", no_record: dashboardNoRecordLabels.day, no_value: "字段未返回", invalid_value: "数据异常", zero_denominator: "分母为0", immature: "未成熟", source_failure: "来源读取失败" };
 export const livePointStateLabel = (point: LiveSeries["points"][number]) => point.sourceStatus === "PROCESSING" ? "计算中"
   : point.sourceStatus === "NOT_MATURE" ? "待成熟"
     : point.sourceStatus === "SOURCE_INCOMPLETE" ? "数据接入中"
@@ -74,7 +74,7 @@ export function liveDailyPoint(live: DailySources, metricId: string, date: strin
     const point = series?.points.find(item => item.date === date);
     const reason = period?.state.status === "failure" ? "该日查询失败" : period?.state.status === "loading" ? "该日读取中" : point ? livePointStateLabel(point) : "该日未返回";
     const freshness = period?.state.status === "success" && period.state.refreshError ? `${date} 刷新失败，保留上次查询结果` : period?.state.status === "success" && period.state.refreshing ? `${date} 刷新中，保留上次查询结果` : undefined;
-    return { date, value: point?.value ?? null, display: series ? liveValue(point?.value ?? null, series.metric.unit) : "—", reason, freshness,
+    return { date, value: point?.value ?? null, state: period?.state.status === "failure" ? "source_failure" : point?.state ?? "no_value", display: series ? liveValue(point?.value ?? null, series.metric.unit) : "—", reason, freshness,
       inputs: point?.inputs ?? [], fetchedAt: valid ? data.data.fetchedAt : "", unit: series?.metric.unit ?? "",
       calculation: series && point ? liveCalculation(series, point) : undefined };
 }

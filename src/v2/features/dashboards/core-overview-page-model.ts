@@ -11,6 +11,7 @@ import type {
   DashboardMetricTrendPoint,
   DashboardMetricUnavailableStatus
 } from "./dashboard-metric-card-model";
+import { dashboardNoRecordLabels } from "./dashboard-metric-card-model.ts";
 
 type CoreOverviewScope = CoreOverviewQuerySuccess["data"]["scopeResults"][number]["scope"];
 
@@ -91,7 +92,7 @@ const AGGREGATION_LABELS: Record<CoreOverviewCard["aggregation"], (days: number)
 };
 
 const UNAVAILABLE_STATE_LABELS: Record<string, string> = {
-  no_record: "无记录",
+  no_record: dashboardNoRecordLabels.day,
   no_value: "有记录但无值",
   not_produced: "尚未产出",
   immature: "尚未成熟"

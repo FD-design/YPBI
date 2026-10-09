@@ -78,7 +78,8 @@ test("真实渠道、下载目标与结算只显示BI分组待接入，完整结
     expect(html).not.toContain("Android");
   }
   const channel = markup("channel", live);
-  for (const text of ["搜索来源渠道", "规模与转化", "首次体验", "注册留存", "付费价值", "完整明细", "排序新增用户数"]) expect(channel).toContain(text);
+  for (const text of ["搜索来源渠道", "规模与转化", "首次体验", "注册留存", "付费价值", "完整明细", "排序落地页访问次数"]) expect(channel).toContain(text);
+  expect(channel).not.toContain("排序新增用户数");
 });
 
 test("显式预览继续显示原分组演示与完整导出入口", () => {

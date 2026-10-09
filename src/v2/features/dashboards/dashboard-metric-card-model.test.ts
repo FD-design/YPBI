@@ -37,6 +37,13 @@ test("真实 0 仍是完整可用结果，不会被归入无记录", () => {
   });
 });
 
+test("范围未返回记录只说明本次查询，不推断业务不存在，字段空值保持独立", () => {
+  assert.deepEqual(dashboardMetricStatusPresentation({ metric, result: { status: "no_records", contextLabel: "本次查询", retryable: false } }), {
+    label: "当前范围未返回记录", description: "本次查询未返回匹配记录，数值保持为空。", tone: "neutral"
+  });
+  assert.equal(dashboardMetricStatusPresentation({ metric, result: { status: "no_values", contextLabel: "本次查询", retryable: false } }).label, "有记录但无可用值");
+});
+
 test("刷新失败保留旧结果与首次失败使用不同状态", () => {
   const stale: DashboardMetricCardModel = {
     metric,

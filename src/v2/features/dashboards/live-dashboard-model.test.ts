@@ -110,7 +110,8 @@ test("周期统计不借用其他范围或平台；旧响应与缺日不补算�
 test("结束日缺失时主值仍缺失，已存在的历史保留", async () => {
   const result = liveMetricModel(original(), reading(await data([100, null]))).result;
   if (result.status === "available") throw Error("must not promote an earlier date");
-  expect(result.status).toBe("no_records"); expect(result.history?.value.display).toBe("—");
+  expect(result.status).toBe("no_records"); expect(result.label).toBe("当日未返回记录"); expect(result.history?.value.display).toBe("—");
+  expect(result.history?.trend.current.at(-1)?.stateLabel).toBe("当日未返回记录");
   expect(result.history?.trend.current.map(point => point.value?.raw ?? null)).toEqual([100, null]);
 });
 test("当前期全空也保留有值的对比期", async () => {

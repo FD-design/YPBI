@@ -73,7 +73,7 @@ test("末日缺失不回退前日，加载失败与刷新旧结果分别保留�
   const current = data.data.series[1].points[0];
   data.data.series[1].points.unshift({ ...current, date: "2019-12-31" });
   current.value = null; current.state = "no_record"; current.inputs.forEach(input => { input.value = null; });
-  expect(playbackDiagnosisRows(live, "M036", "客户端平台")[0]).toMatchObject({ value: null, state: "当日无记录" });
+  expect(playbackDiagnosisRows(live, "M036", "客户端平台")[0]).toMatchObject({ value: null, state: "当日未返回记录" });
   live.state = { status: "loading" };
   expect(playbackDiagnosisRows(live, "M036", "客户端平台")[0]).toMatchObject({ value: null, state: "读取中" });
   live.state = { status: "failure", kind: "error", code: "UNAVAILABLE", message: "隔离失败" };

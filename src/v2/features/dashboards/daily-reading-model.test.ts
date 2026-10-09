@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { dailyComparison, dailyDateLabel, dailyMetricReading } from "./daily-reading-model";
+import { dailyComparison, dailyDateLabel, dailyMetricReading, type DailyReadingPoint } from "./daily-reading-model";
 import { supplementaryDailyQuery, previousDailyQuery } from "./daily-reference-plan";
 import { acquisitionDailyCards, acquisitionCards } from "../../design/acquisition-preview-model";
 import { topicDailyCard, topicCard, monthCard } from "../../design/topic-preview-fixtures";
@@ -50,6 +50,31 @@ test("末日缺失不取最近有数日，历史保留", () => {
   const exported = metricRows([{ ...model, result }]);
   expect(exported[1][3]).toBeNull();
   expect(exported.filter(row => row[1] === "趋势")).toHaveLength(7);
+});
+test("日卡缺失状态只读技术状态，不从中文提示猜测", () => {
+  const model = acquisitionCards(false, false, [], range)[0].model;
+  const cases: [DailyReadingPoint["state"], string, string, boolean][] = [
+    ["no_record", "当日未返回记录", "no_records", false],
+    ["no_record", "record not returned", "no_records", false],
+    ["source_failure", "source unavailable", "failed", true],
+    ["no_value", "字段未返回", "no_values", false],
+    [undefined, "无记录或查询失败时请核对来源", "no_values", false],
+    ["no_value", "计算中", "no_values", false]
+  ];
+  for (const [state, reason, status, retryable] of cases) {
+    const result = dailyMetricReading(model, { date: range.end, compared: false, read: date => ({ ...point(date, null), state, reason }) }).result;
+    expect(result).toMatchObject({ status, label: reason, retryable });
+    if (result.status !== "available") expect(result.history?.value.display).toBe("—");
+  }
+  const zero = dailyMetricReading(model, { date: range.end, compared: false, read: date => ({ ...point(date, 0), state: "available" }) }).result;
+  expect(zero).toMatchObject({ status: "available", value: { raw: 0, display: "0" } });
+});
+test("没有自定义读取器时趋势点也保留技术 no_record", () => {
+  const model = acquisitionCards(false, false, [], range)[0].model;
+  if (model.result.status !== "available") throw Error("available fixture required");
+  const end = model.result.trend.current.find(point => point.actualDate === range.end)!;
+  end.value = null; end.state = "no_record"; end.stateLabel = "当日未返回记录";
+  expect(dailyMetricReading(model, { date: range.end, compared: false }).result).toMatchObject({ status: "no_records", label: "当日未返回记录", retryable: false });
 });
 test("日卡导出不把原周期比较混入末日摘要，周期统计单列", () => {
   const model = acquisitionDailyCards(true, false, [], range)[0].model;

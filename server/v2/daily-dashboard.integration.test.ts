@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DailyDashboardV2Success } from "../../contracts/daily-dashboard";
+import { DAILY_ACQUISITION_METRIC_IDS, type DailyDashboardV2Success } from "../../contracts/daily-dashboard";
 import { BI_V1_METRICS_API, type BiV1MetricDataStatus, type BiV1MetricUnit } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamError } from "../upstream/client";
 import { DailyDashboardService, dailyDashboardMatchesMapping } from "./daily-dashboard.service";
@@ -132,6 +132,13 @@ function expectRequestScopes(calls: Request[]) {
     expect(params.pid).toBe("PH");
     expect(params.startDate).toBe(businessDate);
     expect(params.includeIncomplete).toBe("true");
+    if (params.dimensions === "channel" || params.dimensions === "downloadPlatform") {
+      expect(params.dimensionFilters).toBeUndefined();
+      expect(["day", "summary"]).toContain(params.granularity);
+      expect(params.metricCodes.split(",")).toEqual([...DAILY_ACQUISITION_METRIC_IDS[params.dimensions]]);
+      expect(params.endDate).toBe("2020-01-02");
+      continue;
+    }
     expect((params.dimensions ?? "").split(",").filter(Boolean).sort()).toEqual(Object.keys(filters).sort());
     if (params.granularity === "summary") {
       expect(params.metricCodes).toBe("M018");
@@ -263,5 +270,9 @@ describe("日看板按实际请求范围读取模拟上游", () => {
       expect(dailyDashboardMatchesMapping(result)).toBe(true);
     }
     expectRequestScopes(calls);
+    const grouped = calls.filter(call => ["channel", "downloadPlatform"].includes(call.params.dimensions));
+    expect(grouped.map(call => `${call.params.dimensions}/${call.params.granularity}`).sort()).toEqual([
+      "channel/day", "channel/summary", "downloadPlatform/day", "downloadPlatform/summary"
+    ]);
   });
 });

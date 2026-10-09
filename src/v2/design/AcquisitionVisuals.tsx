@@ -17,8 +17,9 @@ import { ConnectedStructureContent } from "./ConnectedStructure";
 import { CompactMetricReading } from "../features/dashboards/CompactMetricReading";
 import { LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
 import type { DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
-import { acquisitionDownloadPoints, acquisitionDownloadWorkbook, DOWNLOAD_TARGET_UNAVAILABLE } from "./acquisition-download-source";
+import { acquisitionDownloadModel, acquisitionDownloadWorkbook } from "./acquisition-download-source";
 import { downloadPreviewWorkbook } from "./preview-workbook";
+import { LiveAcquisitionMetricDetails } from "./LiveAcquisitionDetails";
 
 type Props={filters:AcquisitionFilters;mixed:boolean;pending:boolean;onOpen:(title:string,content:ReactNode)=>void;onLocate:(dimension:"target"|"channel"|"type")=>void};
 function downloadBasis(date:string,label:string,value:number,total:number):CalculationBasis {
@@ -49,10 +50,11 @@ export function AcquisitionVisuals({filters,mixed,pending,onOpen,onLocate}:Props
   const [downloadView,setDownloadView]=useState<"overall"|"groups">(live?"overall":"groups");
   const landingModels=acquisitionDailyCards(compared,mixed,[],filters).map(item=>item.model);
   const getLanding=(metric:string)=>{const model=landingModels.find(item=>item.metric.id===metric)!;return live?liveMetricModel(model,live):model;};
-  const download=live?{groups:[],items:[],total:null,available:false,points:acquisitionDownloadPoints(live,downloadMode)}:demoDownloadSource(filters,mixed,downloadMode);
+  const liveDownload=live?acquisitionDownloadModel(live,downloadMode):null;
+  const download=liveDownload??demoDownloadSource(filters,mixed,downloadMode);
   const {groups,available}=download,queryKey=JSON.stringify(live?live.query:filters),selection=useGroupSelection(groups,queryKey);
-  const downloadScope=live?`${live.platformName} · ${live.query.dateRange.join(" 至 ")} · 下载目标维度待接入`:`${filters.start} 至 ${filters.end} · 合成演示数据`;
-  const exportAction=live?<PreviewExportControl name="下载表现" scope="总体下载点击次数的完整逐日结果、实际输入及两期状态；下载目标分组与占比待接入。" context={`${live.platformName} · ${live.query.dateRange.join(" 至 ")} · 待验数`} dataOrigin="live" pending={pending||live.controls.dirty||!live.canExport||live.state.status!=="success"} onDownloadPreview={()=>{
+  const downloadScope=live?`${live.platformName} · ${live.query.dateRange.join(" 至 ")} · 待验数`:`${filters.start} 至 ${filters.end} · 合成演示数据`;
+  const exportAction=live?<PreviewExportControl name="下载表现" scope="总体下载逐日结果与已返回下载目标的后端汇总、逐日输入及两期状态；不计算分组占比。" context={`${live.platformName} · ${live.query.dateRange.join(" 至 ")} · 待验数`} dataOrigin="live" pending={pending||live.controls.dirty||!live.canExport||live.state.status!=="success"} onDownloadPreview={()=>{
     if(pending||live.controls.dirty||!live.canExport||live.state.status!=="success")return;
     downloadPreviewWorkbook("下载表现",acquisitionDownloadWorkbook(live),"pending");
   }}/>:demoAcquisitionExport(filters,mixed,pending);
@@ -63,8 +65,8 @@ export function AcquisitionVisuals({filters,mixed,pending,onOpen,onLocate}:Props
   };
   return <>
     <DataOriginProvider value={live?"pending":"demo"}><DashboardPanel title="下载表现" guidanceKey="acquisition.download" note="下载目标与注册客户端分别统计；默认次数口径，不表示安装完成。" chartKind="download-composition">
-      <DataOriginProvider value={live?null:"demo"}><CompositionChart title="下载目标构成" items={download.items} total={download.total} totalLabel="下载点击总量" scope={downloadScope} unit="次" valueLabel="次数" complete={available} onOpen={onOpen} selected={selection.selected}/></DataOriginProvider>
-      {live&&<p className="dashboard-table-context" role="status">{DOWNLOAD_TARGET_UNAVAILABLE}</p>}
+      <DataOriginProvider value={live?null:"demo"}><CompositionChart title="下载目标构成" items={download.items} total={download.total} totalLabel="下载点击总量" scope={downloadScope} unit="次" valueLabel="次数" complete={available} onOpen={(title,content)=>{const row=liveDownload?.readings.find(row=>title===`下载目标构成 · ${row.name}`);onOpen(title,row?<LiveAcquisitionMetricDetails row={row} id="M003" exportAction={exportAction}/>:content);}} selected={selection.selected}/></DataOriginProvider>
+      {liveDownload&&<p className="dashboard-table-context" role="status">{liveDownload.notice}</p>}
       <div className="payment-breakdown__tools"><h3>每日下载点击</h3>{(live||available)&&<SegmentedControl label="下载趋势数值" value={downloadMode} onChange={setDownloadMode} options={[{value:"count",label:"次数"},{value:"share",label:"占比"}]}/>}<button type="button" onClick={()=>onLocate("target")}>查看下载明细</button></div>
       <GroupedTrend title="分目标下载" groups={groups} selection={selection} points={download.points} mode={downloadView} onModeChange={setDownloadView} kind="bar" stack={available} unit={downloadMode==="share"?"%":"次"} format={value=>value===null?(live?downloadMode==="share"?"占比待接入":"未返回":"未产出"):downloadMode==="share"?`${(value*100).toFixed(2)}%`:`${value.toLocaleString()} 次`} queryKey={queryKey} onOpen={onOpen} exportAction={exportAction}/>
     </DashboardPanel></DataOriginProvider>

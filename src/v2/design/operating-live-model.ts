@@ -3,7 +3,7 @@ import type { V2ResourceState } from "../api/useV2Resource";
 import { liveMetricModel, liveMetricUnit, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, type DetailColumn } from "./operating-detail-columns";
-import type { DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
+import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
 import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
@@ -104,7 +104,7 @@ export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn
       const status = evidence ? "待验数 · " + evidence.label + (evidence.stale ? " · 上次查询结果" : "")
         : value.state === "unsupported" ? "待接口支持"
         : value.state === "immature" ? "未成熟"
-        : value.state === "no_record" ? "无记录"
+        : value.state === "no_record" && period === "current" ? dashboardNoRecordLabels.day
         : "无可用结果";
       return [value[period] === null ? null : value[period]! * (columns[i].kind === "ratio" ? 100 : 1), status, evidence?.fetchedAt ?? null];
     }))])];

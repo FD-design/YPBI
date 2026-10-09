@@ -330,8 +330,8 @@ function DetailMetricCell({ row, column, columnIndex, currentDate, previousDate,
   const previousChange = detailChange(value.current, value.previousDay, column.kind);
   const weekChange = detailChange(value.current, value.previousWeek, column.kind);
   const currentLabel = operatingValueLabel(value, column);
-  const previousLabel = formatDetailValue(value.previousDay, column.kind, true, column.unit);
-  const weekLabel = formatDetailValue(value.previousWeek, column.kind, true, column.unit);
+  const previousLabel = operatingValueLabel(value, column, "previousDay", true);
+  const weekLabel = operatingValueLabel(value, column, "previousWeek", true);
   const explanation = `${row.name} · ${column.metric.name}：当前 ${currentLabel}；昨日 ${dateLabel(previousDate)} 为 ${previousLabel}${previousChange ? `，${previousChange.display}` : ""}；上周同日 ${dateLabel(previousWeekDate)} 为 ${weekLabel}${weekChange ? `，${weekChange.display}` : ""}。`;
   const selectedChange = comparisonMode === "previousDay" ? previousChange : weekChange;
 
@@ -339,8 +339,8 @@ function DetailMetricCell({ row, column, columnIndex, currentDate, previousDate,
     <b className="core-review__tip-title">{row.name} · {column.metric.name}</b>
     <div className="core-review__tip-current"><small>{currentDate}</small><strong>{currentLabel}</strong></div>
     {column.periodDays && <p>注册日 {currentDate} · 目标日 {retentionTargetDate(column, currentDate)}</p>}
-    <DetailComparisonLines current={value.current} baseline={value.previousDay} kind={column.kind} unit={column.unit} label="较昨日" date={previousDate} onEmphasis />
-    <DetailComparisonLines current={value.current} baseline={value.previousWeek} kind={column.kind} unit={column.unit} label="较上周同日" date={previousWeekDate} onEmphasis />
+    <DetailComparisonLines current={value.current} baseline={value.previousDay} baselineLabel={previousLabel} kind={column.kind} unit={column.unit} label="较昨日" date={previousDate} onEmphasis />
+    <DetailComparisonLines current={value.current} baseline={value.previousWeek} baselineLabel={weekLabel} kind={column.kind} unit={column.unit} label="较上周同日" date={previousWeekDate} onEmphasis />
   </div>;
   return <td className="is-number" data-column-key={detailColumnKey(column)}><FloatingHint className="core-review__cell-hint" content={tooltip}>
     <button type="button" className="core-review__detail-trigger" aria-label={explanation} onClick={(event) => onOpen({ row, column, columnIndex, trigger: event.currentTarget })}>
@@ -350,13 +350,13 @@ function DetailMetricCell({ row, column, columnIndex, currentDate, previousDate,
   </FloatingHint></td>;
 }
 
-function DetailComparisonLines({ current, baseline, kind, unit, label, date, onEmphasis = false }: {
-  current: number | null; baseline: number | null; kind: DetailValueKind; unit?: string; label: string; date: string; onEmphasis?: boolean;
+function DetailComparisonLines({ current, baseline, baselineLabel, kind, unit, label, date, onEmphasis = false }: {
+  current: number | null; baseline: number | null; baselineLabel: string; kind: DetailValueKind; unit?: string; label: string; date: string; onEmphasis?: boolean;
 }) {
   const change = detailChange(current, baseline, kind);
   const difference = current === null || baseline === null ? null : current - baseline;
   return <span className="core-review__baseline">
-    <span className="core-review__baseline-head"><span>{label}</span><b>{formatDetailValue(baseline, kind, true, unit)}</b></span><small>{date}</small>
+    <span className="core-review__baseline-head"><span>{label}</span><b>{baselineLabel}</b></span><small>{date}</small>
     <span><ChangeValue direction={change?.direction ?? null} onEmphasis={onEmphasis}>{change?.display ?? (baseline === 0 && kind !== "ratio" ? "基准为 0，增长率不可比" : "数据不足，不可比")}</ChangeValue>
       {difference !== null && kind !== "ratio" && kind !== "platformRatio" && <span> · 差值 <ChangeValue direction={changeDirection(difference)} onEmphasis={onEmphasis}>{difference > 0 ? "+" : difference < 0 ? "−" : ""}{formatDetailValue(Math.abs(difference), kind, true, unit)}</ChangeValue></span>}</span>
   </span>;
@@ -371,8 +371,8 @@ function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: Selecte
       {detail.column.periodDays && <p>注册日 {date} · D{detail.column.periodDays} 目标日 {retentionTargetDate(detail.column, date)}。目标日完整观察结束后方可读取留存结果。</p>}
       {detail.column.metric.id === "M018" && <p>自然月 {date.slice(0, 7)} · 数据截至日：待接口返回。月活为月内去重人数，不累加日活。</p>}
       {detail.column.pendingReason ? <p>{detail.column.pendingReason}</p> : <>
-      <DetailComparisonLines current={value.current} baseline={value.previousDay} kind={detail.column.kind} unit={detail.column.unit} label="较昨日" date={shiftBusinessDate(date, -1)} />
-      <DetailComparisonLines current={value.current} baseline={value.previousWeek} kind={detail.column.kind} unit={detail.column.unit} label="较上周同日" date={shiftBusinessDate(date, -7)} />
+      <DetailComparisonLines current={value.current} baseline={value.previousDay} baselineLabel={operatingValueLabel(value, detail.column, "previousDay", true)} kind={detail.column.kind} unit={detail.column.unit} label="较昨日" date={shiftBusinessDate(date, -1)} />
+      <DetailComparisonLines current={value.current} baseline={value.previousWeek} baselineLabel={operatingValueLabel(value, detail.column, "previousWeek", true)} kind={detail.column.kind} unit={detail.column.unit} label="较上周同日" date={shiftBusinessDate(date, -7)} />
       </>}
       <p>{detail.column.metric.definition}</p>
       {value.evidence && <><p>{value.evidence.current.formula}</p><table className="ui-table"><thead><tr><th>日期</th><th>计算输入</th><th>状态</th><th>查询时间</th></tr></thead><tbody>{Object.values(value.evidence).map(evidence => <tr key={evidence.date}><td>{evidence.date}</td><td>{evidence.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ")}</td><td>{evidence.label}{evidence.stale ? " · 上次查询结果" : ""}</td><td>{evidence.fetchedAt ?? "—"}</td></tr>)}</tbody></table></>}

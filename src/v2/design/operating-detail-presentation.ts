@@ -3,7 +3,7 @@ import { changeDirection } from "../../components/ui/change-presentation.ts";
 export type DetailValueKind = "count" | "events" | "average" | "duration" | "currency" | "ratio" | "platformRatio";
 
 export function formatDetailValue(value: number | null, kind: DetailValueKind, includeUnit = true, unit?: string) {
-  if (value === null || !Number.isFinite(value)) return "无记录";
+  if (value === null || !Number.isFinite(value)) return "—";
   if (kind === "ratio") return `${(value * 100).toFixed(2)}%`;
   if (kind === "platformRatio") return `${value.toLocaleString("en-US", { maximumFractionDigits: 2 })} : 1`;
   if (kind === "currency") {

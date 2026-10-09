@@ -97,7 +97,7 @@ test("切换关闭详情并重置分页，矩阵与整页导出只含当前D0分
 
 test("D1缺失D3独立可读，单周期失败与未成熟保留状态和直接分母",async({page})=>{
   const control=await fixtures(page,true);await page.goto(url);await choose(page,"注册Android");
-  await expect(matrix(page).getByRole("button",{name:"2026-07-01 次日 当日无记录 · 待验数",exact:true})).toBeVisible();
+  await expect(matrix(page).getByRole("button",{name:"2026-07-01 次日 当日未返回记录 · 待验数",exact:true})).toBeVisible();
   await expect(matrix(page).getByRole("button",{name:"2026-07-01 第 7 天 数据异常 · 待验数",exact:true})).toBeVisible();
   await expect(matrix(page).getByRole("button",{name:"2026-07-01 第 30 天 待成熟 · 待验数",exact:true})).toBeVisible();
   await matrix(page).getByRole("button",{name:"2026-07-01 第 3 天 14.29%",exact:true}).click();

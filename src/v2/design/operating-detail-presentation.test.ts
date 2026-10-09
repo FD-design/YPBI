@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { detailChange, formatDetailValue } from "./operating-detail-presentation.ts";
 
-test("经营快照保留真实零、负值与无记录；列表单位不重复", () => {
+test("经营快照保留真实零、负值；一般空值不推断来源状态，列表单位不重复", () => {
   assert.equal(formatDetailValue(0, "count", false), "0");
   assert.equal(formatDetailValue(-1250, "count", false), "-1,250");
   assert.equal(formatDetailValue(1200, "duration"), "1,200 小时");
   assert.equal(formatDetailValue(1200, "duration", false), "1,200");
-  assert.equal(formatDetailValue(null, "ratio"), "无记录");
+  for (const value of [null, NaN, Infinity, -Infinity]) assert.equal(formatDetailValue(value, "ratio"), "—");
 });
 
 test("百分率用百分点而不是相对增长，持平保留中性", () => {

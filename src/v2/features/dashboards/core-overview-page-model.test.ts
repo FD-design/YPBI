@@ -204,6 +204,15 @@ test("数据与准入状态逐项保留，不把无记录、无值或未成熟�
   assert.equal(cards[8].result.status === "not_ready" ? cards[8].result.retryable : null, false);
 });
 
+test("核心看板逐日 no_record 只说明接口未返回记录", () => {
+  const card = availableCard("M016", { partial: true });
+  if (card.result.status !== "available") throw Error("available fixture required");
+  card.result.trend.current[1] = { offset: 1, businessDate: CURRENT_DATES[1], state: "no_record" };
+  const model = coreOverviewScopePageModels(loadedState(response([card], ["M016"])), DEFINITIONS)[0].cards[0];
+  if (model.result.status !== "available") throw Error("available model required");
+  assert.equal(model.result.trend.current[1].stateLabel, "当日未返回记录");
+});
+
 test("基准为零的不可计算变化率保持中性，绝对差仍在详情保留", () => {
   const card = availableCard("M016", { value: 20 });
   if (card.result.status !== "available" || card.result.comparison?.status !== "available") throw new Error("available fixture required");

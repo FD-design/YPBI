@@ -7,6 +7,7 @@ export interface DailyReadingPoint {
   date: string;
   value: number | null;
   display: string;
+  state?: DashboardMetricTrendPoint["state"] | "source_failure" | "invalid_value" | "zero_denominator";
   reason?: string;
   freshness?: string;
   calculation?: CalculationBasis;
@@ -45,7 +46,7 @@ export function dailyComparison(current: DailyReadingPoint, reference: DailyRead
 }
 
 function fromTrend(point: DashboardMetricTrendPoint | undefined, date: string): DailyReadingPoint {
-  return { date, value: point?.value?.raw ?? null, display: point?.value?.display ?? "—", reason: point?.stateLabel ?? "该日未返回", calculation: point?.calculation };
+  return { date, value: point?.value?.raw ?? null, state: point?.state, display: point?.value?.display ?? "—", reason: point?.stateLabel ?? "该日未返回", calculation: point?.calculation };
 }
 export function trendComparisonLabel(model: DashboardMetricCardModel) {
   const result = model.result.status === "available" ? model.result : model.result.history;
@@ -76,8 +77,8 @@ export function dailyMetricReading(model: DashboardMetricCardModel, options: {
   const value = { raw: current.value ?? model.result.value.raw, display: current.value === null ? "—" : current.display.replace(new RegExp(`\\s*${unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`), ""), unit };
   const next = { ...model.result, reading, value, calculation: current.calculation };
   if (current.value === null) return { ...model, result: {
-    status: current.reason?.includes("失败") ? "failed" : current.reason?.includes("无记录") ? "no_records" : "no_values",
-    contextLabel: options.date, label: current.reason ?? "所选结束日没有可用值", message: `主值 — · ${options.date}；其他日期仍可查看。`, retryable: Boolean(current.reason?.includes("失败")),
+    status: current.state === "source_failure" ? "failed" : current.state === "no_record" ? "no_records" : "no_values",
+    contextLabel: options.date, label: current.reason ?? "所选结束日没有可用值", message: `主值 — · ${options.date}；其他日期仍可查看。`, retryable: current.state === "source_failure",
     validationLabel: model.result.validationLabel, watermarkLabel: model.result.watermarkLabel, reading, history: next
   } };
   return { ...model, result: next };

@@ -5,6 +5,7 @@ import { availablePeriodStatistics } from "../features/dashboards/live-period-st
 import { acquisitionDates, acquisitionRows, type AcquisitionRow } from "./acquisition-preview-model";
 import type { AcquisitionDetailKey } from "./acquisition-view-state";
 import type { WorkbookSheet } from "./preview-workbook";
+import { acquisitionGroupModel, type AcquisitionGroupModel } from "./live-acquisition-groups";
 
 const TYPE_GROUPS = [{ name: "自然新增", id: "M008.nature" }, { name: "内部导量", id: "M008.internal" }] as const;
 const UNCONNECTED_LABELS = { channel: "来源渠道", target: "下载目标", settlement: "渠道结算（扣后）" } as const;
@@ -48,9 +49,17 @@ function typePeriod(live: LiveDashboardReading, id: string, before = false) {
 
 /** Live dimension results only use projections carried by the current BI contract. */
 export function acquisitionDetailSource(dimension: AcquisitionDetailKey, range: DateRangeValue, live: LiveDashboardReading | null): {
-  origin: "demo" | "pending" | null; unavailableReason?: string; rows: AcquisitionRow[];
+  origin: "demo" | "pending" | null; unavailableReason?: string; rows: AcquisitionRow[]; groups?: AcquisitionGroupModel;
 } {
   if (!live) return { origin: "demo", rows: acquisitionRows(dimension, range) };
+  if (dimension === "channel" || dimension === "target") {
+    const groups = acquisitionGroupModel(live, dimension === "channel" ? "channel" : "downloadPlatform");
+    return { origin: groups.unavailableReason ? null : "pending", unavailableReason: groups.unavailableReason, groups,
+      rows: groups.rows.map(row => ({ name: row.name,
+        values: Object.fromEntries(groups.ids.map(id => [id, row.current[id].summary.value])),
+        baseline: Object.fromEntries(groups.ids.map(id => [id, row.previous?.[id].summary.value ?? null])),
+        state: [...new Set(groups.ids.map(id => row.current[id].summary.state))].join("、") })) };
+  }
   if (dimension !== "type") return {
     origin: null,
     unavailableReason: `${UNCONNECTED_LABELS[dimension]}维度待接入：BI 尚未接入该维度的真实分组结果。`,

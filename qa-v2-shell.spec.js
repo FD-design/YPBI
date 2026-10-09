@@ -820,7 +820,7 @@ test("核心经营总览设计样板独立验证 1280、1024、390 与组合异�
   await expect(partialCard.getByRole("button", { name: "较上周同日 不可比", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "重试此卡" })).toHaveCount(1);
   await expect(page.getByText("刷新失败，保留旧值", { exact: true }).first()).toBeVisible();
-  await expect(page.locator(".dashboard-metric-card__unavailable").getByText("当前范围无记录", { exact: true })).toBeVisible();
+  await expect(page.locator(".dashboard-metric-card__unavailable").getByText("当前范围未返回记录", { exact: true })).toBeVisible();
   await expect(page.locator(".dashboard-metric-card__unavailable").getByText("等待数据成熟", { exact: true })).toBeVisible();
   await expect(page.locator(".dashboard-metric-card__unavailable").getByText("单卡查询失败", { exact: true })).toBeVisible();
   await expect(page.getByText("5/9 项展示结果", { exact: true })).toBeVisible();
