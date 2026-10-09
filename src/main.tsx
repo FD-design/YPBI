@@ -16,6 +16,6 @@ async function bootstrap() {
 
 void bootstrap().catch((error: unknown) => {
   console.error("BI 页面启动失败", error);
-  root.render(<AppFailure error={error} />);
+  root.render(<AppFailure error={error} recover={recover} />);
   void recover(error);
 });

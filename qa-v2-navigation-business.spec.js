@@ -123,14 +123,14 @@ test("表格单位与辅助比较层级在核心总览和体验页共用规范",
     await page.setViewportSize({ width, height: 950 });
     const table = page.locator(".core-review__comparison-table");
     await expect(table.locator("thead th > small")).toHaveCount(0);
-    for (const [key, unit] of [["M102:overall", "小时"], ["M058:overall", "USD"], ["M067:overall", "USD/人"], ["M110:overall", "次/人"], ["M081:overall", "%"]]) {
+    for (const [key, unit] of [["M102:overall", "小时"], ["M058:overall", "USD"], ["M067:overall", "USD/人"], ["M110:overall", "次/人"], ["M081:overall", "%"], ["M002:overall", "IP"], ["M095:overall", "IP"]]) {
       await expect(table.locator(`th[data-column-key="${key}"] .metric-heading-unit`)).toHaveText(`（${unit}）`);
     }
     for (const key of ["M001:overall", "M003:overall", "M060:overall"]) {
       await expect(table.locator(`th[data-column-key="${key}"] .metric-heading-unit`)).toHaveCount(0);
     }
     const units = await table.locator(".metric-heading-unit").allTextContents();
-    expect(units.every(unit => ["（小时）", "（USD）", "（USD/人）", "（次/人）", "（%）", "（Android:iOS）"].includes(unit))).toBe(true);
+    expect(units.every(unit => ["（小时）", "（USD）", "（USD/人）", "（次/人）", "（%）", "（Android:iOS）", "（IP）"].includes(unit))).toBe(true);
     for (const unit of await table.locator(".metric-heading-unit").all()) {
       const geometry = await unit.evaluate(el => ({ unit: el.getBoundingClientRect().toJSON(), name: el.previousElementSibling.getBoundingClientRect().toJSON(), size: parseFloat(getComputedStyle(el).fontSize) }));
       expect(Math.abs(geometry.unit.y + geometry.unit.height / 2 - geometry.name.y - geometry.name.height / 2)).toBeLessThan(2);

@@ -44,6 +44,8 @@ import { demoWatchingOutcomes, watchingOutcomesSheet } from "./watching-retentio
 import { TopicScopeAnalysis } from "./TopicScopeAnalysis";
 import { topicScopeExport, topicUsesLiveScopes } from "./topic-scope-model";
 import { HORIZONTAL_BAR_GRID, horizontalBarEndLabel } from "./horizontal-bar-reading";
+import { registrationCohortMetricId, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
+import { connectedTopicExportSheets } from "./connected-topic-export";
 const TopicContext = createContext(true);
 type Open = (title: string, content: ReactNode) => void;
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[] }) {
@@ -63,9 +65,9 @@ function Card({ model, view, pending, open, retry, compact = false }: { model: D
   return <PreviewMetricCard model={model} open={open} retry={retry} compact={compact} exportAction={<Export name={model.metric.name + "同口径数据表"} sheets={[{ name: "01_同口径数据表", rows: metricRows([model]) }]} view={view} pending={pending || model.result.status !== "available"} />} />;
 }
 
-function CohortMatrix({ title, rows, view, pending, open, sheetName }: { title: string; rows: CohortRow[]; view: TopicView; pending: boolean; open: Open; sheetName: string }) {
+function CohortMatrix({ title, rows, view, pending, open, sheetName, scope, onScopeChange }: { title: string; rows: CohortRow[]; view: TopicView; pending: boolean; open: Open; sheetName: string; scope?:RegistrationCohortScope; onScopeChange?:(scope:RegistrationCohortScope)=>void }) {
   const live = useLiveDashboard();
-  if (live && rows[0]?.cells.some(cell => cell.id === "M020")) return <ConnectedCohorts title={title} live={live} range={view.cohort} pending={pending} open={open} />;
+  if (live && rows[0]?.cells.some(cell => cell.id === "M020")) return <ConnectedCohorts title={title} live={live} range={view.cohort} pending={pending} open={open} scope={scope} onScopeChange={onScopeChange} />;
   const ids = rows[0]?.cells.map(cell => cell.id) ?? [];
   const copy = topicLabels(ids.includes("M020"));
   return <Panel title={title} note={copy.date + " " + rangeLabel(view.cohort) + " · 大盘整体 · 观察期未结束的用户不计入汇总"}>
@@ -124,10 +126,20 @@ export default function TopicPreviews({ board }: { board: "5.8" | "5.9" }) {
   useEffect(() => { const element = root.current; if (!element) return; const observer = new ResizeObserver(([entry]) => setCompactQuery(entry.contentRect.width < 1160)); observer.observe(element); return () => observer.disconnect(); }, []);
   const pending = JSON.stringify(view) !== JSON.stringify(draft), open: Open = (title, content) => setDialog({ title, content });
   const reactivationWindow = reading.reactivationWindow ?? 72;
+  const cohortScope = reading.cohortScope ?? "overall";
+  const changeCohortScope = (cohortScope: RegistrationCohortScope) => {
+    const next = {...reading,cohortScope}, snapshot = {...view,reading:next};
+    window.history.pushState({...window.history.state,topicView:snapshot},"",topicHref(board,snapshot));
+    setReading(next); setDialog(null);
+  };
   const models = useMemo(() => {
     const ids = active ? ["M016", "M020", "M022", "M024", "M021", "M023", "M025"] : ["M026", "M101", "M102", "M098", "M081", "M036", "M034", "M035", "M043", ...WATCH_RETENTION_IDS];
-    return new Map(ids.map(id => [id, topicDailyCard(id, REGISTER_IDS.includes(id) || WATCH_RETENTION_IDS.includes(id) ? view.cohort : id === "M025" ? view.failure : view.active, view.compared, view.mixed && !(id === "M034" && recovered), DEFAULT_TOPIC_SCOPE, reactivationWindow)]));
-  }, [active, view, recovered, reactivationWindow]);
+    return new Map(ids.map(id => {
+      const model = topicDailyCard(id, REGISTER_IDS.includes(id) || WATCH_RETENTION_IDS.includes(id) ? view.cohort : id === "M025" ? view.failure : view.active, view.compared, view.mixed && !(id === "M034" && recovered), DEFAULT_TOPIC_SCOPE, reactivationWindow);
+      if (live && active && REGISTER_IDS.includes(id)) return [id, {...model, metric:{...model.metric,id:registrationCohortMetricId(id,cohortScope)},result:{status:"not_ready",contextLabel:"所选注册日分组尚未返回",retryable:false}} as DashboardMetricCardModel] as const;
+      return [id,model] as const;
+    }));
+  }, [active, view, recovered, reactivationWindow, live, cohortScope]);
   const month = useMemo(() => monthCard(view.active, view.compared), [view.active, view.compared]);
   const cohorts = useMemo(() => cohortRows(view.cohort, active ? REGISTER_IDS : WATCH_RETENTION_IDS, view.mixed), [view.cohort, view.mixed, active]);
   const retentionWindow = reading.retentionWindow ?? 1;
@@ -144,8 +156,24 @@ export default function TopicPreviews({ board }: { board: "5.8" | "5.9" }) {
   const structures = useMemo(() => structureRows(dimension, structureId, view.active), [dimension, structureId, view.active]);
   const structureSheetRows = ["platform", "users", "cross"].includes(dimension) ? topicScopeExport(structureId, view) : [...structureExport(structures, structureId, view.compared), [], ...structureDetailExport(dimension,structureId,view)];
   useEffect(() => { const snapshot = { ...view, reading }; window.history.replaceState({ ...window.history.state, topicView: snapshot }, "", topicHref(board, snapshot)); }, [board, view, reading]);
+  useEffect(() => {
+    const restore = () => {
+      const next = parseTopicView(new URLSearchParams(window.location.search).get("view") ?? "",board,Boolean(live));
+      if (new URLSearchParams(window.location.search).get("board") !== board) return;
+      const restored = next ?? {...initial.current,reading:undefined};
+      setView(restored); setDraft(restored);
+      setReading({...DEFAULT_TOPIC_READING,...restored.reading,...(active?{structureId:"M016"}:{})});
+      setDialog(null);
+    };
+    window.addEventListener("popstate",restore);
+    return () => window.removeEventListener("popstate",restore);
+  },[board,Boolean(live),active]);
   const apply = () => { setView(draft); setDialog(null); setRecovered(false); notify("已应用演示条件"); };
-  const card = (id: string, compact = false) => <LiveDashboardContext.Provider key={id} value={REGISTER_IDS.includes(id)?cohortReading:live}><Card model={models.get(id)!} compact={compact} view={view} pending={pending} open={open} retry={() => { setRecovered(true); notify("已恢复当前演示指标"); }} /></LiveDashboardContext.Provider>;
+  const card = (id: string, compact = false) => <LiveDashboardContext.Provider key={REGISTER_IDS.includes(id)?`${id}:${cohortScope}`:id} value={REGISTER_IDS.includes(id)?cohortReading:live}><Card model={models.get(id)!} compact={compact} view={view} pending={pending} open={open} retry={() => { setRecovered(true); notify("已恢复当前演示指标"); }} /></LiveDashboardContext.Provider>;
+  const exportReading = active && live && cohortReading ? {...live,controls:{...live.controls,dirty:live.controls.dirty || pending || cohortReading.state.status !== "success",export:()=>{
+    if (!live.canExport || live.controls.dirty || pending || live.state.status !== "success" || cohortReading.state.status !== "success") return;
+    downloadPreviewWorkbook(title,connectedTopicExportSheets(live,cohortReading,cohortScope),"pending");
+  }}} : live;
   const allSheets: WorkbookSheet[] = active ? [
     { name: "01_活跃核心", rows: metricRows([models.get("M016")!, models.get("M024")!, month]) }, { name: "02_活跃结构", rows: structureSheetRows },
     { name: "03_注册留存", rows: metricRows(REGISTER_IDS.map(id => models.get(id)!)) }, { name: "04_注册留存明细", rows: cohortExport(cohorts) }, { name: "05_再激活", rows: metricRows([models.get("M025")!]) }
@@ -154,7 +182,7 @@ export default function TopicPreviews({ board }: { board: "5.8" | "5.9" }) {
   return <TopicContext.Provider value={active}><div ref={root} className="v2-page topic-preview" data-page={active ? "active-retention-preview" : "video-consumption-preview"} data-preview={TOPIC_PREVIEW_MARKER}>
     <ReviewTools><div className="topic-preview__notice"><span>开发环境体验 · 合成演示数据，非正式业务结果</span><div role="group" aria-label="演示状态"><Button variant={!view.mixed ? "primary" : "secondary"} onClick={() => { setView({ ...view, mixed: false }); setDraft({ ...draft, mixed: false }); setRecovered(false); }}>正常态</Button><Button variant={view.mixed ? "primary" : "secondary"} onClick={() => { setView({ ...view, mixed: true }); setDraft({ ...draft, mixed: true }); setRecovered(false); }}>组合异常态</Button></div></div></ReviewTools>
     <DashboardHeader className="topic-preview__head" title={title} breadcrumb={"公共概览 / " + (active ? "用户生命周期" : "内容消费与互动")} description={active ? "观察活跃规模、用户结构与注册留存；留存按各批次的实际观察窗口与成熟状态阅读。" : "观察视频消费规模、有效观影、内容贡献与观看后留存；人数、次数和时长按各自统计规则阅读。"}><div className="topic-preview__toolbar"><div className="topic-preview__query"><DashboardQueryFields date={<DateField label="统计日期" value={draft.active} onChange={range => setDraft({ ...draft, active: range })} />} scope={!compactQuery && <span className="topic-preview__scope">大盘整体</span>} filters={<FilterPopover active={draft.cohort.start !== draft.active.start || draft.cohort.end !== draft.active.end || (active && (draft.failure.start !== draft.active.start || draft.failure.end !== draft.active.end))}>
-{compactQuery && <span className="topic-preview__scope">大盘整体</span>}<DateField quick label={topicLabels(active).date} value={draft.cohort} onChange={range => setDraft({ ...draft, cohort: range })} />{active && <DateField label="首次体验失败日期" value={draft.failure} onChange={range => setDraft({ ...draft, failure: range })} />}<p className="topic-preview__filter-note">各日期独立作用于对应结果，完成后统一应用。</p>{compactQuery && <Select label="对比周期" value={draft.compared ? "previous" : "none"} onChange={value => setDraft({ ...draft, compared: value === "previous" })} options={[{ value: "previous", label: "上一等长周期" }, { value: "none", label: "不对比" }]} />}</FilterPopover>} comparison={!compactQuery && <Select label="对比周期" value={draft.compared ? "previous" : "none"} onChange={value => setDraft({ ...draft, compared: value === "previous" })} options={[{ value: "previous", label: "上一等长周期" }, { value: "none", label: "不对比" }]} />} apply={<Button variant="primary" onClick={apply}>应用</Button>} /></div><div className="topic-preview__actions"><DashboardActions favorite={icon(favorite ? "取消收藏" : "收藏看板", () => { try { setPreviewFavorite(board, !favorite); setFavorite(!favorite); notify(favorite ? "已取消收藏" : "已加入我的收藏（仅本机）"); } catch { notify("本机存储不可用，未保存收藏"); } }, <Star fill={favorite ? "currentColor" : "none"} />, favorite)} copyLink={icon("复制当前视图链接", () => { const href = new URL(topicHref(board, { ...view, reading }), location.origin).href; navigator.clipboard.writeText(href).then(() => notify("已复制当前视图链接")).catch(() => open("复制当前视图链接", <textarea readOnly aria-label="当前视图链接" value={href} />)); }, <Copy />)} refresh={icon("刷新看板", () => { setRecovered(false); notify("演示快照已重新载入；未请求正式业务数据"); }, <RefreshCw />)} fullscreen={icon("全屏查看", () => { (document.fullscreenElement ? document.exitFullscreen() : root.current?.requestFullscreen())?.catch(() => notify("当前环境不支持全屏查看")); }, <Maximize2 />)} exportAction={<Export name={title} view={{...view,reading}} sheets={allSheets} pending={pending} iconOnly />} /></div></div></DashboardHeader>
+{compactQuery && <span className="topic-preview__scope">大盘整体</span>}<DateField quick label={topicLabels(active).date} value={draft.cohort} onChange={range => setDraft({ ...draft, cohort: range })} />{active && <DateField label="首次体验失败日期" value={draft.failure} onChange={range => setDraft({ ...draft, failure: range })} />}<p className="topic-preview__filter-note">各日期独立作用于对应结果，完成后统一应用。</p>{compactQuery && <Select label="对比周期" value={draft.compared ? "previous" : "none"} onChange={value => setDraft({ ...draft, compared: value === "previous" })} options={[{ value: "previous", label: "上一等长周期" }, { value: "none", label: "不对比" }]} />}</FilterPopover>} comparison={!compactQuery && <Select label="对比周期" value={draft.compared ? "previous" : "none"} onChange={value => setDraft({ ...draft, compared: value === "previous" })} options={[{ value: "previous", label: "上一等长周期" }, { value: "none", label: "不对比" }]} />} apply={<Button variant="primary" onClick={apply}>应用</Button>} /></div><div className="topic-preview__actions"><DashboardActions favorite={icon(favorite ? "取消收藏" : "收藏看板", () => { try { setPreviewFavorite(board, !favorite); setFavorite(!favorite); notify(favorite ? "已取消收藏" : "已加入我的收藏（仅本机）"); } catch { notify("本机存储不可用，未保存收藏"); } }, <Star fill={favorite ? "currentColor" : "none"} />, favorite)} copyLink={icon("复制当前视图链接", () => { const href = new URL(topicHref(board, { ...view, reading }), location.origin).href; navigator.clipboard.writeText(href).then(() => notify("已复制当前视图链接")).catch(() => open("复制当前视图链接", <textarea readOnly aria-label="当前视图链接" value={href} />)); }, <Copy />)} refresh={icon("刷新看板", () => { setRecovered(false); notify("演示快照已重新载入；未请求正式业务数据"); }, <RefreshCw />)} fullscreen={icon("全屏查看", () => { (document.fullscreenElement ? document.exitFullscreen() : root.current?.requestFullscreen())?.catch(() => notify("当前环境不支持全屏查看")); }, <Maximize2 />)} exportAction={<LiveDashboardContext.Provider key={cohortScope} value={exportReading}><Export name={title} view={{...view,reading}} sheets={allSheets} pending={pending} iconOnly /></LiveDashboardContext.Provider>} /></div></div></DashboardHeader>
     {pending && <p className="topic-preview__pending" role="status">条件尚未应用 · 当前结果仍对应已应用条件 <Button onClick={apply}>应用</Button></p>}
     {active ? <>
       <section aria-label="核心判断"><DashboardSectionHeading title="核心判断" /><div className="topic-preview__grid is-two">{["M016", "M020", "M022", "M024"].map(id => card(id))}</div></section>
@@ -162,7 +190,7 @@ export default function TopicPreviews({ board }: { board: "5.8" | "5.9" }) {
       <DataOriginProvider value={null}><Panel title="整体活跃次日回访" note="指标登记与同批用户结果待开发支持">
         <p className="topic-preview__description">当前没有可用的同批结果，不展示估算值；新用户次留和存量用户复访分别保留，不能相加代替总体。</p>
       </Panel></DataOriginProvider>
-      <section aria-label="注册留存详情"><DashboardSectionHeading title="注册留存详情" /><div className="topic-preview__grid is-two">{card("M021", true)}{card("M023", true)}</div><LiveDashboardContext.Provider value={cohortReading}><CohortMatrix title="注册留存明细" rows={cohorts} view={view} pending={pending} open={open} sheetName="04_注册留存明细" /></LiveDashboardContext.Provider></section>
+      <section aria-label="注册留存详情"><DashboardSectionHeading title="注册留存详情" /><div className="topic-preview__grid is-two">{card("M021", true)}{card("M023", true)}</div><LiveDashboardContext.Provider value={cohortReading}><CohortMatrix title="注册留存明细" rows={cohorts} view={view} pending={pending} open={open} sheetName="04_注册留存明细" scope={cohortScope} onScopeChange={changeCohortScope} /></LiveDashboardContext.Provider></section>
       <section aria-label="首次体验失败用户再激活"><DashboardSectionHeading title="首次体验失败用户再激活" /><p className="topic-preview__description">首次体验失败日期 {rangeLabel(view.failure)} · 同一指标按观察窗口查看。分母只纳入所选窗口及24小时迟到缓冲均已结束的失败用户；再次进入后必须完成有效观看才算再次激活。默认查看72小时。</p><SegmentedControl label="再次激活观察窗口" value={String(reactivationWindow)} onChange={value => updateReading({ reactivationWindow: Number(value) as 48 | 72 })} options={[{ value: "72", label: "72小时" }, { value: "48", label: "48小时" }]} /><div className="topic-preview__grid">{card("M025")}</div></section>
     </> : <>
       <section aria-label="消费核心结果"><DashboardSectionHeading title="消费核心结果" /><div className="topic-preview__grid is-three">{["M026", "M101", "M102", "M098", "M081", "M036"].map(id => card(id))}</div></section>

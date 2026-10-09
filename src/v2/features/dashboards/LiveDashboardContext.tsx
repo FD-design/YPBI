@@ -6,6 +6,7 @@ import type { CalculationBasis } from "./CalculationEvidence";
 import type { DateRangeValue } from "../../../components/ui/date-range-model";
 import { dailyMetricReading, dailyReferenceDates, periodMetricReading, type DailyReadingPoint } from "./daily-reading-model";
 import { livePeriodReadingStatistics } from "./live-period-statistics";
+import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, readableRegistrationCohortSeries, registrationMetricScopeLabel } from "./registration-cohort";
 
 export type LiveSeries = DailyDashboardSuccess["data"]["series"][number];
 export interface LiveDashboardReading {
@@ -47,7 +48,7 @@ export const liveValue = (value: number | null, unit: string) => value === null 
 export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number]): CalculationBasis | undefined {
   if (series.metric.inputs.length !== 2) return undefined;
   const inputs = series.metric.inputs.map((input, index) => ({ name: input.name, unit: input.unit, value: point.inputs[index].value }));
-  return { numerator: inputs[0], denominator: inputs[1], formula: series.metric.formula ?? "", scope: `${point.date} · 业务日 · 待验数`, percentage: series.metric.unit === "%", result: liveValue(point.value, series.metric.unit) + " " + series.metric.unit };
+  return { numerator: inputs[0], denominator: inputs[1], formula: series.metric.formula ?? "", scope: `${point.date} · ${isRegistrationRetentionMetric(series.metric.id) ? "注册日 · " + registrationMetricScopeLabel(series.metric.id) : "业务日"} · 待验数`, percentage: series.metric.unit === "%", result: liveValue(point.value, series.metric.unit) + " " + series.metric.unit };
 }
 function trendValue(point: LiveSeries["points"][number] | undefined, unit: string) {
   return point?.value != null ? { raw: point.value, display: liveValue(point.value, unit), actualDate: point.date } : null;
@@ -57,7 +58,7 @@ function difference(current: number, baseline: number, unit: string) {
   return (delta > 0 ? "+" : "") + liveValue(delta, unit) + (unit === "%" ? " 个百分点" : " " + unit);
 }
 function cohortSummary(series: LiveSeries, dates?: readonly string[]) {
-  const points = series.points.filter(point => point.state === "available" && (!dates || dates.includes(point.date)));
+  const points = series.points.filter(point => point.state === "available" && isReadableRegistrationCohortPoint(point) && (!dates || dates.includes(point.date)));
   if (!points.length) return null;
   const inputs = series.metric.inputs.map((input, index) => ({ key: input.key, value: points.reduce((sum, point) => sum + (point.inputs[index].value ?? 0), 0) }));
   return { ...points.at(-1)!, inputs, value: inputs[1].value > 0 ? inputs[0].value / inputs[1].value : null };
@@ -79,14 +80,14 @@ export function liveDailyPoint(live: DailySources, metricId: string, date: strin
 }
 export function liveDailyReferenceRows(live: DailySources, metricIds: readonly string[]) {
   if (!live.comparison) return [];
-  return metricIds.filter(id => !["M020", "M021", "M022", "M023"].includes(id)).flatMap(id => dailyReferenceDates(live.query.dateRange[1]).map((date, i) => {
+  return metricIds.filter(id => !isRegistrationRetentionMetric(id)).flatMap(id => dailyReferenceDates(live.query.dateRange[1]).map((date, i) => {
     const point = liveDailyPoint(live, id, date);
     return { metricId: id, label: i === 0 ? "较前一天" : "较上周同日", ...point };
   }));
 }
 export function liveMetricModel(original: DashboardMetricCardModel, live: LiveDashboardReading): DashboardMetricCardModel {
   const model = liveIntervalMetricModel(original, live);
-  if (["M020", "M021", "M022", "M023"].includes(original.metric.id)) return periodMetricReading(model, `${live.query.dateRange.join(" 至 ")} · 已成熟注册批次`);
+  if (isRegistrationRetentionMetric(original.metric.id)) return periodMetricReading(model, `${live.query.dateRange.join(" 至 ")} · ${registrationMetricScopeLabel(original.metric.id)} · 已成熟注册批次`);
   const data = live.state.status === "success" ? live.state.data : null;
   const series = data?.data.series.find(item => item.metric.id === original.metric.id);
   const statistics = data && series ? livePeriodReadingStatistics(series, data, live.query, live.state.status === "success" && (live.state.refreshError || live.state.refreshing) ? livePeriodStatus(live) : "") : [];
@@ -96,7 +97,7 @@ export function liveMetricModel(original: DashboardMetricCardModel, live: LiveDa
 function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveDashboardReading): DashboardMetricCardModel {
   const sameQuery = (data: DailyDashboardSuccess, query: DailyDashboardQuery) => data.data.query.pid === query.pid && data.data.query.boardId === query.boardId && data.data.query.dateRange[0] <= query.dateRange[0] && data.data.query.dateRange[1] >= query.dateRange[1];
   const source = live.state.status === "success" && sameQuery(live.state.data, live.query) ? live.state.data.data.series.find(series => series.metric.id === original.metric.id) : undefined;
-  const series = source ? { ...source, points: source.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1]) } : undefined;
+  const series = source ? readableRegistrationCohortSeries({ ...source, points: source.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1]) }) : undefined;
   const metric = { ...original.metric, aggregationLabel: `${live.query.dateRange[0]} 至 ${live.query.dateRange[1]} · ${live.platformName} · 业务日`,
     definitionLabel: series?.metric.definition ?? original.metric.definitionLabel };
   if (live.state.status === "loading") return { metric, result: { status: "loading", contextLabel: "真实后台查询", label: "正在读取真实数据", message: "", retryable: false } };
@@ -104,13 +105,13 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
   if (!series?.points.length) return { metric, result: { status: "no_values", label: "指标未返回", contextLabel: "真实后台查询", retryable: false } };
   const unit = series.metric.unit;
   const baselineSource = live.comparison?.state.status === "success" && live.comparison.state.data && sameQuery(live.comparison.state.data, live.comparison.query) ? live.comparison.state.data.data.series.find(item => item.metric.id === original.metric.id) : undefined;
-  const baseline = baselineSource ? { ...baselineSource, points: baselineSource.points.filter(point => point.date >= live.comparison!.query.dateRange[0] && point.date <= live.comparison!.query.dateRange[1]) } : undefined;
-  const cohort = ["M020", "M021", "M022", "M023"].includes(original.metric.id);
-  const eligible = series.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1] && point.state === "available");
+  const baseline = baselineSource ? readableRegistrationCohortSeries({ ...baselineSource, points: baselineSource.points.filter(point => point.date >= live.comparison!.query.dateRange[0] && point.date <= live.comparison!.query.dateRange[1]) }) : undefined;
+  const cohort = isRegistrationRetentionMetric(original.metric.id);
+  const eligible = series.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1] && point.state === "available" && (!cohort || isReadableRegistrationCohortPoint(point)));
   const last = cohort ? cohortSummary(series, eligible.map(point => point.date)) ?? series.points.at(-1)! : series.points.at(-1)!;
   const paired = eligible.map(point => baseline?.points[series.points.indexOf(point)]);
   const previous = cohort ? baseline && paired.length && paired.every(point => point?.state === "available") ? cohortSummary(baseline, paired.map(point => point!.date)) ?? undefined : undefined : baseline?.points.at(-1);
-  if (cohort) metric.aggregationLabel = `${live.query.dateRange.join(" 至 ")} · 注册日 · ${live.platformName} · 已返回 ${eligible.length} 批`;
+  if (cohort) metric.aggregationLabel = `${live.query.dateRange.join(" 至 ")} · 注册日 · ${registrationMetricScopeLabel(original.metric.id)} · ${live.platformName} · 已返回 ${eligible.length} 批`;
   const toPoints = (current: LiveSeries, counterpart: LiveSeries | undefined, previousPeriod = false) => current.points.map((point, index) => {
     const other = counterpart?.points[index];
     return {
@@ -143,7 +144,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
     trendKind: original.result.status === "available" ? original.result.trendKind : "line",
     trend: { current: toPoints(series, baseline), comparison: baseline ? toPoints(baseline, series, true) : null }
   };
-  if (cohort && result.calculation) result.calculation.scope = `${live.query.dateRange.join(" 至 ")} · 注册日 · 仅汇总已结束观察且已返回的批次 · 待验数`;
+  if (cohort && result.calculation) result.calculation.scope = `${live.query.dateRange.join(" 至 ")} · 注册日 · ${registrationMetricScopeLabel(original.metric.id)} · 仅汇总已结束观察且已返回的批次 · 待验数`;
   if (cohort && comparison?.status === "available") comparison.detail = "当前注册批次与上一等长周期对应批次的加权留存结果；逐批次数据见明细。";
   if (last.value === null) return { metric, result: { status: last.state === "source_failure" ? "failed" : last.state === "no_record" ? "no_records" : "no_values", contextLabel: last.date, label: livePointStateLabel(last), message: `主值 — · ${last.date}。期间其他日期见趋势和明细。`, retryable: last.state === "source_failure",
     history: observed || priorObserved ? result : undefined } };

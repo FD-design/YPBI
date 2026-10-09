@@ -17,6 +17,8 @@ interface RecoveryEnvironment {
   now: () => number;
 }
 
+export type AssetRecovery = (error: unknown, mode?: "automatic" | "manual") => Promise<boolean>;
+
 export function isAssetLoadError(error: unknown): boolean {
   if (!error || typeof error !== "object" || !("message" in error) || typeof error.message !== "string") return false;
   return /^(Failed to fetch dynamically imported module(?:\s*:|$)|error loading dynamically imported module(?:\s*:|\s+https?:|$)|Importing a module script failed\.?$|Unable to preload CSS for\s+\S+)/i.test(error.message);
@@ -56,28 +58,36 @@ export function restoredRecoveryUrl(href: string, storage: RecoveryEnvironment["
   return href;
 }
 
-export function createAssetRecovery(environment: RecoveryEnvironment) {
-  let pending: Promise<boolean> | undefined;
-  return (error: unknown): Promise<boolean> => {
+export function createAssetRecovery(environment: RecoveryEnvironment): AssetRecovery {
+  const attempts: Partial<Record<"automatic" | "manual", Promise<boolean>>> = {};
+  let checking: Promise<string | null> | undefined;
+  let navigating = false;
+  return (error: unknown, mode = "automatic"): Promise<boolean> => {
     if (!isAssetLoadError(error) || !environment.entry) return Promise.resolve(false);
-    if (pending) return pending;
-    pending = (async () => {
+    if (attempts[mode]) return attempts[mode];
+    const attempt = (async () => {
       try {
+        if (navigating) return true;
         const previous = readAttempt(environment.storage);
-        if (previous && environment.now() - previous.at < RELOAD_COOLDOWN_MS) return false;
-        const target = await environment.latestEntry(environment.href());
-        if (!target || target === environment.entry || target === previous?.target) return false;
+        if (mode === "automatic" && previous && environment.now() - previous.at < RELOAD_COOLDOWN_MS) return false;
+        checking ??= environment.latestEntry(environment.href()).finally(() => { checking = undefined; });
+        const target = await checking;
+        if (navigating) return true;
+        if (!target || (mode === "automatic" && (target === environment.entry || target === previous?.target))) return false;
         const at = environment.now();
-        const attempt: RecoveryAttempt = { target, at, token: at.toString(36) };
+        const token = at.toString(36);
+        const attempt: RecoveryAttempt = { target, at, token: previous?.token === token ? `${token}m` : token };
         environment.storage.setItem(STORAGE_KEY, JSON.stringify(attempt));
         if (environment.storage.getItem(STORAGE_KEY) !== JSON.stringify(attempt)) return false;
         environment.replace(withReloadMarker(environment.href(), attempt.token));
+        navigating = true;
         return true;
       } catch {
         return false;
       }
     })();
-    return pending;
+    attempts[mode] = attempt;
+    return attempt;
   };
 }
 

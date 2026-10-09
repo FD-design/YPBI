@@ -95,10 +95,22 @@ const baseMappings = {
   "M020.internal": { referenceMetricId: "M020", name: "注册用户D1留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D1回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 1, biV1Metric: "M020", biV1Dimensions: ["internal"], biV1Only: true },
   "M115.d1": { referenceMetricId: "M115", name: "注册用户第1日留存人数", fields: ["afterFirstData1.loginCnt"], inputIds: ["M115"], inputNames: ["第1日留存人数"], unit: "人", cohortDays: 1, biV1Metric: "M020", biV1Value: "numerator" },
   "M021": { fields: ["afterFirstData3.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第3日留存人数", "该注册日用户数"], unit: "%", cohortDays: 3, biV1Metric: "M021" },
+  "M021.android": { referenceMetricId: "M021", name: "注册用户D3留存率（Android）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["Android注册批次D3回访人数", "Android注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["android"], biV1Only: true },
+  "M021.ios": { referenceMetricId: "M021", name: "注册用户D3留存率（iOS）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["iOS注册批次D3回访人数", "iOS注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["ios"], biV1Only: true },
+  "M021.natural": { referenceMetricId: "M021", name: "注册用户D3留存率（自然新增）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["自然新增注册批次D3回访人数", "自然新增注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["natural"], biV1Only: true },
+  "M021.internal": { referenceMetricId: "M021", name: "注册用户D3留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D3回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["internal"], biV1Only: true },
   "M115.d3": { referenceMetricId: "M115", name: "注册用户第3日留存人数", fields: ["afterFirstData3.loginCnt"], inputIds: ["M115"], inputNames: ["第3日留存人数"], unit: "人", cohortDays: 3, biV1Metric: "M021", biV1Value: "numerator" },
   "M022": { fields: ["afterFirstData7.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第7日留存人数", "该注册日用户数"], unit: "%", cohortDays: 7, biV1Metric: "M022" },
+  "M022.android": { referenceMetricId: "M022", name: "注册用户D7留存率（Android）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["Android注册批次D7回访人数", "Android注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["android"], biV1Only: true },
+  "M022.ios": { referenceMetricId: "M022", name: "注册用户D7留存率（iOS）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["iOS注册批次D7回访人数", "iOS注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["ios"], biV1Only: true },
+  "M022.natural": { referenceMetricId: "M022", name: "注册用户D7留存率（自然新增）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["自然新增注册批次D7回访人数", "自然新增注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["natural"], biV1Only: true },
+  "M022.internal": { referenceMetricId: "M022", name: "注册用户D7留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D7回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["internal"], biV1Only: true },
   "M115.d7": { referenceMetricId: "M115", name: "注册用户第7日留存人数", fields: ["afterFirstData7.loginCnt"], inputIds: ["M115"], inputNames: ["第7日留存人数"], unit: "人", cohortDays: 7, biV1Metric: "M022", biV1Value: "numerator" },
   "M023": { fields: ["afterFirstData30.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第30日留存人数", "该注册日用户数"], unit: "%", cohortDays: 30, biV1Metric: "M023" },
+  "M023.android": { referenceMetricId: "M023", name: "注册用户D30留存率（Android）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["Android注册批次D30回访人数", "Android注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["android"], biV1Only: true },
+  "M023.ios": { referenceMetricId: "M023", name: "注册用户D30留存率（iOS）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["iOS注册批次D30回访人数", "iOS注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["ios"], biV1Only: true },
+  "M023.natural": { referenceMetricId: "M023", name: "注册用户D30留存率（自然新增）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["自然新增注册批次D30回访人数", "自然新增注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["natural"], biV1Only: true },
+  "M023.internal": { referenceMetricId: "M023", name: "注册用户D30留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D30回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["internal"], biV1Only: true },
   "M115.d30": { referenceMetricId: "M115", name: "注册用户第30日留存人数", fields: ["afterFirstData30.loginCnt"], inputIds: ["M115"], inputNames: ["第30日留存人数"], unit: "人", cohortDays: 30, biV1Metric: "M023", biV1Value: "numerator" },
   "M016.android": { "referenceMetricId": "M016", "name": "日活跃用户数（Android）", "fields": ["androidLoginUserCount"], "inputIds": ["M016"], "inputNames": ["Android 日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["android"] },
   "M016.ios": { "referenceMetricId": "M016", "name": "日活跃用户数（iOS）", "fields": ["iosLoginUserCount"], "inputIds": ["M016"], "inputNames": ["iOS 日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["ios"] },
@@ -209,12 +221,17 @@ function periodStatistics(id: CandidateId, points: readonly DailyPoint[], query:
   const sum = sourceSum / (mapping.resultDivisor ?? 1);
   return { ...context, state: "available", values: kinds.map(kind => ({ kind, value: kind === "period_sum" ? sum : sum / dayCount })), reason: null };
 }
+const retentionDetailMetricIds: readonly CandidateId[] = [
+  "M021.android", "M021.ios", "M021.natural", "M021.internal",
+  "M022.android", "M022.ios", "M022.natural", "M022.internal",
+  "M023.android", "M023.ios", "M023.natural", "M023.internal"
+];
 const boardMetrics: Record<string, readonly CandidateId[]> = {
-  "5.2": (Object.keys(mappings) as CandidateId[]).filter(id => !mappings[id].checkin),
+  "5.2": (Object.keys(mappings) as CandidateId[]).filter(id => !mappings[id].checkin && !retentionDetailMetricIds.includes(id)),
   "5.14": ["M075"],
   "5.12": ["M101", "M034", "M036", "M097"],
   "5.7": ["M001", "M002", "M003", "M095", "M005", "M099", "M006", "M007", "M008", "M008.android", "M008.ios", "M008.web", "M008.nature", "M008.internal", "M059.new", "M064"],
-  "5.8": ["M016", "M016.android", "M016.ios", "M016.web", "M016.new", "M016.old", "M016.androidNew", "M016.iosNew", "M016.androidOld", "M016.iosOld", "M018", "M020", "M020.android", "M020.ios", "M020.natural", "M020.internal", "M021", "M022", "M023", "M115.d1", "M115.d3", "M115.d7", "M115.d30"],
+  "5.8": ["M016", "M016.android", "M016.ios", "M016.web", "M016.new", "M016.old", "M016.androidNew", "M016.iosNew", "M016.androidOld", "M016.iosOld", "M018", "M020", "M020.android", "M020.ios", "M020.natural", "M020.internal", "M021", "M022", "M023", ...retentionDetailMetricIds, "M115.d1", "M115.d3", "M115.d7", "M115.d30"],
   "5.9": ["M026", "M081", "M103", "M101", "M102", "M098", "M034", "M036", "M097", "M026.android", "M026.ios", "M026.web", "M026.new", "M026.old", "M026.androidNew", "M026.iosNew", "M026.androidOld", "M026.iosOld", "M081.android", "M081.ios", "M081.web", "M081.new", "M081.old", "M081.androidNew", "M081.iosNew", "M081.androidOld", "M081.iosOld"],
   "5.10": ["M059", "M058", "M061", "M067", "M087", "M059.new", "M064", "M058.new", "M088", "M067.new", "M065", "M066", "M065.new", "M066.new"],
   "5.11": ["M059", "M058", "M061", "M067", "M087", "M113", "M112", "M060", "M114",

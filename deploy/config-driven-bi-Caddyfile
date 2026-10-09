@@ -30,8 +30,14 @@
         }
     }
 
+    handle /assets/* {
+        root * /opt/config-driven-bi-demo/dist
+        file_server
+    }
+
     handle {
         root * /opt/config-driven-bi-demo/dist
+        header Cache-Control "no-cache"
         try_files {path} /index.html
         file_server
     }

@@ -1,5 +1,43 @@
 # 部署与运维模块
 
+## 2026-10-09 留存分组与页面恢复合并发布
+
+- 范围：注册留存的总体、注册Android、注册iOS、自然新增、内部导量五种局部分组，以及下方记录的页面资源人工恢复修复。卡片、矩阵、趋势、详情、比较与导出使用同一分组。经营明细仍为93个数值列。
+- 接入：复用已存在的bi-v1注册留存接口及D0分维参数，补齐D3／D7／D30的12个私有投影；本次不改变公共API、指标口径、权限、数据存储和Google需求表，不写入测试或生产业务数据。
+- 本地联动回归与完整发布校验已通过，待发布。实际发布版本、公网检查和真实会话复验分别记录，不将本地隔离响应的通过视为真实接口验数通过。
+- 受限应用发布会重启API，临时测试Token会话需重新验证；普通账号、正式上游配置不变。Caddy候选配置不进入应用部署包，仍由服务器维护者验证并单独安装。
+
+| 验收点 | 命令及结果 | 证据 |
+|---|---|---|
+| 完整发布校验 | `npm run verify:release`通过，含1072项Bun测试、12873断言、类型检查、服务端及生产构建 | `/private/tmp/ypbi-oct9-combined-release-verify.log` |
+| 内测构建及演示隔离 | `npm run build:internal-preview`通过，71个产物文件检查通过；原包体积及JSON导入属性提示保留 | `/private/tmp/ypbi-oct9-combined-internal-build.log` |
+| 注册留存联动 | `qa-registration-cohort-scope.spec.ts`3项通过；1280／1440／1024／390均逐张视检 | `/private/tmp/ypbi-cohort-scope-browser.log`、`/private/tmp/ypbi-cohort-scope-{width}.png` |
+| 相邻页面与登录 | 经营明细、独立注册日期、登录失效及测试环境切换7项通过 | `/private/tmp/ypbi-oct9-combined-neighbor-browser.log` |
+| 共享图表与筛选 | `test:e2e:ui-shared`23项初跑通过；1项因旧单位白名单未包含已登记IP列失败。对照实际DOM与列注册表，补充M002／M095的IP单位断言后定点通过，24项均已验证 | `/private/tmp/ypbi-oct9-combined-shared-browser.log`、`/private/tmp/ypbi-oct9-combined-final-browser.log` |
+| 发布包与静态工具 | 发布包4项、静态交付工具4项通过；资源恢复浏览器4项沿用下方同版本实现证据 | `/private/tmp/ypbi-oct9-combined-deploy-tests.log`、`/private/tmp/ypbi-oct9-combined-static-tests.log` |
+
+首次完整校验发现两处新增测试的只读数组类型不兼容，修正类型表达后全量通过，断言内容不变。首次相邻浏览器运行缺少Bun路径，随后受本机浏览器启动权限限制；补齐测试运行环境并通过登录冒烟后才执行上述7项。所有本地业务响应均为隔离夹具，不使用真实Token，不修改服务端数据。既存非阻断文案：专题刷新通知仍有“演示快照”措辞，实际真实查询已验证发出；本批保留此文案问题，未据此判断数据来源。
+
+## 2026-10-09 发布资源恢复本地修复
+
+- 应用启动错误页与React错误页的“刷新页面”共用资源恢复器。自动恢复保留入口变化、同目标及5分钟冷却保护；人工刷新允许对已确认入口再试一次，并保留查询编码、hash、普通登录与测试环境选择。普通运行错误不触发自动版本恢复。
+- 候选Caddy配置将`/assets/*`独立交给静态文件服务，缺失资源返回404；根入口和SPA深链显式设置`Cache-Control: no-cache`。`tools/verify-static-delivery.mjs`只读检查HTML缓存、入口一致性、JS／CSS类型及缺失资源响应，不携带凭据、不输出响应正文。本机没有Caddy，未运行Caddy语法校验或安装配置。
+- 同日公网只读复核收到6项响应：当前JS／CSS资源有效；根入口、维护深链及经营深链均未显式要求HTML重新验证，缺失脚本未返回404，共4项静态交付失败。证据为`/tmp/ypbi-oct9-live-static-delivery.json`。
+- 应用改动与服务器配置均未发布。现有受限应用发布不包含代理配置；部署维护者应先验证配置、单独安装并保留回滚副本，再运行静态交付检查。旧hash资源保留策略仍须由部署维护者明确。发布应用后再验证当前版本页面，不用本地测试替代线上验收。
+- 留存专题五种注册日分组已获用户确认；BI侧卡片、矩阵和导出接入及验证见上方合并发布记录，不转交后端重复建设。现有93列经营明细保持不变。
+- 剩余15列的正式BI v1接口证据仍未确认：M102观影总时长1列、M094广告点击用户数2列、M058总充值金额4列、M059付费用户数2列，以及M061／M064付费转化率、M087／M088 ARPU、M067 ARPPU共6列。只要求后端补齐现有接口与字段、单位和脱敏响应证据；基础输入合格后按权威公式复用，不要求新增6个派生接口。M094不能用限定登录活跃人群的M111分子替代，金额和时长的新源单位不能从旧字段推定。
+
+| 验收点 | 命令 | 结果 | 本地证据 |
+|---|---|---|---|
+| 资源恢复与错误页逻辑 | `bun test src/app/assetRecovery.test.ts src/components/AppErrorBoundary.test.tsx` | 22项、141断言通过 | `/tmp/ypbi-oct9-asset-unit-tests.log` |
+| 共享组件相邻能力 | `npm run test:ui:shared` | 50项、1296断言通过 | `/tmp/ypbi-oct9-asset-shared-tests.log` |
+| 静态交付核查工具 | `node --test tools/verify-static-delivery.test.mjs` | 4项通过；不等于Caddy实际安装校验 | `/tmp/ypbi-oct9-static-delivery-tests.log` |
+| 发布包边界 | `python3 -m unittest discover -s deploy -p 'test_receive_release.py'` | 4项通过；Caddy配置继续被应用发布包拒绝 | `/tmp/ypbi-oct9-asset-archive-tests.log` |
+| 生产产物的浏览器恢复链路 | `playwright test qa-asset-recovery.spec.ts --workers=1` | Chrome4项通过；同入口人工恢复、自动冷却、React错误和普通渲染错误均独立验证 | `/tmp/ypbi-oct9-asset-browser-tests.log` |
+| 类型与构建 | `npm run typecheck`、`npm run build` | 通过，生产演示资源隔离通过；保留原包体积提示 | `/tmp/ypbi-oct9-asset-typecheck.log`、`/tmp/ypbi-oct9-asset-build.log` |
+
+浏览器用例以真实生产构建的入口与错误组件为受测对象，失败交付及恢复后的应用模块采用隔离响应，全部API禁止访问。1280／1024／390三档均验证单一错误页、按钮完整位于视口、无横向溢出、滚动位置为0；截图为`/tmp/ypbi-asset-recovery-error-{1280,1024,390}.png`，已逐张视检。URL、环境选择及模拟会话保留通过，不代表线上真实会话或业务数据复验。
+
 ## 2026-10-09 93列页面核验与后续接入修复
 
 - 实测版本 `dd6b890`，用户重新验证测试会话后，Chrome页面显示测试数据，PID PH、业务日2020-01-01。BFF日看板请求返回HTTP 200、`success=true`，查询回显与页面范围一致；`queryId=a007fd01-d5e7-468f-9954-962af9c6fa61`，读取时间2026-10-09 02:03（UTC+08:00）。
@@ -9,7 +47,10 @@
 - 本轮未取得上游bi-v1原始HTTP／业务码及规则版本；M090超时与迟到数、未知支付方式、M101旧源288个五分钟点、多日比率与生产历史均未验证。留存专题D0分维的页面接入尚未完成，不将经营明细D1通过外推为专题全部分维通过。
 - 当前播放夹具经BFF返回起播12、有效观看10、有效观影率83.33%，M103为5/6；与最早3/4播放样例不同，保留最新实测值，不据旧样例认定缺陷。播放规则版本及最新夹具预期仍须原始响应确认。
 - 本地修复通过完整`verify:release`：1041项Bun测试、12139断言及类型检查、前后端构建；内测构建、17项契约测试与4项部署归档测试通过。38项经营明细／专题／阅读浏览器回归通过；首轮两处旧测试预期按正式落地页名称、48／72小时同一指标卡修正，原失败定点及同卡窗口专项3项复验通过。测试仅使用隔离内存数据，未写上游夹具；本地通过与已发布页面结果分开记录。日志为`/tmp/ypbi-oct9-verify-release.log`、`ypbi-oct9-qa-regression-final.log`及`ypbi-oct9-{internal-build,contracts,archive-tests}.log`。
-- `b3847c3`于2026-10-09 02:26（UTC+08:00）[自动部署成功](https://github.com/FD-design/YPBI/actions/runs/37824055806)。独立公网检查：新入口`index-Btu1acUf.js`返回JavaScript 200，health为`ok / real`，匿名session为401。刷新Chrome后普通账号登录保留，临时测试会话显示`DATA_PREVIEW_SESSION_REQUIRED`；需用户重新验证测试Token后复核本次2列广告及6个专题交叉结果。修复前74／17／2的实测快照保留，不将预计增加的有值列数计为已通过。
+- `b3847c3`于2026-10-09 02:26（UTC+08:00）[自动部署成功](https://github.com/FD-design/YPBI/actions/runs/37824055806)。独立公网检查：新入口`index-Btu1acUf.js`返回JavaScript 200，health为`ok / real`，匿名session为401。
+- 2026-10-09 05:12（UTC+08:00）用户恢复测试会话后完成发布版复验。Chrome当前入口为`index-Btu1acUf.js`，PH单日BFF请求HTTP 200、`success=true`，`queryId=6d506a42-7094-46a8-b1fa-b5c0faad61b9`。经营明细93列逐项比对为76列有值、15列`no_record`、2列`SOURCE_INCOMPLETE`；M055广告点击次数总体5次、新用户2次，页面与直接计数一致，其他91列值及状态与修复前快照相同。
+- 已有专题6个新用户交叉结果实测通过：M016日活跃用户数Android／iOS为2／1人；M026观影用户数为1／1人；M081活跃用户观影率为1/2与1/1，页面显示50%／100%。核心经营广告区总体点击5次、人均0.83次、渗透率66.67%；新用户点击2次、人均0.67次、渗透率66.67%。M094广告点击人数仍为空，未用活跃用户广告分子替代。当前结论为页面与BFF映射通过，不替代上述未验证专项。
+- 同次浏览器出现旧资源加载失败，点击刷新后恢复且测试会话保留。公网只读检查确认旧`ConnectedBoard-Cr12n7Xt.js`、`index-zRt7JHsq.js`、`ProductApp-ByBbSrgW.js`请求返回200 HTML，当前入口与深链缺少明确`Cache-Control`；当前入口实际引用新版本，不判定为服务器仍提供旧入口。该项归属我方发布配置，尚未修复：需由拥有服务器配置权限的部署维护者将`/assets/*`与SPA回退分离，缺失资源返回404，HTML显式重新验证，并明确旧hash资源保留策略。现有受限应用发布不包含Caddy及接收器配置，本轮未修改服务器配置或重新发布。
 - 逐列证据保存在本地`outputs/20261009-live-acceptance-dd6b890/`，不上传公开仓库。正式指标定义、页面布局、账号、Token、运行配置、Google需求表均未修改。
 
 ## 2026-10-09 显式分维接入修复

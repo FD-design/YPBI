@@ -13,7 +13,7 @@ class ArchiveSafety(unittest.TestCase):
         receive.validate_members([tarfile.TarInfo(n) for n in ['dist/index.html', 'server/index.ts', 'src/data/metrics.ts', 'package.json']])
 
     def test_private_and_escape_paths_rejected(self):
-        for name in ['../.env.local', '/root/a', 'data/workspace.json', '.env.local', 'server/../../.env.local', 'src/.env.local', 'deploy/receive-release.py']:
+        for name in ['../.env.local', '/root/a', 'data/workspace.json', '.env.local', 'server/../../.env.local', 'src/.env.local', 'deploy/receive-release.py', 'deploy/config-driven-bi-Caddyfile']:
             with self.subTest(name=name), self.assertRaises(ValueError):
                 receive.validate_members([tarfile.TarInfo(name)])
 

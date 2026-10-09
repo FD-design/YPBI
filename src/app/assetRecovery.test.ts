@@ -70,6 +70,56 @@ describe("发布后资源版本恢复", () => {
     expect(f.navigations).toHaveLength(1);
   });
 
+  test("用户刷新可在自动检查无新版本后重新检查，同版本也只做一次绕缓存导航", async () => {
+    const f = fixture();
+    const before = f.environment.href();
+    f.setTarget(currentEntry);
+    const recover = createAssetRecovery(f.environment);
+    expect(await recover(staleError)).toBe(false);
+    expect(await recover(staleError, "manual")).toBe(true);
+    expect(await recover(staleError, "manual")).toBe(true);
+    expect(f.reads()).toBe(2);
+    expect(f.navigations).toHaveLength(1);
+    expect(f.navigations[0]).toContain("&__bi_asset_reload=");
+    expect(restoredRecoveryUrl(f.navigations[0], f.storage)).toBe(before);
+    expect(f.values.get("ypbi:data-environment:user")).toBe("test");
+    expect(f.values.size).toBe(2);
+  });
+
+  test("用户刷新可重试冷却中的目标，但下一页仍禁止自动循环", async () => {
+    const f = fixture();
+    await createAssetRecovery(f.environment)(staleError);
+    f.environment.entry = latestEntry;
+    const recover = createAssetRecovery(f.environment);
+    expect(await recover(staleError)).toBe(false);
+    expect(await recover(staleError, "manual")).toBe(true);
+    expect(await recover(staleError, "manual")).toBe(true);
+    expect(f.navigations).toHaveLength(2);
+    expect(f.navigations[1]).not.toBe(f.navigations[0]);
+    expect(restoredRecoveryUrl(f.navigations[1], f.storage)).toBe(f.environment.href());
+    expect(await createAssetRecovery(f.environment)(staleError)).toBe(false);
+    expect(f.navigations).toHaveLength(2);
+  });
+
+  test("用户刷新与自动恢复重叠时共用检查且不重复导航", async () => {
+    for (const manualFirst of [true, false]) {
+      const f = fixture();
+      let finish!: (value: string) => void;
+      let reads = 0;
+      f.environment.latestEntry = () => { reads++; return new Promise<string>((resolve) => { finish = resolve; }); };
+      const recover = createAssetRecovery(f.environment);
+      const first = recover(staleError, manualFirst ? "manual" : "automatic");
+      const second = recover(staleError, manualFirst ? "automatic" : "manual");
+      finish(latestEntry);
+      expect(await first).toBe(true);
+      expect(await second).toBe(true);
+      expect(reads).toBe(1);
+      expect(f.navigations).toHaveLength(1);
+      expect(await recover(staleError, "manual")).toBe(true);
+      expect(f.navigations).toHaveLength(1);
+    }
+  });
+
   test("HTML 没有新入口、获取失败或运行异常都不自动刷新", async () => {
     for (const target of [currentEntry, null]) {
       const f = fixture();
@@ -84,6 +134,23 @@ describe("发布后资源版本恢复", () => {
     expect(await createAssetRecovery(runtime.environment)(new Error("render failed"))).toBe(false);
     expect(runtime.reads()).toBe(0);
     expect(runtime.navigations).toHaveLength(0);
+  });
+
+  test("用户刷新不把普通运行错误当资源错误，也不使用无法验证的入口", async () => {
+    const runtime = fixture();
+    expect(await createAssetRecovery(runtime.environment)(new Error("render failed"), "manual")).toBe(false);
+    expect(runtime.reads()).toBe(0);
+    expect(runtime.navigations).toHaveLength(0);
+    for (const failure of ["empty", "offline"] as const) {
+      const f = fixture();
+      f.environment.latestEntry = async () => {
+        if (failure === "offline") throw new Error("offline");
+        return null;
+      };
+      expect(await createAssetRecovery(f.environment)(staleError, "manual")).toBe(false);
+      expect(f.navigations).toHaveLength(0);
+      expect(f.values.size).toBe(1);
+    }
   });
 
   test("恢复后相同目标失败不会循环，跨版本冷却后可恢复下一次发布", async () => {
@@ -112,6 +179,7 @@ describe("发布后资源版本恢复", () => {
       const f = fixture();
       f.storage[method] = () => { throw new Error("Storage blocked"); };
       expect(await createAssetRecovery(f.environment)(staleError)).toBe(false);
+      expect(await createAssetRecovery(f.environment)(staleError, "manual")).toBe(false);
       expect(f.navigations).toHaveLength(0);
       expect(restoredRecoveryUrl(f.environment.href(), f.storage)).toBe(f.environment.href());
     }
@@ -213,8 +281,22 @@ test("Vite 传递真实模块运行异常时不检查版本，也不阻止错误
 test("非 HTML 响应与跨域入口不能触发自动版本恢复", async () => {
   for (const [entry, contentType] of [[latestEntry, "application/json"], ["https://other.example/assets/index-new.js", "text/html"]]) {
     await withBrowserEnvironment(async (f) => {
-      expect(await installBrowserAssetRecovery()(staleError)).toBe(false);
+      const recover = installBrowserAssetRecovery();
+      expect(await recover(staleError)).toBe(false);
+      expect(await recover(staleError, "manual")).toBe(false);
       expect(f.navigations).toHaveLength(0);
     }, entry, contentType);
   }
+});
+
+test("浏览器手动刷新使用同源无缓存版本检查，版本相同也添加恢复标记", async () => {
+  await withBrowserEnvironment(async (f, _browser, fetches) => {
+    const recover = installBrowserAssetRecovery();
+    expect(await recover(staleError)).toBe(false);
+    expect(await recover(staleError, "manual")).toBe(true);
+    expect(fetches).toHaveLength(2);
+    expect(fetches.every(request => request.cache === "no-store" && request.credentials === "same-origin")).toBe(true);
+    expect(f.navigations).toHaveLength(1);
+    expect(restoredRecoveryUrl(f.navigations[0], f.storage)).toBe(f.environment.href());
+  }, currentEntry);
 });

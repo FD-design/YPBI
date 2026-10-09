@@ -10,6 +10,7 @@ import { MetricReadingDialog } from "./MetricReadingDialog";
 import { CalculationEvidence } from "./CalculationEvidence";
 import { ComparisonDetails } from "./ComparisonDetails";
 import { availablePeriodStatistics, periodStatisticLabel } from "./live-period-statistics";
+import { isRegistrationRetentionMetric, readableRegistrationCohortSeries } from "./registration-cohort";
 
 export function LiveSeriesDetails({ series, result }: { series: LiveSeries; result: DailyDashboardSuccess }) {
   const statistics = availablePeriodStatistics(series, result);
@@ -18,11 +19,11 @@ export function LiveSeriesDetails({ series, result }: { series: LiveSeries; resu
     {statistics && statistics.dayCount > 1 && <p aria-label="周期统计">{statistics.values.map(item => `${periodStatisticLabel(item.kind)} ${item.value.toLocaleString("zh-CN", { maximumFractionDigits: 2 })} ${series.metric.unit}`).join(" · ")} · {statistics.dayCount} 个业务日</p>}
     <PaginatedTable label={`${series.metric.name}每日数据`} columnCount={series.metric.inputs.length + 3} head={<tr><th>日期</th>{series.metric.inputs.map(input => <th key={input.key}>{input.name}（{input.unit}）</th>)}<th>结果（{series.metric.unit}）</th><th>状态</th></tr>}
       rows={series.points.map(point => <tr key={point.date}><td>{point.date}</td>{point.inputs.map((input, index) => <td key={input.key}>{liveValue(input.value, series.metric.inputs[index].unit)}</td>)}<td>{liveValue(point.value, series.metric.unit)}</td><td>{livePointStateLabel(point)}</td></tr>)} />
-    <details><summary>数据来源与状态</summary><p>{["M020","M021","M022","M023"].includes(series.metric.id)?"按注册日展示；摘要按已结束观察且已返回批次的分子、分母汇总计算。":"主值为所选结束日期，不累计跨日人数。"}完整性未知，数据水位未返回。</p>{series.metric.sourceNote && <p>{series.metric.sourceNote}</p>}<p>查询时间：{new Date(result.data.fetchedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}（北京时间）</p><p>指标版本：{series.metric.authorityVersion}</p></details></>;
+    <details><summary>数据来源与状态</summary><p>{isRegistrationRetentionMetric(series.metric.id)?"按注册日展示；摘要按已结束观察且已返回批次的分子、分母汇总计算。":"主值为所选结束日期，不累计跨日人数。"}完整性未知，数据水位未返回。</p>{series.metric.sourceNote && <p>{series.metric.sourceNote}</p>}<p>查询时间：{new Date(result.data.fetchedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}（北京时间）</p><p>指标版本：{series.metric.authorityVersion}</p></details></>;
 }
 export function LiveSeriesExport({ series, result, stale = false, comparison, comparisonStatus = "未启用对比", dayReferences = [] }: { series: LiveSeries; result: DailyDashboardSuccess; stale?: boolean; comparison?: DailyDashboardSuccess | null; comparisonStatus?: string; dayReferences?: ReturnType<typeof liveDailyReferenceRows> }) {
   return <Button onClick={() => {
-    const periods = [{ label: "当前期", series, result }, ...(comparison ? comparison.data.series.filter(item => item.metric.id === series.metric.id).map(series => ({ label: "对比期", series, result: comparison })) : [])];
+    const periods = [{ label: "当前期", series:readableRegistrationCohortSeries(series), result }, ...(comparison ? comparison.data.series.filter(item => item.metric.id === series.metric.id).map(series => ({ label: "对比期", series:readableRegistrationCohortSeries(series), result: comparison })) : [])];
     const cells = [["周期", "平台", "日期", ...series.metric.inputs.map(input => `${input.name}（${input.unit}）`), `结果（${series.metric.unit === "%" ? "原始比值" : series.metric.unit}）`, "状态", "验数", "完整性", "查询时间", "刷新状态", "对比状态", "计算口径", "来源口径"],
       ...periods.flatMap(period => period.series.points.map(point => [period.label, period.result.data.query.pid, point.date, ...point.inputs.map(input => input.value ?? ""), point.value ?? "", livePointStateLabel(point), "待验数", "未知", period.result.data.fetchedAt, stale ? "包含上次结果" : "本次结果", comparisonStatus, period.series.metric.formula ?? "", period.series.metric.sourceNote ?? ""])),
       ...periods.flatMap(period => (availablePeriodStatistics(period.series, period.result)?.values ?? []).map(item => [period.label + "·" + periodStatisticLabel(item.kind), period.result.data.query.pid, period.result.data.query.dateRange.join(" 至 "), ...series.metric.inputs.map(() => ""), item.value, "已返回", "待验数", "未知", period.result.data.fetchedAt, stale ? "包含上次结果" : "本次结果", comparisonStatus, period.series.metric.formula ?? "", period.series.metric.sourceNote ?? ""])),
@@ -37,9 +38,11 @@ export function ConnectedMetricCard({ live, original, render }: { live: LiveDash
   const [reading, setReading] = useState<{ kind: "all" | "comparison" | "point"; date?: string; period?: "current" | "comparison" } | null>(null);
   const model = liveMetricModel(original.model, live);
   const result = live.state.status === "success" ? live.state.data : null;
-  const series = result?.data.series.find(item => item.metric.id === original.model.metric.id);
+  const source = result?.data.series.find(item => item.metric.id === original.model.metric.id);
+  const series = source && readableRegistrationCohortSeries(source);
   const previous = live.comparison?.state.status === "success" ? live.comparison.state.data : null;
-  const previousSeries = previous?.data.series.find(item => item.metric.id === original.model.metric.id);
+  const previousSource = previous?.data.series.find(item => item.metric.id === original.model.metric.id);
+  const previousSeries = previousSource && readableRegistrationCohortSeries(previousSource);
   const available = model.result.status === "available" ? model.result : model.result.history;
   const dayReferences = liveDailyReferenceRows(live, [original.model.metric.id]);
   const selected = (reading?.period === "comparison" ? available?.trend.comparison : available?.trend.current)?.find(point => point.actualDate === reading?.date);

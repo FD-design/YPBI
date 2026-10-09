@@ -326,6 +326,123 @@ describe("bi-v1 通用指标渐进替换", () => {
   });
 });
 
+describe("bi-v1 注册留存四周期与五范围", () => {
+  const date = "2026-09-01";
+  const codes = ["M020", "M021", "M022", "M023"] as const;
+  type Scope = Record<string, string>;
+  type MetricRow = Record<string, unknown>;
+  const scopes: { suffix: string; filters: Scope; numerator: number; denominator: number }[] = [
+    { suffix: "", filters: {}, numerator: 8, denominator: 20 },
+    { suffix: ".android", filters: { clientPlatform: "android" }, numerator: 1, denominator: 3 },
+    { suffix: ".ios", filters: { clientPlatform: "ios" }, numerator: 2, denominator: 5 },
+    { suffix: ".natural", filters: { sourceType: "natural" }, numerator: 3, denominator: 7 },
+    { suffix: ".internal", filters: { sourceType: "internal_channel" }, numerator: 4, denominator: 11 }
+  ];
+  const scopeSpec = (scope: Scope) => scopes.find(item => JSON.stringify(item.filters) === JSON.stringify(scope))!;
+  const metricRow = (code: string, scope: Scope, overrides: MetricRow = {}) => {
+    const spec = scopeSpec(scope);
+    return { metricCode: code, businessDate: date, dimensions: { pid: "PH", ...scope },
+      value: spec.numerator / spec.denominator, numerator: spec.numerator, denominator: spec.denominator,
+      unit: "ratio", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "registration-retention-v1", ...overrides };
+  };
+  const execute = async (rowForScope: (code: string, scope: Scope) => MetricRow | null = metricRow, boardId = "5.8") => {
+    const requests: { codes: string[]; filters: Scope; dimensions: string[] }[] = [];
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") {
+        const filters = JSON.parse(params.dimensionFilters ?? "{}") as Scope;
+        const requestedCodes = params.metricCodes.split(",");
+        requests.push({ codes: requestedCodes, filters, dimensions: params.dimensions?.split(",") ?? [] });
+        if (params.granularity === "summary") return emptyMetrics;
+        expect(params).toMatchObject({ pid: "PH", startDate: date, endDate: "2026-09-02", granularity: "day", includeIncomplete: "true" });
+        const rows = requestedCodes.filter(code => codes.some(retentionCode => retentionCode === code))
+          .map(code => rowForScope(code, filters)).filter(row => row !== null);
+        return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-10-09T00:00:00Z", watermark: null, rows } };
+      }
+      if (path.includes("reletionsStatPlus")) return { data: [{ pid: "PH", sumDate: date, registerCount: 100,
+        afterFirstData1: { date: "2026-09-02", loginCnt: 90 }, afterFirstData3: { date: "2026-09-04", loginCnt: 80 },
+        afterFirstData7: { date: "2026-09-08", loginCnt: 70 }, afterFirstData30: { date: "2026-10-01", loginCnt: 60 } }] };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [date, date] });
+    return { result, requests, point: (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0] };
+  };
+
+  test("四周期分别请求总体、注册端别与D0获客类型，保留同范围精确分子分母", async () => {
+    const { result, requests, point } = await execute();
+    const retentionRequests = requests.filter(request => request.codes.includes("M020"));
+    expect(retentionRequests).toHaveLength(5);
+    for (const spec of scopes) {
+      const request = retentionRequests.find(item => JSON.stringify(item.filters) === JSON.stringify(spec.filters))!;
+      expect(request.codes.filter(code => codes.some(retentionCode => retentionCode === code))).toEqual([...codes]);
+      expect(request.dimensions).toEqual(Object.keys(spec.filters));
+      for (const code of codes) expect(point(`${code}${spec.suffix}`)).toMatchObject({ state: "available", sourceStatus: "READY",
+        value: spec.numerator / spec.denominator, inputs: [{ value: spec.numerator }, { value: spec.denominator }] });
+    }
+    expect(result.data.series.filter(series => series.metric.id.startsWith("M115.")).map(series => series.metric.id))
+      .toEqual(["M115.d1", "M115.d3", "M115.d7", "M115.d30"]);
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  for (const [dataStatus, state] of [["NOT_MATURE", "immature"], ["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["FAILED", "source_failure"]] as const) {
+    test(`四周期Android切片保留${dataStatus}且不消费附带值，其他范围独立可用`, async () => {
+      const { point } = await execute((code, scope) => metricRow(code, scope, scope.clientPlatform === "android" ? { dataStatus } : {}));
+      for (const code of codes) {
+        expect(point(`${code}.android`)).toMatchObject({ state, sourceStatus: dataStatus, value: null, inputs: [{ value: null }, { value: null }] });
+        for (const spec of scopes.filter(item => item.suffix !== ".android")) expect(point(`${code}${spec.suffix}`))
+          .toMatchObject({ state: "available", value: spec.numerator / spec.denominator });
+      }
+    });
+  }
+
+  test("四周期切片无记录不借总体或旧留存，真实零与零基数分别返回", async () => {
+    const { point } = await execute((code, scope) => scope.clientPlatform === "android" ? null
+      : metricRow(code, scope, scope.clientPlatform === "ios" ? { numerator: 0, value: 0 }
+        : scope.sourceType === "natural" ? { numerator: 0, denominator: 0, value: null } : {}));
+    for (const code of codes) {
+      expect(point(`${code}.android`)).toMatchObject({ state: "no_record", value: null, inputs: [{ value: null }, { value: null }] });
+      expect(point(`${code}.ios`)).toMatchObject({ state: "available", value: 0, inputs: [{ value: 0 }, { value: 5 }] });
+      expect(point(`${code}.natural`)).toMatchObject({ state: "zero_denominator", value: null, inputs: [{ value: 0 }, { value: 0 }] });
+      expect(point(code)).toMatchObject({ state: "available", value: 8 / 20 });
+    }
+  });
+
+  test("异常值按周期隔离，错误分组不回退总体，失败筛选组不影响其他范围", async () => {
+    const { point } = await execute((code, scope) => {
+      if (scope.sourceType === "internal_channel") throw new UpstreamError("UPSTREAM_TIMEOUT", "timeout", 504);
+      return metricRow(code, scope, scope.clientPlatform === "android" && code === "M021" ? { value: .9 }
+        : scope.sourceType === "natural" ? { dimensions: { pid: "PH" } } : {});
+    });
+    expect(point("M021.android")).toMatchObject({ state: "invalid_value", value: null });
+    for (const code of codes) {
+      if (code !== "M021") expect(point(`${code}.android`)).toMatchObject({ state: "available", value: 1 / 3 });
+      expect(point(`${code}.natural`)).toMatchObject({ state: "source_failure", value: null });
+      expect(point(`${code}.internal`)).toMatchObject({ state: "source_failure", value: null });
+      expect(point(`${code}.ios`)).toMatchObject({ state: "available", value: 2 / 5 });
+      expect(point(code)).toMatchObject({ state: "available", value: 8 / 20 });
+    }
+  });
+
+  test("经营明细保持原117项查询投影，只保留原D1分组，不增加专题D3/D7/D30分组", async () => {
+    const expected = [
+      "M034", "M036", "M097", "M101", "M102", "M098", "M018", "M016.new", "M016.androidNew", "M016.iosNew", "M016.androidOld", "M016.iosOld",
+      "M026.old", "M026.androidNew", "M026.iosNew", "M026.androidOld", "M026.iosOld", "M081.old", "M081.new", "M081.androidNew", "M081.iosNew", "M081.androidOld", "M081.iosOld",
+      "M112", "M113", "M060", "M114", "M084", "M086", "M090", "M112.alipay", "M113.alipay", "M060.alipay", "M114.alipay", "M112.wechat", "M113.wechat", "M060.wechat", "M114.wechat",
+      "M112.usdt", "M113.usdt", "M060.usdt", "M114.usdt", "M008.nature", "M008.internal", "M058.nature", "M058.internal", "M065", "M066", "M065.new", "M066.new",
+      "M003", "M002", "M095", "M005", "M099", "M006", "M007", "M016.web", "M008.web", "M026.web", "M081.web", "M055.navigation.new", "M094.navigation.new", "M055.total.new", "M094.total.new",
+      "M020", "M020.android", "M020.ios", "M020.natural", "M020.internal", "M115.d1", "M021", "M115.d3", "M022", "M115.d7", "M023", "M115.d30",
+      "M016.android", "M016.ios", "M016.old", "M008.android", "M008.ios", "M026.android", "M026.ios", "M026.new", "M081.android", "M081.ios", "M055.new", "M094.new", "M058.new", "M088", "M067.new",
+      "display:M016", "display:M008", "M001", "M016", "M026", "M059", "M081", "M103", "M061", "M008", "M064", "M058", "M067", "M087", "M110", "M110.new", "M111", "M111.new", "M059.new",
+      "M055.ads", "M055.navigation", "M055.total", "M094.ads", "M094.navigation", "M094.total"
+    ];
+    const { result, requests } = await execute(metricRow, "5.2");
+    const catalogIds: string[] = dailyDashboardCatalog(true).data.items.find(item => item.id === "5.2")!.metricIds;
+    expect(catalogIds).toEqual(expected);
+    expect(result.data.series.map(series => series.metric.id)).toEqual(expected);
+    for (const request of requests.filter(request => Object.keys(request.filters).length > 0))
+      expect(request.codes.filter(code => ["M021", "M022", "M023"].includes(code))).toEqual([]);
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+});
+
 describe("bi-v1 广告次数分子与新用户交叉投影", () => {
   const date = "2026-09-05";
   type Scope = Record<string, string>;
