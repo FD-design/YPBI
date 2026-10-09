@@ -53,6 +53,27 @@ export function paymentOrderMetricModels(range: PaymentRange, way: string, compa
   });
 }
 
+/**
+ * 支付链路高级指标在正式看板中只读取真实查询结果。
+ * 未进入当前正式目录的指标保留“待接入”状态，禁止回退到开发演示值。
+ */
+export function paymentLinkMetricModel(original: DashboardMetricCardModel, live: LiveDashboardReading | null): DashboardMetricCardModel {
+  if (!live) return original;
+  if (!live.metricIds.includes(original.metric.id)) return {
+    metric: {
+      ...original.metric,
+      aggregationLabel: `${live.query.dateRange.join(" 至 ")} · ${live.platformName} · 业务日`
+    },
+    result: {
+      status: "not_ready",
+      label: "该指标尚未接入真实接口",
+      contextLabel: "真实后台查询",
+      retryable: false
+    }
+  };
+  return liveMetricModel(original, live);
+}
+
 export function paymentBusinessDisplay(id: string, value: number) {
   const metric = PAYMENT_BUSINESS_METRICS.find(item => item.id === id)!;
   return (metric.unit === "%" ? value * 100 : value).toLocaleString("zh-CN", {

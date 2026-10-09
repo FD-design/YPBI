@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { UpstreamError, type UpstreamClient } from "./client";
+import { canIsolateBiV1Request } from "./bi-v1.request-isolation";
 
 export const BI_V1_METRICS_API = "/api/admin/bi/v1/metrics";
 
@@ -403,25 +404,13 @@ export function aggregateBiV1MetricDays(
   return days;
 }
 
-function canIsolateRequest(error: unknown) {
-  if (!(error instanceof UpstreamError)) return false;
-  if (error.code === "BI_V1_RESPONSE_INVALID") return true;
-  const rejected = error.code === "BI_V1_REQUEST_REJECTED" && [400, 422].includes(error.statusCode)
-    || error.code === "UPSTREAM_INVALID_REQUEST" && error.statusCode === 422;
-  // UpstreamClient normalizes business rejections to 422. Only an explicit
-  // metric-selection error is isolatable; access and other parameter errors stop.
-  return rejected && !/权限|鉴权|认证|登录|token|unauthorized|forbidden|permission|credential|authentication/i.test(error.message)
-    && /指标|metric/i.test(error.message)
-    && /未知|不支持|无效|非法|不存在|未开放|仅支持|只支持|unknown|unsupported|invalid|unrecognized|not supported|not found|not allowed|not available/i.test(error.message);
-}
-
 export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
   const metricCodes = [...new Set(query.metricCodes)];
   try {
     const message = await queryBiV1Metrics(client, { ...query, metricCodes });
     return { message, days: aggregateBiV1MetricDays(message, query) };
   } catch (error) {
-    if (!metricCodes.length || !canIsolateRequest(error)) throw error;
+    if (!metricCodes.length || !canIsolateBiV1Request(error)) throw error;
   }
 
   const days: BiV1MetricDay[] = [];
@@ -436,7 +425,7 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
         aggregateBiV1MetricDays(message, singleQuery).forEach((day, index) => Object.assign(days[index].metrics, day.metrics));
         continue;
       } catch (error) {
-        if (!canIsolateRequest(error)) throw error;
+        if (!canIsolateBiV1Request(error)) throw error;
       }
     }
     for (const day of days) day.metrics[requestedMetricKey(metricCode, query)] = { ...unavailable(null), state: "source_failure" };

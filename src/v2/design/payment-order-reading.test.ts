@@ -2,11 +2,50 @@ import { expect, test } from "bun:test";
 import { metricRows } from "./topic-preview-export";
 import { paymentBusinessAggregate } from "./payment-observations";
 import { paymentOrderSheets } from "./PaymentOrderAnalysis";
-import { PAYMENT_BUSINESS_METRICS, paymentBusinessMetricModel, paymentBusinessMetricModels, paymentOrderMetricModels, paymentOrderObservation, paymentOrderWays } from "./payment-order-reading";
+import { PAYMENT_BUSINESS_METRICS, paymentBusinessMetricModel, paymentBusinessMetricModels, paymentLinkMetricModel, paymentOrderMetricModels, paymentOrderObservation, paymentOrderWays } from "./payment-order-reading";
 import { DailyDashboardService } from "../../../server/v2/daily-dashboard.service";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { extendedDailyMetricModel } from "./extended-board-model";
 
 const range = { start: "2026-09-02", end: "2026-09-08" };
+
+test("正式支付链路卡只读取真实状态，成功、观察中、来源不完整、失败和零业务均不回退演示值", async () => {
+  const rows = [
+    { metricCode: "M084", businessDate: range.end, dimensions: { pid: "PH" }, value: 2, numerator: 2, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "payment-chain-v1" },
+    { metricCode: "M086", businessDate: range.end, dimensions: { pid: "PH" }, value: 1, numerator: 1, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "payment-chain-v1" },
+    { metricCode: "M090", businessDate: range.end, dimensions: { pid: "PH" }, value: .5, numerator: 1, denominator: 2, unit: "ratio", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "payment-chain-v1" }
+  ];
+  const data = await new DailyDashboardService({ get: async path => path === "/api/admin/bi/v1/metrics"
+    ? { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: "2026-09-08T23:59:59+08:00", rows } }
+    : { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] }
+  }).execute({ boardId: "5.11", pid: "PH", dateRange: [range.end, range.end] });
+  const live = { query: data.data.query, metricIds: data.data.series.map(series => series.metric.id),
+    state: { status: "success", data, refreshing: false, refreshError: null }, platformName: "测试",
+    controls: { dirty: false } } as LiveDashboardReading;
+  const model = (id: string) => paymentLinkMetricModel(extendedDailyMetricModel(id, range, false), live);
+
+  expect(model("M084").result).toMatchObject({ status: "available", value: { raw: 2 } });
+  expect(model("M086").result).toMatchObject({ status: "available", value: { raw: 1 } });
+  expect(model("M090").result).toMatchObject({ status: "available", value: { raw: .5 } });
+  expect(model("M070").result).toMatchObject({ status: "not_ready", label: "该指标尚未接入真实接口" });
+
+  const paymentSubmit = data.data.series.find(series => series.metric.id === "M084")!.points[0];
+  paymentSubmit.state = "no_value"; paymentSubmit.value = null; paymentSubmit.sourceStatus = "PROCESSING";
+  expect(model("M084").result).toMatchObject({ status: "no_values", label: "计算中" });
+  paymentSubmit.sourceStatus = "SOURCE_INCOMPLETE";
+  expect(model("M084").result).toMatchObject({ status: "no_values", label: "数据接入中" });
+  paymentSubmit.state = "source_failure"; paymentSubmit.sourceStatus = "FAILED";
+  expect(model("M084").result).toMatchObject({ status: "failed", label: "数据异常" });
+
+  const credited = data.data.series.find(series => series.metric.id === "M086")!.points[0];
+  credited.state = "immature"; credited.value = null; credited.sourceStatus = "NOT_MATURE";
+  expect(model("M086").result).toMatchObject({ status: "no_values", label: "待成熟" });
+
+  const conversion = data.data.series.find(series => series.metric.id === "M090")!.points[0];
+  conversion.state = "zero_denominator"; conversion.value = null; conversion.sourceStatus = "READY";
+  conversion.inputs = conversion.inputs.map(input => ({ ...input, value: 0 }));
+  expect(model("M090").result).toMatchObject({ status: "no_values", label: "分母为0" });
+});
 
 for (const dimensionField of ["paymentMethod", "payment_method"] as const) {
   for (const boardId of ["5.2", "5.11"]) {

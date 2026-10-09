@@ -52,7 +52,7 @@
     "test:coverage": "bun test src server --coverage",
     "test:e2e": "playwright test qa-small-drawer.spec.js",
     "test:e2e:ui": "playwright test qa-ui-shell.spec.js",
-    "test:e2e:v2": "playwright test qa-v2-shell.spec.js qa-v2-data-sources.spec.js qa-v2-auth.spec.js qa-v2-dashboard-directory.spec.js qa-v2-navigation-business.spec.js qa-v2-acquisition.spec.js qa-v2-periods.spec.js qa-v2-motion.spec.js qa-v2-reading.spec.js qa-v2-date-control.spec.js qa-v2-topics.spec.js qa-v2-topic-scope.spec.js qa-v2-version-performance.spec.js qa-v2-extended-boards.spec.js qa-v2-dashboard-consistency.spec.js qa-v2-function-usage.spec.js qa-v2-catalog-centers.spec.js qa-v2-global-query.spec.js"
+    "test:e2e:v2": "playwright test qa-v2-shell.spec.js qa-v2-data-sources.spec.js qa-v2-auth.spec.js qa-v2-dashboard-directory.spec.js qa-v2-navigation-business.spec.js qa-v2-acquisition.spec.js qa-v2-periods.spec.js qa-v2-motion.spec.js qa-v2-reading.spec.js qa-v2-date-control.spec.js qa-v2-topics.spec.js qa-v2-topic-scope.spec.js qa-v2-version-performance.spec.js qa-v2-extended-boards.spec.js qa-v2-dashboard-consistency.spec.js qa-v2-function-usage.spec.js qa-v2-catalog-centers.spec.js qa-v2-global-query.spec.js qa-v2-payment-live.spec.js"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

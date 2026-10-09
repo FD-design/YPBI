@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { dailyAcquisitionGroupsSchema, type DailyReadingMetric } from "../../contracts/daily-dashboard";
 import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, type AcquisitionGroupMetric } from "./bi-v1.acquisition-adapter";
+import { UpstreamError } from "./client";
 
 const query = { pid: "PH", dateRange: ["2026-09-21", "2026-09-22"] as [string, string] };
 const metricFor = (id: AcquisitionGroupMetric): DailyReadingMetric => ({ id, name: id, unit: ["M001", "M003"].includes(id) ? "次" : "%",
@@ -133,5 +134,167 @@ describe("获客动态分组独立读取", () => {
     const result = await onlyDay([row()]);
     expect(Object.keys(result.channel)).toEqual(["dimension", "completeness", "day", "summary", "groups"]);
     expect(result.channel.groups[0].series.map(item => item.metric.id)).toEqual([...ACQUISITION_GROUP_METRICS.channel]);
+  });
+});
+
+describe("获客批量指标选择拒绝的有界隔离", () => {
+  const target = (params: Params) => params.dimensions === "channel" && params.granularity === "day";
+  const rejected = () => new UpstreamError("UPSTREAM_INVALID_REQUEST", "不支持的指标编码 M007", 422);
+  const metricRow = (id: string, changes: Record<string, unknown> = {}) => row({ metricCode: id,
+    ...(!["M001", "M003"].includes(id) ? { unit: "ratio", value: 0.5, numerator: 1, denominator: 2 } : {}), ...changes });
+  const validSingle = (params: Params) => envelope([metricRow(params.metricCodes)]);
+
+  for (const rejection of ["400", "422", "client"] as const) test(`${rejection}单指标拒绝保留健康原键、缺记录、真零和非READY`, async () => {
+    const calls: Params[] = []; let active = 0, maxActive = 0;
+    const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+      if (!target(params)) return envelope([]);
+      calls.push(params); maxActive = Math.max(maxActive, ++active); await Promise.resolve(); active--;
+      if (params.metricCodes.includes("M007")) {
+        if (rejection === "client") throw rejected();
+        return { code: Number(rejection), err: "Unsupported metricCodes: M007" };
+      }
+      if (params.metricCodes === "M005") return envelope([]);
+      if (params.metricCodes === "M006") return envelope([metricRow("M006", { dimensions: { pid: "PH" }, businessDate: undefined, dataStatus: "SOURCE_INCOMPLETE" })]);
+      return envelope(["A-B", "a_b", "unknown"].map(key => metricRow(params.metricCodes, { dimensions: { pid: "PH", channel: key }, ...(params.metricCodes === "M001" ? { value: 0, numerator: 0 } : {}) })));
+    } }, query, metricFor);
+    expect(calls.map(params => params.metricCodes)).toEqual([ACQUISITION_GROUP_METRICS.channel.join(","), ...ACQUISITION_GROUP_METRICS.channel]);
+    expect(maxActive).toBe(1);
+    for (const call of calls) expect(call).toMatchObject({ pid: "PH", startDate: "2026-09-21", endDate: "2026-09-23", dimensions: "channel", granularity: "day", includeIncomplete: "true" });
+    expect(result.channel.groups.map(group => group.key)).toEqual(["A-B", "a_b", "unknown"]);
+    expect(result.channel.day).toMatchObject({ state: "returned", generatedAt: null, watermark: null, scopeStatuses: [{ metricId: "M006", sourceStatus: "SOURCE_INCOMPLETE" }] });
+    expect(series(result, "M001").points[0]).toMatchObject({ state: "available", value: 0, ruleVersion: "actual-rule" });
+    expect(series(result, "M003").points.map(point => point.state)).toEqual(["available", "no_record"]);
+    expect(series(result, "M005").points.every(point => point.state === "no_record")).toBe(true);
+    expect(series(result, "M006").points.every(point => point.sourceStatus === "SOURCE_INCOMPLETE")).toBe(true);
+    for (const point of series(result, "M007").points) {
+      expect(point).toMatchObject({ state: "source_failure", value: null, ruleVersion: null });
+      expect(point.sourceStatus).toBeUndefined(); expect(point.inputs.every(input => input.value === null)).toBe(true);
+    }
+    expect(result.channel.summary).toMatchObject({ state: "empty", generatedAt: "2026-09-23T01:00:00+08:00" });
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+  });
+
+  test("summary恢复使用独立直返值；其他三路不受影响，跨日M099不请求", async () => {
+    const calls: Params[] = [];
+    const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+      calls.push(params);
+      if (params.dimensions === "channel" && params.granularity === "summary" && params.metricCodes.includes("M007")) throw rejected();
+      const codes = params.metricCodes.split(",");
+      return envelope(codes.map(id => metricRow(id, { dimensions: { pid: "PH", [params.dimensions]: "A-B" },
+        ...(params.granularity === "summary" ? { businessDate: undefined, ...(["M001", "M003"].includes(id) ? { value: 80, numerator: 80 } : {}) } : {}) })));
+    } }, query, metricFor);
+    const summaryCalls = calls.filter(params => params.dimensions === "channel" && params.granularity === "summary");
+    expect(summaryCalls).toHaveLength(6); expect(summaryCalls.every(params => !params.metricCodes.includes("M099"))).toBe(true);
+    expect(calls).toHaveLength(9);
+    expect(series(result, "M003").summary).toMatchObject({ state: "available", value: 80, ruleVersion: "actual-rule" });
+    expect(series(result, "M003").points[0].value).toBe(3);
+    expect(series(result, "M007").summary).toMatchObject({ state: "source_failure", value: null });
+    expect(series(result, "M099").summary.state).toBe("unsupported");
+    expect(result.downloadPlatform.groups[0].series[0].summary.value).toBe(80);
+    expect(result.channel.day.generatedAt).toBe("2026-09-23T01:00:00+08:00");
+    expect(result.channel.summary.generatedAt).toBeNull();
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+  });
+
+  for (const remaining of ["empty", "scope", "failed"] as const) test(`没有真实分组时${remaining}与失败组合保持整路失败`, async () => {
+    let calls = 0;
+    const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+      if (!target(params)) return envelope([]);
+      calls++;
+      if (params.metricCodes.includes("M007") || remaining === "failed") throw rejected();
+      return envelope(remaining === "scope" ? [metricRow(params.metricCodes, { dimensions: { pid: "PH" }, businessDate: undefined, dataStatus: "PROCESSING" })] : []);
+    } }, query, metricFor);
+    expect(calls).toBe(7);
+    expect(result.channel).toMatchObject({ groups: [], day: { state: "source_failure", scopeStatuses: [], generatedAt: null, watermark: null } });
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+  });
+
+  test("恢复全部为空仍为空；下载目标单指标拒绝不重复请求", async () => {
+    const calls: Params[] = [];
+    const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+      calls.push(params);
+      if (params.metricCodes.includes(",") || params.dimensions === "downloadPlatform") throw rejected();
+      return envelope([]);
+    } }, query, metricFor);
+    expect(calls).toHaveLength(15);
+    expect(calls.filter(params => params.dimensions === "downloadPlatform")).toHaveLength(2);
+    expect(result.channel).toMatchObject({ groups: [], day: { state: "empty", generatedAt: null }, summary: { state: "empty", generatedAt: null } });
+    expect(result.downloadPlatform).toMatchObject({ groups: [], day: { state: "source_failure" }, summary: { state: "source_failure" } });
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+  });
+
+  for (const error of [
+    new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", 401),
+    new UpstreamError("UPSTREAM_IP_RESTRICTED", "IP限制", 403),
+    new UpstreamError("UPSTREAM_RATE_LIMITED", "请求过于频繁", 429),
+    new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504),
+    new UpstreamError("UPSTREAM_NETWORK_ERROR", "无法连接后台接口", 502),
+    new UpstreamError("UPSTREAM_FAILED", "后台接口返回500", 502),
+    new UpstreamError("UPSTREAM_INVALID_REQUEST", "指标查询没有权限，token无效", 422),
+    new UpstreamError("UPSTREAM_INVALID_REQUEST", "endDate必须晚于startDate", 422),
+    new UpstreamError("BI_V1_RESPONSE_INVALID", "无法识别结构", 502)
+  ]) for (const recovery of [false, true]) test(`${error.code}/${error.message}在${recovery ? "恢复中" : "首批"}停止整路`, async () => {
+    const calls: string[] = [];
+    const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+      if (!target(params)) return envelope([]);
+      calls.push(params.metricCodes);
+      if (recovery && params.metricCodes.includes(",")) throw rejected();
+      if (recovery && params.metricCodes === "M001") return validSingle(params);
+      throw error;
+    } }, query, metricFor);
+    expect(calls).toHaveLength(recovery ? 3 : 1);
+    expect(result.channel).toMatchObject({ groups: [], day: { state: "source_failure" } });
+  });
+
+  for (const changes of [
+    { dimensions: { pid: "OTHER", channel: "A-B" } }, { businessDate: "2026-09-23" },
+    { metricCode: "M008" }, { dimensions: { pid: "PH", downloadPlatform: "A-B" } },
+    { dimensions: { pid: "PH", channel: "A-B", clientPlatform: "web" } },
+    { dimensions: { pid: "PH", channel: null } }, { businessDate: undefined }, { ruleVersion: undefined }
+  ]) for (const recovery of [false, true]) test(`结构与范围异常不拆分或保留部分结果 ${JSON.stringify(changes)}/${recovery}`, async () => {
+    let calls = 0;
+    const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+      if (!target(params)) return envelope([]);
+      calls++;
+      if (recovery && params.metricCodes.includes(",")) throw rejected();
+      if (recovery && params.metricCodes === "M001") return validSingle(params);
+      return envelope([metricRow("M003", { ...changes, numerator: null })]);
+    } }, query, metricFor);
+    expect(calls).toBe(recovery ? 3 : 1);
+    expect(result.channel).toMatchObject({ groups: [], day: { state: "invalid_response" } });
+  });
+
+  test("恢复后的非法数值仍只影响该项，跨指标组数上限仍拒绝", async () => {
+    for (const excessive of [false, true]) {
+      const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+        if (!target(params)) return envelope([]);
+        if (params.metricCodes.includes(",")) throw rejected();
+        if (excessive) return envelope(Array.from({ length: 501 }, (_, i) => metricRow(params.metricCodes, { dimensions: { pid: "PH", channel: `${params.metricCodes}-${i}` } })));
+        return envelope([metricRow(params.metricCodes, params.metricCodes === "M003" ? { value: 99 } : {})]);
+      } }, query, metricFor);
+      if (excessive) expect(result.channel).toMatchObject({ groups: [], day: { state: "invalid_response" } });
+      else {
+        expect(series(result, "M003").points[0]).toMatchObject({ state: "invalid_value", sourceStatus: "READY" });
+        expect(series(result, "M001").points[0].state).toBe("available");
+      }
+      expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+    }
+  });
+
+  for (const conflict of ["duplicate", "scope"] as const) test(`恢复途中${conflict}冲突丢弃本路已恢复数据`, async () => {
+    const calls: string[] = [];
+    const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
+      if (!target(params)) return envelope([]);
+      calls.push(params.metricCodes);
+      if (params.metricCodes.includes(",")) throw rejected();
+      if (params.metricCodes === "M001") return validSingle(params);
+      return envelope(conflict === "duplicate" ? [row(), row()] : [
+        row({ dimensions: { pid: "PH" }, businessDate: undefined, dataStatus: "PROCESSING" }),
+        row({ dimensions: { pid: "PH" }, dataStatus: "SOURCE_INCOMPLETE" })
+      ]);
+    } }, query, metricFor);
+    expect(calls).toEqual([ACQUISITION_GROUP_METRICS.channel.join(","), "M001", "M003"]);
+    expect(result.channel).toMatchObject({ groups: [], day: { state: "invalid_response", generatedAt: null, watermark: null } });
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
   });
 });

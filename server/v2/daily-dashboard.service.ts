@@ -92,8 +92,8 @@ const baseMappings = {
   "M095": {"referenceMetricId":"M095","name":"落地页下载IP数（去重）","fields":["landingDownloadIpCount"],"inputIds":["M095"],"inputNames":["落地页下载IP数（去重）"],"inputUnits":["IP"],"unit":"IP","biV1Metric":"M095","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；按接口登记的业务日和下载目标去重规则读取，不由下载点击次数估算。"},
   "M005": {"referenceMetricId":"M005","name":"落地页访问-下载点击转化率","fields":["totalDownCountNoDedup","visiCountNoDedup"],"inputIds":["M005","M005"],"inputNames":["下载点击次数","落地页访问次数"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M005"},
   "M099": {"referenceMetricId":"M099","name":"落地页访问-下载点击转化率（去重）","fields":["landingDownloadIpCount","landingVisitIpCount"],"inputIds":["M095","M002"],"inputNames":["落地页下载IP数（去重）","落地页访问IP数（去重）"],"inputUnits":["IP","IP"],"unit":"%","biV1Metric":"M099","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；仅采用同一业务日、同一查询范围的分子、分母和比率。多日统一 IP 去重未提供前，不把每日去重 IP 相加或平均每日比率。"},
-  "M006": {"referenceMetricId":"M006","name":"落地页下载点击-注册转化率","fields":["registerUserCount","totalDownCountByIp"],"inputIds":["M006","M006"],"inputNames":["注册用户数","下载 IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M006","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；缺少落地页到注册的稳定归因键时原样展示 SOURCE_INCOMPLETE，不回退旧字段、不补0。"},
-  "M007": {"referenceMetricId":"M007","name":"落地页访问-注册转化率","fields":["registerUserCount","ipStatTotalCount"],"inputIds":["M007","M007"],"inputNames":["注册用户数","访问 IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M007","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；缺少落地页到注册的稳定归因键时原样展示 SOURCE_INCOMPLETE，不回退旧字段、不补0。"},
+  "M006": {"referenceMetricId":"M006","name":"落地页下载点击-注册转化率","fields":["registerUserCount","totalDownCountByIp"],"inputIds":["M006","M006"],"inputNames":["注册用户数（区间去重）","下载 IP·天合计"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M006","legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：注册用户数（区间去重）÷下载 IP·天合计。优先读取 bi-v1 READY 同批输入；新版结果未完成时可使用同 PID、同业务日的既有渠道统计输入直接计算，不解释为同一用户漏斗、不补0。"},
+  "M007": {"referenceMetricId":"M007","name":"落地页访问-注册转化率","fields":["registerUserCount","ipStatTotalCount"],"inputIds":["M007","M007"],"inputNames":["注册用户数（区间去重）","访问 IP·天合计"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M007","legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：注册用户数（区间去重）÷落地页访问 IP·天合计。优先读取 bi-v1 READY 同批输入；新版结果未完成时可使用同 PID、同业务日的既有渠道统计输入直接计算，不解释为同一用户漏斗、不补0。"},
   "M016.web": { "referenceMetricId": "M016", "name": "日活跃用户数（Web）", "fields": ["webLoginUserCount"], "inputIds": ["M016"], "inputNames": ["Web 日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["web"] },
   "M008.web": { "referenceMetricId": "M008", "name": "新增用户数（Web）", "fields": ["webNewUserCount"], "inputIds": ["M008"], "inputNames": ["Web 新增用户数"], "unit": "人", "biV1Metric": "M008", "biV1Dimensions": ["web"] },
   "M026.web": { "referenceMetricId": "M026", "name": "观影用户数（Web）", "fields": ["webWatchUserCount"], "inputIds": ["M026"], "inputNames": ["Web 观影用户数"], "unit": "人", "biV1Metric": "M026", "biV1Dimensions": ["web"] },
@@ -168,7 +168,7 @@ const baseMappings = {
   "M094.total": { referenceMetricId: "M094", name: "总点击人数", fields: ["totalClickedPerson"], inputIds: ["M094"], unit: "人" }
 } as const;
 type CandidateId = keyof typeof baseMappings;
-type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Unit?: BiV1MetricUnit; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; derivedFrom?: readonly [CandidateId, CandidateId]; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
+type CandidateMapping = { fields: readonly string[]; inputIds: readonly string[]; unit: string; referenceMetricId?: string; name?: string; inputNames?: readonly string[]; inputUnits?: readonly string[]; cohortDays?: number; channel?: boolean; payment?: boolean; checkin?: boolean; realtime?: boolean; biV1Playback?: boolean; biV1Metric?: BiV1MetricCode; biV1Unit?: BiV1MetricUnit; biV1Dimensions?: readonly string[]; biV1Only?: boolean; biV1Value?: "numerator"; legacyFallback?: "available_or_zero_denominator"; derivedFrom?: readonly [CandidateId, CandidateId]; allowAboveOne?: boolean; resultDivisor?: number; formula?: string; definition?: string; sourceNote?: string };
 const mappings: Record<CandidateId, CandidateMapping> = baseMappings;
 function dimensionFilters(tokens: readonly string[] = []): BiV1MetricDimensionFilters {
   const filters: BiV1MetricDimensionFilters = {};
@@ -578,7 +578,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         if (biV1Point) {
           if (!mapping.biV1Only && (!biV1Point.dataStatus || biV1Point.dataStatus === "SOURCE_INCOMPLETE")) {
             const legacyPoint = projectLegacyPoint(id, date);
-            if (legacyPoint.state === "available" || biV1Point.state === "no_record") return legacyPoint;
+            if (legacyPoint.state === "available"
+              || mapping.legacyFallback === "available_or_zero_denominator" && legacyPoint.state === "zero_denominator"
+              || biV1Point.state === "no_record") return legacyPoint;
           }
           const usesReturnedNumerator = "biV1Value" in mapping && mapping.biV1Value === "numerator";
           const expectedSourceUnit = mapping.biV1Unit ?? (usesReturnedNumerator || mapping.fields.length === 2 ? "ratio" : "count");

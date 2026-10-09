@@ -373,6 +373,159 @@ describe("bi-v1 通用指标渐进替换", () => {
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
   });
 
+  test("M006和M007在新版来源不完整时按已确认IP天趋势口径读取既有同日输入", async () => {
+    const metricRow = (metricCode: string) => ({
+      metricCode, businessDate: date, dimensions: { pid: "PH" }, value: 999, numerator: 999, denominator: 1,
+      unit: "ratio", dataStatus: "SOURCE_INCOMPLETE", metricVersion: "bi-v1", ruleVersion: ""
+    });
+    const result = await new DailyDashboardService({ get: async path => {
+      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
+        metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null,
+        rows: [metricRow("M006"), metricRow("M007")]
+      } };
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date })], totalCount: 1 } };
+      if (path.includes("channelStatByTypeV2")) return { msg: { pageData: [], totalData: [{
+        registerUserCount: 3, totalDownCountByIp: 4, ipStatTotalCount: 8
+      }] } };
+      if (path.includes("reletionsStatPlus")) return { data: [] };
+      if (path.includes("/bi/v1/playback")) return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null, rows: [] } };
+      if (path.endsWith("pRealDayLine")) return { msg: [] };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: "5.2", pid: "PH", dateRange: [date, date] });
+    const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    expect(point("M006")).toEqual({ date, value: .75, state: "available", inputs: [
+      { key: "registerUserCount", value: 3 }, { key: "totalDownCountByIp", value: 4 }
+    ] });
+    expect(point("M007")).toEqual({ date, value: .375, state: "available", inputs: [
+      { key: "registerUserCount", value: 3 }, { key: "ipStatTotalCount", value: 8 }
+    ] });
+    expect(result.data.series.find(series => series.metric.id === "M006")!.metric.sourceNote).toContain("非归因趋势口径");
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  describe("M006与M007旧源回退边界", () => {
+    const ids = ["M006", "M007"] as const;
+    const denominatorKeys = ["totalDownCountByIp", "ipStatTotalCount"] as const;
+    type SourceMode = "READY" | "SOURCE_INCOMPLETE" | "PROCESSING" | "NOT_MATURE" | "FAILED" | "request_failure" | "no_record";
+    const execute = (mode: SourceMode, legacyDays: Record<string, Record<string, unknown>>, options: {
+      boardId?: string; dateRange?: [string, string]; sourceInputs?: [number, number]
+    } = {}) => {
+      const dateRange: [string, string] = options.dateRange ?? [date, date];
+      const [numerator, denominator] = options.sourceInputs ?? [1, 2];
+      return new DailyDashboardService({ get: async (path, params) => {
+        if (path === "/api/admin/bi/v1/metrics") {
+          if (mode === "request_failure") throw new UpstreamError("UPSTREAM_TIMEOUT", "timeout", 504);
+          return { ...emptyMetrics, msg: { ...emptyMetrics.msg, rows: mode === "no_record" ? [] : Object.keys(legacyDays).flatMap(businessDate =>
+            ["M005", ...ids].map(metricCode => ({
+              metricCode, businessDate, dimensions: { pid: "PH" },
+              value: mode === "READY" ? denominator ? numerator / denominator : null : 999,
+              numerator: mode === "READY" ? numerator : 999, denominator: mode === "READY" ? denominator : 1,
+              unit: "ratio", dataStatus: mode, metricVersion: "bi-v1", ruleVersion: "ip-day-trend-v1"
+            }))) } };
+        }
+        if (path.includes("channelStatByTypeV2")) {
+          const requestedDate = params.sumDateBegin.slice(0, 10);
+          expect(params).toMatchObject({ pid: "PH", sumDateBegin: requestedDate + " 00:00:00", sumDateEnd: requestedDate + " 23:59:59" });
+          const fields = legacyDays[requestedDate];
+          return { msg: { pageData: [], totalData: fields ? [{ pid: "PH", sumDate: requestedDate, ...fields }] : [] } };
+        }
+        if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, registerUserCount: 999 })], totalCount: 1 } };
+        if (path.includes("/bi/v1/playback")) return emptyMetrics;
+        if (path.includes("reletionsStatPlus")) return { data: [] };
+        if (path.endsWith("pRealDayLine")) return { msg: [] };
+        return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+      } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: options.boardId ?? "5.7", pid: "PH", dateRange });
+    };
+    const points = (result: Awaited<ReturnType<typeof execute>>) => ids.map(id => result.data.series.find(series => series.metric.id === id)!.points[0]);
+
+    for (const mode of ["SOURCE_INCOMPLETE", "request_failure", "no_record"] as const) {
+      test(`${mode} 保留合法旧源零分母、真实零与IP天输入`, async () => {
+        for (const boardId of ["5.2", "5.7"]) {
+          for (const [registered, download, visit] of [[3, 0, 0], [0, 0, 0], [0, 4, 8], [3, 4, 8]]) {
+            const result = await execute(mode, { [date]: {
+              registerUserCount: registered, totalDownCountByIp: download, ipStatTotalCount: visit,
+              totalDownCountNoDedup: 100, visiCountNoDedup: 200
+            } }, { boardId });
+            points(result).forEach((point, index) => {
+              const denominator = [download, visit][index];
+              expect(point).toEqual({ date, value: denominator === 0 ? null : registered / denominator,
+                state: denominator === 0 ? "zero_denominator" : "available",
+                inputs: [{ key: "registerUserCount", value: registered }, { key: denominatorKeys[index], value: denominator }] });
+            });
+            expect(dailyDashboardMatchesMapping(result)).toBe(true);
+          }
+        }
+      });
+
+      test(`${mode} 不用缺失或非法的旧源输入生成比率`, async () => {
+        for (const [fields, legacyState] of [
+          [{ registerUserCount: 3, totalDownCountNoDedup: 4, visiCountNoDedup: 8 }, "no_value"],
+          [{ totalDownCountByIp: 0, ipStatTotalCount: 0 }, "no_value"],
+          [{ registerUserCount: -1, totalDownCountByIp: 0, ipStatTotalCount: 0 }, "invalid_value"],
+          [{ registerUserCount: 3, totalDownCountByIp: "dirty", ipStatTotalCount: -1 }, "invalid_value"]
+        ] as const) {
+          const result = await execute(mode, { [date]: fields });
+          for (const point of points(result)) {
+            expect(point.value).toBeNull();
+            expect(point.state).toBe(mode === "no_record" ? legacyState : mode === "request_failure" ? "source_failure" : "no_value");
+            expect(point.sourceStatus).toBe(mode === "SOURCE_INCOMPLETE" ? mode : undefined);
+            if (mode !== "no_record") expect(point.inputs.every(input => input.value === null)).toBe(true);
+          }
+        }
+      });
+    }
+
+    test("READY正值、真实零和零分母都优先采用新版同批输入", async () => {
+      for (const sourceInputs of [[1, 2], [0, 2], [0, 0]] as [number, number][]) {
+        const result = await execute("READY", { [date]: { registerUserCount: 9, totalDownCountByIp: 3, ipStatTotalCount: 3 } }, { sourceInputs });
+        const [numerator, denominator] = sourceInputs;
+        points(result).forEach((point, index) => expect(point).toEqual({ date, sourceStatus: "READY",
+          state: denominator ? "available" : "zero_denominator", value: denominator ? numerator / denominator : null,
+          inputs: [{ key: "registerUserCount", value: numerator }, { key: denominatorKeys[index], value: denominator }] }));
+      }
+    });
+
+    for (const [mode, state] of [["PROCESSING", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
+      test(`${mode} 保留新版明确状态`, async () => {
+        for (const denominator of [0, 4]) {
+          const result = await execute(mode, { [date]: { registerUserCount: 3, totalDownCountByIp: denominator, ipStatTotalCount: denominator } });
+          for (const point of points(result)) expect(point).toMatchObject({ sourceStatus: mode, state, value: null, inputs: [{ value: null }, { value: null }] });
+        }
+      });
+    }
+
+    test("旧源PID或业务日不匹配时拒绝零分母回退", async () => {
+      for (const scope of [{ pid: "other" }, { sumDate: "2026-09-04" }]) {
+        const result = await execute("no_record", { [date]: { ...scope, registerUserCount: 3, totalDownCountByIp: 0, ipStatTotalCount: 0 } });
+        for (const point of points(result)) expect(point).toMatchObject({ state: "source_failure", value: null, inputs: [{ value: null }, { value: null }] });
+      }
+    });
+
+    test("其他指标沿用既有零分母回退策略", async () => {
+      const result = await execute("SOURCE_INCOMPLETE", { [date]: {
+        registerUserCount: 0, totalDownCountByIp: 0, ipStatTotalCount: 0, totalDownCountNoDedup: 0, visiCountNoDedup: 0
+      } });
+      expect(result.data.series.find(series => series.metric.id === "M005")!.points[0])
+        .toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: [{ value: null }, { value: null }] });
+    });
+
+    test("多日仅返回各业务日输入与比率，周期统计保持未支持", async () => {
+      const result = await execute("SOURCE_INCOMPLETE", {
+        [date]: { registerUserCount: 3, totalDownCountByIp: 4, ipStatTotalCount: 8 },
+        "2026-09-06": { registerUserCount: 9, totalDownCountByIp: 36, ipStatTotalCount: 72 }
+      }, { dateRange: [date, "2026-09-06"] });
+      ids.forEach((id, index) => {
+        const series = result.data.series.find(series => series.metric.id === id)!;
+        expect(series.points.map(point => point.value)).toEqual(index === 0 ? [.75, .25] : [.375, .125]);
+        expect(series.points.map(point => point.inputs)).toEqual([
+          [{ key: "registerUserCount", value: 3 }, { key: denominatorKeys[index], value: index === 0 ? 4 : 8 }],
+          [{ key: "registerUserCount", value: 9 }, { key: denominatorKeys[index], value: index === 0 ? 36 : 72 }]
+        ]);
+        expect(series.periodStatistics).toMatchObject({ state: "unsupported", values: [] });
+      });
+    });
+  });
+
   test("经营明细总体与交叉维度一次接入，不把已返回维度误判为待支持", async () => {
     const metricRow = (metricCode: string, value: number, dimensions: Record<string, string> = {}, numerator = value, denominator = 0, unit: "count" | "ratio" | "count_per_user" = "count") => ({
       metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, value, numerator, denominator, unit,
@@ -447,6 +600,28 @@ describe("bi-v1 通用指标渐进替换", () => {
     expect(paymentBoard.pendingMetricNames).not.toContain("拉单人数");
     expect(dailyDashboardProjectionDocumentation().find(item => item.id === "M084")?.sourceApi).toBe("/api/admin/bi/v1/metrics");
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("支付链路 READY 结果保留真实零、成功值和零分母，不从旧字段推算", async () => {
+    const execute = async (rows: Record<string, unknown>[]) => new DailyDashboardService({ get: async path => {
+      if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: "2026-09-05T23:59:59+08:00", rows } };
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [row({ sumDate: date, paymentSubmitCount: 999, creditedOrderCount: 999 })], totalCount: 1 } };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-09-08T00:00:00Z")).execute({ boardId: "5.11", pid: "PH", dateRange: [date, date] });
+    const metric = (metricCode: string, value: number | null, numerator: number, denominator: number, unit: "count" | "ratio") => ({
+      metricCode, businessDate: date, dimensions: { pid: "PH" }, value, numerator, denominator, unit,
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "payment-chain-v1"
+    });
+    const success = await execute([metric("M084", 4, 4, 0, "count"), metric("M086", 3, 3, 0, "count"), metric("M090", .75, 3, 4, "ratio")]);
+    const point = (result: typeof success, id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
+    expect(point(success, "M084")).toMatchObject({ state: "available", sourceStatus: "READY", value: 4, inputs: [{ value: 4 }] });
+    expect(point(success, "M086")).toMatchObject({ state: "available", sourceStatus: "READY", value: 3, inputs: [{ value: 3 }] });
+    expect(point(success, "M090")).toMatchObject({ state: "available", sourceStatus: "READY", value: .75, inputs: [{ value: 3 }, { value: 4 }] });
+
+    const noBusiness = await execute([metric("M084", 0, 0, 0, "count"), metric("M086", 0, 0, 0, "count"), metric("M090", null, 0, 0, "ratio")]);
+    expect(point(noBusiness, "M084")).toMatchObject({ state: "available", sourceStatus: "READY", value: 0, inputs: [{ value: 0 }] });
+    expect(point(noBusiness, "M086")).toMatchObject({ state: "available", sourceStatus: "READY", value: 0, inputs: [{ value: 0 }] });
+    expect(point(noBusiness, "M090")).toMatchObject({ state: "zero_denominator", sourceStatus: "READY", value: null, inputs: [{ value: 0 }, { value: 0 }] });
   });
 
   test("支付首批新指标接口失败时显示来源失败，不读取旧接口同名脏字段", async () => {

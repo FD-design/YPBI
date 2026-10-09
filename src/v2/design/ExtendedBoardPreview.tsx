@@ -34,6 +34,7 @@ import "./extended-board-preview.css";
 import { IncomeComposition, NewOldPayment, paymentStructureSheets } from "./PaymentBreakdowns";
 import { paymentMetric, paymentMetricIds, paymentGroups, type PaymentDimension } from "./payment-observations";
 import { PaymentOrderAnalysis, paymentOrderSheets } from "./PaymentOrderAnalysis";
+import { paymentLinkMetricModel } from "./payment-order-reading";
 import VersionPerformancePreview from "./VersionPerformancePreview";
 import { DEFAULT_VERSION_PERFORMANCE_VIEW, type VersionPerformanceView } from "./version-performance-model";
 import { ContentDiscoveryBoard } from "./ContentDiscoveryBoard";
@@ -202,6 +203,7 @@ function Latency({ view, pending }: { view: ExtendedView; pending: boolean }) { 
 
 export default function ExtendedBoardPreview({ board }: { board: string }) {
   const spec = EXTENDED_BOARDS[board], entry = plan.items.find(item => item.section === board)!;
+  const live = useLiveDashboard();
   const shared = readPreviewQuery();
   const initial: ExtendedView = parseExtendedView(new URLSearchParams(location.search).get("view"), board) ?? { range: shared.range, compared: shared.compared, mixed: false };
   const [view, setView] = useState(initial), [draft, setDraft] = useState(initial), [recovered, setRecovered] = useState<string[]>([]), [favorite, setFavorite] = useState(() => previewFavorites().includes(board));
@@ -210,7 +212,10 @@ export default function ExtendedBoardPreview({ board }: { board: string }) {
   const [game, setGame] = useState("0");
   const [reading, setReading] = useState<{ title: string; content: ReactNode } | null>(null), root = useRef<HTMLDivElement>(null), { notice, notify } = useToast();
   const open: OpenPreviewReading = (title, content) => setReading({ title, content }), pending = JSON.stringify(view) !== JSON.stringify(draft);
-  const models = useMemo(() => new Map(spec.sections.flatMap(section => section.ids).map(id => [id, extendedDailyMetricModel(id, view.range, view.compared, view.mixed && !recovered.includes(id),0,board==="5.10"?{}:undefined)])), [spec, view, recovered,board]);
+  const models = useMemo(() => new Map(spec.sections.flatMap(section => section.ids).map(id => {
+    const original = extendedDailyMetricModel(id, view.range, view.compared, view.mixed && !recovered.includes(id), 0, board === "5.10" ? {} : undefined);
+    return [id, board === "5.11" ? paymentLinkMetricModel(original, live) : original];
+  })), [spec, view, recovered, board, live]);
   const update = (next: ExtendedView) => { setView(next); setRecovered([]); setReading(null); window.history.replaceState(window.history.state, "", hrefFor(board, next)); };
   const experience = view.experience ?? DEFAULT_VERSION_PERFORMANCE_VIEW;
   const updateExperience = (next: VersionPerformanceView) => {
@@ -230,7 +235,23 @@ export default function ExtendedBoardPreview({ board }: { board: string }) {
     : [sectionSheet(0, "01_启动核心"), dimensionSheet(0, "02_启动拆解")];
   const dimensionPanel = (dimension: ExtendedBoard["dimensions"][number]) => <BoardDimension key={dimension.title} spec={dimension} view={view} pending={pending} open={open} onSelectionChange={value => setSelections(previous => ({ ...previous, [dimension.title]: value }))} />;
   const icon = (label: string, action: () => void, child: ReactNode, pressed?: boolean) => <FloatingHint content={label}><button className="ui-icon-button" type="button" aria-label={label} aria-pressed={pressed} onClick={action}>{child}</button></FloatingHint>;
-  const renderCard = (id: string, compact = false) => { const model = models.get(id)!; return <PreviewMetricCard key={id} compact={compact} model={model} open={open} retry={() => setRecovered(ids => [...ids, id])} exportAction={<BoardExport title={`${model.metric.name}同口径数据表`} view={view} sheets={[{ name: "01_同口径数据表", rows: metricRows([model]) }]} pending={pending || model.result.status !== "available"} />} />; };
+  const renderCard = (id: string, compact = false) => {
+    const model = models.get(id)!;
+    const livePayment = board === "5.11" && Boolean(live);
+    const result = livePayment && live?.state.status === "success" ? live.state.data : null;
+    const series = result?.data.series.find(item => item.metric.id === id);
+    const previous = livePayment && live?.comparison?.state.status === "success" ? live.comparison.state.data : null;
+    const exportAction = livePayment
+      ? series && result && live!.canExport && !live!.controls.dirty
+        ? <LiveSeriesExport series={series} result={result} comparison={previous} comparisonStatus={livePeriodStatus(live!, true)} dayReferences={liveDailyReferenceRows(live!, [id])}
+          stale={Boolean(live!.state.status === "success" && (live!.state.refreshError || live!.state.refreshing) || live!.comparison?.state.status === "success" && (live!.comparison.state.refreshError || live!.comparison.state.refreshing))} />
+        : <Button disabled>导出未就绪</Button>
+      : <BoardExport title={`${model.metric.name}同口径数据表`} view={view} sheets={[{ name: "01_同口径数据表", rows: metricRows([model]) }]} pending={pending || model.result.status !== "available"} />;
+    return <DataOriginProvider key={id} value={livePayment ? series ? "pending" : null : "demo"}>
+      <PreviewMetricCard compact={compact} model={model} open={open} retry={livePayment ? live!.retry : () => setRecovered(ids => [...ids, id])} exportAction={exportAction}
+        readingContext={livePayment ? <p>当前读取真实后台结果；未就绪状态按接口原样展示，不使用演示值或旧字段补齐。</p> : undefined} />
+    </DataOriginProvider>;
+  };
   const standardContent = <>
     {board === "5.11" ? <>
       <PaymentOrderAnalysis range={view.range} compared={view.compared} pending={pending} onOpen={open} />

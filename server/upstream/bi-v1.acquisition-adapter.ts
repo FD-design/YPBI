@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { DAILY_ACQUISITION_MAX_GROUPS, DAILY_ACQUISITION_MAX_POINTS, DAILY_ACQUISITION_METRIC_IDS, type DailyAcquisitionGroupResult, type DailyAcquisitionGroups, type DailyAcquisitionRequestStatus, type DailyAcquisitionSummary, type DailyDashboardQuery, type DailyReadingMetric } from "../../contracts/daily-dashboard";
 import { BI_V1_METRICS_API } from "./bi-v1.metrics-adapter";
-import type { UpstreamClient } from "./client";
+import { isBiV1MetricSelectionRejection } from "./bi-v1.request-isolation";
+import { UpstreamError, type UpstreamClient } from "./client";
 
 export const ACQUISITION_GROUP_METRICS = DAILY_ACQUISITION_METRIC_IDS;
 export type AcquisitionGroupDimension = keyof typeof ACQUISITION_GROUP_METRICS;
@@ -11,7 +12,7 @@ type Query = Pick<DailyDashboardQuery, "pid" | "dateRange">;
 type Reading = DailyAcquisitionSummary;
 type GroupRows = Map<string, Map<string, Reading>>;
 type ScopeRow = DailyAcquisitionRequestStatus["scopeStatuses"][number] & { ruleVersion: string };
-type RequestResult = { status: DailyAcquisitionRequestStatus; groups: GroupRows; scopes: Map<string, ScopeRow> };
+type RequestResult = { status: DailyAcquisitionRequestStatus; groups: GroupRows; scopes: Map<string, ScopeRow>; failedMetrics: Set<AcquisitionGroupMetric>; rowCount: number };
 const rowSchema = z.object({
   metricCode: z.enum(["M001", "M003", "M005", "M006", "M007", "M099"]),
   businessDate: z.iso.date().optional(),
@@ -35,7 +36,7 @@ const unavailable = (metric: DailyReadingMetric, state: Reading["state"], source
 const statusState = (status: Exclude<Reading["sourceStatus"], "READY" | undefined>): Reading["state"] =>
   status === "NOT_MATURE" ? "immature" : status === "FAILED" ? "source_failure" : "no_value";
 const failure = (state: "source_failure" | "invalid_response"): RequestResult => ({
-  status: { state, scopeStatuses: [], generatedAt: null, watermark: null }, groups: new Map(), scopes: new Map()
+  status: { state, scopeStatuses: [], generatedAt: null, watermark: null }, groups: new Map(), scopes: new Map(), failedMetrics: new Set(), rowCount: 0
 });
 const rowKey = (metric: string, date?: string) => JSON.stringify([metric, date ?? null]);
 
@@ -53,7 +54,7 @@ function reading(row: z.infer<typeof rowSchema>, metric: DailyReadingMetric): Re
     inputs: metric.inputs.map((input, index) => ({ key: input.key, value: ratio ? index === 0 ? numerator : denominator : value })), ruleVersion: row.ruleVersion };
 }
 
-async function requestGroups(client: Pick<UpstreamClient, "get">, query: Query, dimension: AcquisitionGroupDimension,
+async function queryGroups(client: Pick<UpstreamClient, "get">, query: Query, dimension: AcquisitionGroupDimension,
   granularity: Granularity, metricCodes: readonly AcquisitionGroupMetric[], metricFor: (id: AcquisitionGroupMetric) => DailyReadingMetric): Promise<RequestResult> {
   let payload: unknown;
   try {
@@ -61,8 +62,15 @@ async function requestGroups(client: Pick<UpstreamClient, "get">, query: Query, 
       pid: query.pid, startDate: query.dateRange[0], endDate: new Date(Date.parse(query.dateRange[1]) + 86400000).toISOString().slice(0, 10),
       granularity, metricCodes: metricCodes.join(","), dimensions: dimension, includeIncomplete: "true"
     });
-  } catch { return failure("source_failure"); }
-  if (payload && typeof payload === "object" && typeof Reflect.get(payload, "code") === "number" && Reflect.get(payload, "code") !== 200) return failure("source_failure");
+  } catch (error) {
+    if (isBiV1MetricSelectionRejection(error)) throw error;
+    return failure("source_failure");
+  }
+  if (payload && typeof payload === "object" && typeof Reflect.get(payload, "code") === "number" && Reflect.get(payload, "code") !== 200) {
+    const error = new UpstreamError("BI_V1_REQUEST_REJECTED", String(Reflect.get(payload, "err") ?? "后台请求失败"), Reflect.get(payload, "code"));
+    if (isBiV1MetricSelectionRejection(error)) throw error;
+    return failure("source_failure");
+  }
   const parsed = envelopeSchema.safeParse(payload);
   if (!parsed.success) return failure("invalid_response");
   const { rows, generatedAt, watermark } = parsed.data.msg;
@@ -90,12 +98,49 @@ async function requestGroups(client: Pick<UpstreamClient, "get">, query: Query, 
     if (groups.size > DAILY_ACQUISITION_MAX_GROUPS) return failure("invalid_response");
   }
   if ([...scopes.values()].some(scope => scope.businessDate && scopes.has(rowKey(scope.metricId)) && scopes.get(rowKey(scope.metricId))!.sourceStatus !== scope.sourceStatus)) return failure("invalid_response");
-  return { groups, scopes, status: { state: rows.length ? "returned" : "empty", generatedAt, watermark,
+  return { groups, scopes, failedMetrics: new Set(), rowCount: rows.length, status: { state: rows.length ? "returned" : "empty", generatedAt, watermark,
     scopeStatuses: [...scopes.values()].map(({ ruleVersion: _ruleVersion, ...scope }) => scope) } };
+}
+
+async function requestGroups(client: Pick<UpstreamClient, "get">, query: Query, dimension: AcquisitionGroupDimension,
+  granularity: Granularity, metricCodes: readonly AcquisitionGroupMetric[], metricFor: (id: AcquisitionGroupMetric) => DailyReadingMetric): Promise<RequestResult> {
+  const codes = [...new Set(metricCodes)];
+  try {
+    return await queryGroups(client, query, dimension, granularity, codes, metricFor);
+  } catch (error) {
+    if (!isBiV1MetricSelectionRejection(error) || codes.length <= 1) return failure("source_failure");
+  }
+  const result = failure("source_failure");
+  for (const code of codes) {
+    let selected: RequestResult;
+    try {
+      selected = await queryGroups(client, query, dimension, granularity, [code], metricFor);
+    } catch (error) {
+      if (!isBiV1MetricSelectionRejection(error)) return failure("source_failure");
+      result.failedMetrics.add(code);
+      continue;
+    }
+    // A range, structure or transport failure rejects this entire request lane.
+    if (selected.status.state === "source_failure" || selected.status.state === "invalid_response") return selected;
+    result.rowCount += selected.rowCount;
+    for (const [key, rows] of selected.groups) {
+      const merged = result.groups.get(key) ?? new Map<string, Reading>();
+      for (const [identity, value] of rows) merged.set(identity, value);
+      result.groups.set(key, merged);
+    }
+    for (const [key, scope] of selected.scopes) result.scopes.set(key, scope);
+    if (result.groups.size > DAILY_ACQUISITION_MAX_GROUPS || result.rowCount > DAILY_ACQUISITION_MAX_POINTS) return failure("invalid_response");
+  }
+  // The contract needs real groups to carry per-metric request failures.
+  if (result.failedMetrics.size && !result.groups.size) return failure("source_failure");
+  result.status = { state: result.rowCount ? "returned" : "empty", generatedAt: null, watermark: null,
+    scopeStatuses: [...result.scopes.values()].map(({ ruleVersion: _ruleVersion, ...scope }) => scope) };
+  return result;
 }
 
 function selectReading(result: RequestResult, key: string, id: AcquisitionGroupMetric, metric: DailyReadingMetric, date?: string): Reading {
   if (result.status.state === "source_failure" || result.status.state === "invalid_response") return unavailable(metric, result.status.state === "source_failure" ? "source_failure" : "invalid_value");
+  if (result.failedMetrics.has(id)) return unavailable(metric, "source_failure");
   // A scope-level status takes precedence over rows in that incomplete scope.
   const scope = result.scopes.get(rowKey(id)) ?? result.scopes.get(rowKey(id, date));
   if (scope) return unavailable(metric, statusState(scope.sourceStatus), scope.sourceStatus, scope.ruleVersion);
