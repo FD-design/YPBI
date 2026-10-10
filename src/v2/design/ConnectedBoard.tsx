@@ -16,12 +16,26 @@ import Topics from "./TopicPreviews";
 import Extended from "./ExtendedBoardPreview";
 import Functions from "./FunctionUsagePreview";
 import { PreviewBoardPresentation } from "./PreviewBoardPresentation";
-import { downloadPreviewWorkbook } from "./preview-workbook";
+import { downloadPreviewWorkbook, type WorkbookSheet } from "./preview-workbook";
 import { validRange as validTopicRange } from "./topic-preview-fixtures";
 import { validDemoRange } from "./extended-board-model";
 import { previousDailyQuery, supplementaryDailyQuery } from "../features/dashboards/daily-reference-plan";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
 import { playbackDiagnosisBoardSheets } from "./live-playback-groups";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL } from "../features/dashboards/diagnostic-inputs";
+
+export function connectedBoardMetricSheet(series: DailyDashboardSuccess["data"]["series"][number], result: DailyDashboardSuccess, period: string, stale = false): WorkbookSheet {
+  return { name: period + "-" + series.metric.name, rows: [
+    ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态"],
+    ...series.points.map(point => {
+      const readable = (!point.sourceStatus || point.sourceStatus === "READY") && (point.state === "available" || point.state === "zero_denominator");
+      const diagnostic = diagnosticRatioInputs(series.metric, point);
+      return [point.date, readable && point.state === "available" ? point.value : null,
+        ...series.metric.inputs.map(input => readable || diagnostic ? point.inputs.find(value => value.key === input.key)?.value ?? null : null),
+        diagnostic ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point), result.data.fetchedAt, stale ? "上次查询结果" : "本次查询结果"];
+    })
+  ] };
+}
 
 export default function ConnectedBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: DailyDashboardCatalog["items"][number]; platforms: V2PlatformCatalogSuccess["data"]["items"] }) {
   const location = useBrowserLocation();
@@ -60,10 +74,7 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
         }))] },
       ...(compared ? [{ name: "日值比较基准", rows: [["指标", "参考", "平台", "日期", "结果（原始值）", "单位", "计算输入", "状态", "查询时间", "刷新状态"], ...dayReferences.map(point => [state.data!.data.series.find(series => series.metric.id === point.metricId)?.metric.name ?? point.metricId, point.label, query.pid, point.date, point.value, point.unit === "%" ? "原始比值" : point.unit, point.calculation ? `${point.calculation.numerator.name}：${point.calculation.numerator.value ?? "—"} ${point.calculation.numerator.unit}；${point.calculation.denominator.name}：${point.calculation.denominator.value ?? "—"} ${point.calculation.denominator.unit}` : "", point.reason ?? "该日未返回", point.fetchedAt, point.freshness ?? "本次查询结果"])] }] : []),
       ...playbackDiagnosisBoardSheets({ query, state: { ...state, data: state.data }, comparison: compared ? { label: "上一等长周期", query: previousQuery, state: previous.state } : undefined }),
-      ...periods.flatMap(period => period.result.data.series.map(series => ({ name: period.name + "-" + series.metric.name, rows: [
-        ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态"],
-        ...series.points.map(point => [point.date, point.value, ...point.inputs.map(input => input.value), livePointStateLabel(point), period.result.data.fetchedAt, period.stale ? "上次查询结果" : "本次查询结果"])
-      ] })))
+      ...periods.flatMap(period => period.result.data.series.map(series => connectedBoardMetricSheet(series, period.result, period.name, period.stale)))
     ], "pending");
   };
   const readingState: V2ResourceState<DailyDashboardSuccess> = state.status === "success"

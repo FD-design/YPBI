@@ -428,7 +428,10 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
     test(`${dataStatus}保留原状态与派生状态，旧源非零值不补位`, async () => {
       const { point } = await execute(row => ["M058", "M102", "M061", "M064"].includes(String(row.metricCode)) ? { ...row, dataStatus } : row);
       for (const id of [...Object.keys(eleven), "M098"]) expect(point(id)).toMatchObject({ state, value: null, sourceStatus: dataStatus });
-      for (const id of ["M058", "M102", "M061", "M064"]) expect(point(id).inputs.every(input => input.value === null)).toBe(true);
+      for (const id of ["M058", "M102", "M061", "M064"]) {
+        const diagnostic = dataStatus === "SOURCE_INCOMPLETE" ? id === "M061" ? [5, 6] : id === "M064" ? [3, 3] : null : null;
+        expect(point(id).inputs.map(input => input.value)).toEqual(diagnostic ?? point(id).inputs.map(() => null));
+      }
       expect(point("M059")).toMatchObject({ state: "available", value: 5 });
     });
 
@@ -730,11 +733,22 @@ describe("bi-v1 播放专题客户端切片", () => {
       const { point } = await execute("android", status);
       for (const code of ["M034", "M036", "M097"]) {
         expect(point(`${code}.android`)).toMatchObject({ state, value: null, sourceStatus: status });
-        expect(point(`${code}.android`).inputs.every(input => input.value === null)).toBe(true);
+        expect(point(`${code}.android`).inputs.map(input => input.value)).toEqual(status === "SOURCE_INCOMPLETE" && code === "M036"
+          ? [2, 3] : point(`${code}.android`).inputs.map(() => null));
         expect(point(`${code}.ios`).state).toBe("available");
       }
     });
   }
+
+  test("来源不完整的客户端比率仅保留当前规则版本的诊断输入", async () => {
+    for (const ruleVersion of ["effective_play_v3", "effective_play_v2", ""]) {
+      const { point } = await execute("android", "SOURCE_INCOMPLETE", row => row.metricCode === "M036"
+        && (row.dimensions as Record<string, string>).clientPlatform === "android" ? { ...row, ruleVersion } : row);
+      expect(point("M036.android")).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+        inputs: ruleVersion === "effective_play_v3" ? [{ value: 2 }, { value: 3 }] : [{ value: null }, { value: null }] });
+      expect(point("M036.ios")).toMatchObject({ state: "available", value: 5 / 6, sourceStatus: "READY" });
+    }
+  });
 });
 
 describe("bi-v1 通用指标渐进替换", () => {
@@ -980,7 +994,7 @@ describe("bi-v1 通用指标渐进替换", () => {
             expect(point.value).toBeNull();
             expect(point.state).toBe(mode === "no_record" ? legacyState : mode === "request_failure" ? "source_failure" : "no_value");
             expect(point.sourceStatus).toBe(mode === "SOURCE_INCOMPLETE" ? mode : undefined);
-            if (mode !== "no_record") expect(point.inputs.every(input => input.value === null)).toBe(true);
+            if (mode !== "no_record") expect(point.inputs.map(input => input.value)).toEqual(mode === "SOURCE_INCOMPLETE" ? [999, 1] : [null, null]);
           }
         }
       });
@@ -1017,7 +1031,7 @@ describe("bi-v1 通用指标渐进替换", () => {
         registerUserCount: 0, totalDownCountByIp: 0, ipStatTotalCount: 0, totalDownCountNoDedup: 0, visiCountNoDedup: 0
       } });
       expect(result.data.series.find(series => series.metric.id === "M005")!.points[0])
-        .toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: [{ value: null }, { value: null }] });
+        .toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: [{ value: 999 }, { value: 1 }] });
     });
 
     test("多日仅返回各业务日输入与比率，周期统计保持未支持", async () => {
@@ -1147,6 +1161,90 @@ describe("bi-v1 通用指标渐进替换", () => {
   });
 });
 
+describe("来源不完整的诊断输入与正式值隔离", () => {
+  const historicalDate = "2020-01-01";
+  const execute = async (boardId: string, date = historicalDate, legacy = false) => {
+    const ready = date === "2020-02-20";
+    return new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics") {
+        const filters = JSON.parse(params.dimensionFilters ?? "{}");
+        const denominator = filters.clientPlatform === "ios" || filters.sourceType === "internal_channel" ? 1 : 2;
+        const rows = params.metricCodes.split(",").filter(code => ["M020", "M103", "M110"].includes(code)).map(code => {
+          const numerator = ready || code !== "M020" ? 2 : Object.keys(filters).length ? 1 : 8;
+          const base = ready || code !== "M020" ? 3 : Object.keys(filters).length ? denominator : 10;
+          return { metricCode: code, businessDate: date, dimensions: { pid: "PH", ...filters },
+            value: ready ? numerator / base : null, numerator, denominator: base,
+            unit: code === "M110" ? "count_per_user" : "ratio", dataStatus: ready ? "READY" : "SOURCE_INCOMPLETE",
+            metricVersion: "bi-v1", ruleVersion: "retention-d0-D1-v1" };
+        });
+        return { ...emptyMetrics, msg: { ...emptyMetrics.msg, rows } };
+      }
+      if (legacy && path.includes("reletionsStatPlus")) return { data: [{ pid: "PH", sumDate: date,
+        registerCount: 10, afterFirstData1: { date: "2020-01-02", loginCnt: 9 } }] };
+      return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
+    } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [date, date] });
+  };
+  const series = (result: Awaited<ReturnType<typeof execute>>, id: string) => result.data.series.find(s => s.metric.id === id)!;
+
+  test("历史四组保留原始诊断人数，主率、M115和周期统计均不生成可用值", async () => {
+    for (const boardId of ["5.2", "5.8"]) {
+      const result = await execute(boardId);
+      for (const [suffix, numerator, denominator] of [["android", 1, 2], ["ios", 1, 1], ["natural", 1, 2], ["internal", 1, 1]] as const) {
+        expect(series(result, `M020.${suffix}`).points[0]).toMatchObject({ date: historicalDate, state: "no_value",
+          sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: [{ value: numerator }, { value: denominator }] });
+        expect(series(result, `M020.${suffix}`).periodStatistics?.values).toEqual([]);
+      }
+      expect(series(result, "M020").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+        inputs: [{ value: 8 }, { value: 10 }] });
+      expect(series(result, "M115.d1").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+        inputs: [{ value: null }] });
+      expect(series(result, "M115.d1").periodStatistics?.values).toEqual([]);
+      expect(dailyDashboardMatchesMapping(result)).toBe(true);
+    }
+  });
+
+  test("私有诊断不进入起播人数或广告点击次数的分子派生与汇总", async () => {
+    const playback = await execute("5.12");
+    expect(series(playback, "M030").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+      inputs: [{ value: null }] });
+    const operating = await execute("5.2");
+    expect(series(operating, "M103").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+      inputs: [{ value: 2 }, { value: 3 }] });
+    for (const id of ["M055.ads", "M055.new"]) {
+      expect(series(operating, id).points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: [{ value: null }] });
+      expect(series(operating, id).periodStatistics).toMatchObject({ state: "incomplete", values: [] });
+    }
+  });
+
+  test("独立旧源回退仍使用完整旧源输入，不混入不完整的新源输入", async () => {
+    const result = await execute("5.8", historicalDate, true);
+    expect(series(result, "M020").points[0]).toMatchObject({ state: "available", value: .9, inputs: [{ value: 9 }, { value: 10 }] });
+    expect(series(result, "M115.d1").points[0]).toMatchObject({ state: "available", value: 9, inputs: [{ value: 9 }] });
+    expect(series(result, "M020.android").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+      inputs: [{ value: 1 }, { value: 2 }] });
+  });
+
+  test("2020-02-20独立READY形状保留2/3和M115人数，不覆盖历史状态", async () => {
+    const current = await execute("5.8", "2020-02-20");
+    expect(series(current, "M020.android").points[0]).toMatchObject({ date: "2020-02-20", state: "available", sourceStatus: "READY",
+      value: 2 / 3, inputs: [{ value: 2 }, { value: 3 }] });
+    expect(series(current, "M115.d1").points[0]).toMatchObject({ state: "available", sourceStatus: "READY", value: 2 });
+    const historical = await execute("5.8");
+    expect(series(historical, "M020.android").points[0]).toMatchObject({ date: historicalDate, state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null });
+  });
+
+  test("诊断输入来源说明使旧映射缓存失效，公共响应不增加私有字段", async () => {
+    const result = await execute("5.8");
+    expect(dailyDashboardMatchesMapping(result)).toBe(true);
+    const stale = structuredClone(result);
+    const oldMetric = series(stale, "M020.android").metric;
+    oldMetric.sourceNote = oldMetric.sourceNote!.replace(" 所选来源不完整时，合法分子分母仅作为诊断输入，不用于计算正式值、人数或汇总。", "");
+    expect(dailyDashboardMatchesMapping(stale)).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("diagnosticInputs");
+    expect(series(result, "M115.d1").metric.sourceNote).not.toContain("诊断输入");
+  });
+});
+
 describe("bi-v1 注册留存四周期与五范围", () => {
   const date = "2026-09-01";
   const codes = ["M020", "M021", "M022", "M023"] as const;
@@ -1207,7 +1305,8 @@ describe("bi-v1 注册留存四周期与五范围", () => {
     test(`四周期Android切片保留${dataStatus}且不消费附带值，其他范围独立可用`, async () => {
       const { point } = await execute((code, scope) => metricRow(code, scope, scope.clientPlatform === "android" ? { dataStatus } : {}));
       for (const code of codes) {
-        expect(point(`${code}.android`)).toMatchObject({ state, sourceStatus: dataStatus, value: null, inputs: [{ value: null }, { value: null }] });
+        expect(point(`${code}.android`)).toMatchObject({ state, sourceStatus: dataStatus, value: null,
+          inputs: dataStatus === "SOURCE_INCOMPLETE" ? [{ value: 1 }, { value: 3 }] : [{ value: null }, { value: null }] });
         for (const spec of scopes.filter(item => item.suffix !== ".android")) expect(point(`${code}${spec.suffix}`))
           .toMatchObject({ state: "available", value: spec.numerator / spec.denominator });
       }
@@ -1484,7 +1583,7 @@ describe("bi-v1 分维单位与状态回归", () => {
       for (const id of ids) {
         const point = result.data.series.find(item => item.metric.id === id)!.points[0];
         expect(point).toMatchObject({ state, sourceStatus: dataStatus, value: null });
-        expect(point.inputs.every(input => input.value === null)).toBe(true);
+        expect(point.inputs.map(input => input.value)).toEqual(dataStatus === "SOURCE_INCOMPLETE" && id === "M111.new" ? [1, 2] : point.inputs.map(() => null));
       }
     });
   }
@@ -1552,9 +1651,10 @@ describe("bi-v1 分维单位与状态回归", () => {
             const point = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0];
             paymentCodes.forEach((code, index) => {
               expect(point(code)).toMatchObject({ state: "available", value: [41, 23, 17, 17 / 41][index], sourceStatus: "READY" });
-              for (const method of [...paymentMethods, { id: "unknown" }]) {
+              for (const method of [...paymentMethods, { id: "unknown", counts: [101, 70, 89] }]) {
                 expect(point(`${code}.${method.id}`)).toMatchObject({ state, value: null, sourceStatus: dataStatus });
-                expect(point(`${code}.${method.id}`).inputs.every(input => input.value === null)).toBe(true);
+                expect(point(`${code}.${method.id}`).inputs.map(input => input.value)).toEqual(dataStatus === "SOURCE_INCOMPLETE" && businessDate && code === "M114"
+                  ? [method.counts[2], method.counts[0]] : point(`${code}.${method.id}`).inputs.map(() => null));
               }
             });
           }

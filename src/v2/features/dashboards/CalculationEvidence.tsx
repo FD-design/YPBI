@@ -37,7 +37,7 @@ export function CalculationEvidence({ basis, compact = false }: { basis?: Calcul
   const [open, setOpen] = useState(false);
   if (!basis) return <p className="calculation-evidence__pending">计算基数待接入</p>;
   if (compact) return <div className="calculation-evidence__compact">
-    <FloatingHint content={<><p>{basis.numerator.name}：{inputValue(basis.numerator)}</p><p>{basis.denominator.name}：{inputValue(basis.denominator)}</p><p>{basis.formula}</p></>}>
+    <FloatingHint content={<><p>{basis.scope}</p><p>{basis.numerator.name}：{inputValue(basis.numerator)}</p><p>{basis.denominator.name}：{inputValue(basis.denominator)}</p><p>{basis.formula}</p><p>结果：{basis.result}</p></>}>
       <button className="calculation-evidence__trigger" type="button" onClick={event=>{event.stopPropagation();setOpen(true);}}><Calculator aria-hidden="true"/>计算依据{(basis.numerator.value===null||basis.denominator.value===null)&&<span> · 基数待接入</span>}</button>
     </FloatingHint>
     {open&&<MetricReadingDialog title="计算依据" onClose={()=>setOpen(false)} content={<CalculationEvidence basis={basis}/>}/>}

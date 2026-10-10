@@ -2,9 +2,9 @@ import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { liveDailyReferenceRows, livePeriodStatus, livePointStateLabel, type LiveDashboardReading as LiveDashboardValue, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
 import { REGISTRATION_RETENTION_WINDOWS, registrationCohortMetricId, registrationCohortScopeLabel, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
-import { connectedCohortRows } from "./ConnectedCohorts";
-import { topicMetric } from "./topic-preview-fixtures";
+import { connectedCohortExportRows } from "./ConnectedCohorts";
 import type { WorkbookSheet as ExportSheet } from "./preview-workbook";
+import { diagnosticRatioInputs } from "../features/dashboards/diagnostic-inputs";
 
 const isCohortSeries = (id: string) => /^M(?:02[0-3]|115)(?:\.|$)/.test(id);
 const nonCohortSeries = (result: DailyDashboardSuccess) => result.data.series.filter(series => !isCohortSeries(series.metric.id));
@@ -50,14 +50,9 @@ export function connectedTopicExportSheets(live: LiveDashboardValue, cohortLive:
     ...periods.flatMap(period => nonCohortSeries(period.result).map(series => ({ name: period.name + "-" + series.metric.name, rows: [
       ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态"],
       ...series.points.map(point => [point.date, hasUsableInputs(point) ? point.value : null,
-        ...point.inputs.map(input => hasUsableInputs(point) ? input.value : null), livePointStateLabel(point), period.result.data.fetchedAt,
+        ...point.inputs.map(input => hasUsableInputs(point) || diagnosticRatioInputs(series.metric, point) ? input.value : null), livePointStateLabel(point, series.metric), period.result.data.fetchedAt,
         period.stale ? "上次查询结果" : "本次查询结果"])
     ] }))),
-    ...cohortPeriods.map(period => ({ name: period.name, rows: [
-      ["注册日", "注册日分组", "注册人数", "留存周期", "留存人数", "留存率（%）", "目标日", "状态", "平台", "查询时间"],
-      ...connectedCohortRows(period.query, period.state, scope).flatMap(row => row.cells.map(cell => [row.date, scopeLabel,
-        cell.base ?? null, topicMetric(cell.id).name, cell.count, cell.rate === null ? null : cell.rate * 100, cell.availableAt, cell.status,
-        period.query.pid, period.state.status === "success" ? period.state.data?.data.fetchedAt ?? null : null]))
-    ] }))
+    ...cohortPeriods.map(period => ({ name: period.name, rows: connectedCohortExportRows(period.query, period.state, scope) }))
   ];
 }

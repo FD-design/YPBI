@@ -100,6 +100,7 @@ export type DashboardMetricUnavailableStatus =
 
 export interface DashboardMetricUnavailableResult {
   reading?: DashboardMetricReading;
+  calculation?: CalculationBasis;
   history?: DashboardMetricAvailableResult;
   status: DashboardMetricUnavailableStatus;
   contextLabel: string;

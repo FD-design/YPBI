@@ -6,6 +6,7 @@ import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, 
 import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
 import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 import { metricNumberFormatOptions } from "../../components/metric-number-format";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL } from "../features/dashboards/diagnostic-inputs";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
@@ -59,14 +60,17 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
       if (!id || !live.metricIds.includes(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
       const series = resource?.status === "success" ? resource.data.data.series.find(series => series.metric.id === id) : undefined;
       const point = (day: string) => series?.points.find(point => point.date === day);
+      const readable = (value: ReturnType<typeof point>) => value && (!value.sourceStatus || value.sourceStatus === "READY") && (value.state === "available" || value.state === "zero_denominator");
+      const resultValue = (day: string) => { const value = point(day); return readable(value) && value?.state === "available" ? value.value : null; };
       const evidence = (day: string): DetailEvidence => {
         const value = point(day);
-        return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : value?.state ?? "no_value",
-          label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : value ? livePointStateLabel(value) : "字段未返回",
+        const diagnostic = series && diagnosticRatioInputs(series.metric, value);
+        return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : value?.state === "available" && !readable(value) ? "no_value" : value?.state ?? "no_value",
+          label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : value ? livePointStateLabel(value) : "字段未返回",
           fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: resource?.status === "success" && Boolean(resource.refreshError),
-          inputs: series?.metric.inputs.map((input, i) => ({ ...input, value: value?.inputs[i]?.value ?? null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote };
+          inputs: series?.metric.inputs.map(input => ({ ...input, value: readable(value) || diagnostic ? value?.inputs.find(value => value.key === input.key)?.value ?? null : null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote };
       };
-      return { current: point(date)?.value ?? null, previousDay: point(shiftDate(date, -1))?.value ?? null, previousWeek: point(shiftDate(date, -7))?.value ?? null,
+      return { current: resultValue(date), previousDay: resultValue(shiftDate(date, -1)), previousWeek: resultValue(shiftDate(date, -7)),
         evidence: { current: evidence(date), previousDay: evidence(shiftDate(date, -1)), previousWeek: evidence(shiftDate(date, -7)) } };
     });
     return { pid: platform.pid, name: platform.name, state: "部分", productMode: null, promotionStatus: null, values };

@@ -22,6 +22,99 @@ const message = (rows: ReturnType<typeof makeRow>[]) => ({
   rows
 });
 
+describe("SOURCE_INCOMPLETE 比率诊断输入", () => {
+  const date = "2020-01-01";
+  const query = { pid: "PH", startDate: date, endDate: date, metricCodes: ["M020"] as const,
+    dimensionFilters: { clientPlatform: "android" as const }, dimensions: ["clientPlatform"] as const };
+  const incomplete = (overrides: Record<string, unknown> = {}) => ({
+    ...makeRow("M020", "ratio", null, 1, 2, { clientPlatform: "android" }, "SOURCE_INCOMPLETE"),
+    businessDate: date, ruleVersion: "retention-d0-D1-v1", ...overrides
+  });
+  const read = async (rows: ReturnType<typeof incomplete>[]) => readBiV1MetricDays({ get: async () => ({
+    code: 200, msg: { ...message([]), rows }
+  }) }, query);
+
+  test("同日同范围的历史留存输入仅用于诊断，正式数值与计算输入保持不可用", async () => {
+    for (const [filters, numerator, denominator] of [
+      [{ clientPlatform: "android" }, 1, 2], [{ clientPlatform: "ios" }, 1, 1],
+      [{ sourceType: "natural" }, 1, 2], [{ sourceType: "internal_channel" }, 1, 1]
+    ] as const) {
+      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: { ...message([]), rows: [
+        incomplete({ dimensions: { pid: "PH", ...filters }, numerator, denominator })
+      ] } }) }, { ...query, dimensionFilters: filters, dimensions: Object.keys(filters) as (keyof BiV1MetricDimensionFilters)[] });
+      expect(result.days[0].metrics[biV1MetricKey("M020", filters)]).toEqual({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE",
+        value: null, numerator: null, denominator: null, unit: null, diagnosticInputs: { numerator, denominator } });
+    }
+  });
+
+  test("独立新日期 READY 2/3 仍按原规则准入，不生成诊断输入", async () => {
+    const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: { ...message([]), rows: [
+      incomplete({ businessDate: "2020-02-20", dataStatus: "READY", value: 2 / 3, numerator: 2, denominator: 3 })
+    ] } }) }, { ...query, startDate: "2020-02-20", endDate: "2020-02-20" });
+    expect(result.days[0].metrics["M020|android"]).toEqual({ state: "available", dataStatus: "READY", value: 2 / 3, numerator: 2, denominator: 3, unit: "ratio" });
+  });
+
+  test("缺失、非法人数或错误单位不成为诊断输入，也不补零", async () => {
+    for (const overrides of [
+      { numerator: null }, { denominator: undefined }, { numerator: -1 }, { numerator: 1.5 },
+      { denominator: Number.MAX_SAFE_INTEGER + 1 }, { numerator: 3, denominator: 2 },
+      { numerator: 1, denominator: 0 }, { unit: "count" }
+    ]) {
+      const result = await read([incomplete(overrides)]);
+      expect(result.days[0].metrics["M020|android"]).toMatchObject({ value: null, numerator: null, denominator: null });
+      expect(result.days[0].metrics["M020|android"].diagnosticInputs).toBeUndefined();
+    }
+    const zero = (await read([incomplete({ numerator: 0, denominator: 0 })])).days[0].metrics["M020|android"];
+    expect(zero).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null, diagnosticInputs: { numerator: 0, denominator: 0 } });
+  });
+
+  test("未命中维度、重复行及无日期状态都不提供诊断输入", async () => {
+    for (const rows of [
+      [incomplete({ dimensions: { pid: "PH", clientPlatform: "ios" } })],
+      [incomplete({ dimensions: { pid: "PH", clientPlatform: "android", sourceType: "natural" } })],
+      [incomplete(), incomplete()], [incomplete({ businessDate: undefined })]
+    ]) {
+      const point = (await read(rows)).days[0].metrics["M020|android"];
+      expect(point.diagnosticInputs).toBeUndefined();
+      expect(point).toMatchObject({ value: null, numerator: null, denominator: null });
+    }
+    await expect(read([incomplete({ dimensions: { pid: "OTHER", clientPlatform: "android" } })])).rejects.toMatchObject({ code: "BI_V1_SCOPE_CONFLICT" });
+  });
+
+  test("仅来源不完整的比率保留输入，其他状态及次数人均不扩大准入", () => {
+    for (const status of ["PROCESSING", "NOT_MATURE", "FAILED"] as const) {
+      const point = aggregateBiV1MetricDays(message([makeRow("M020", "ratio", .5, 1, 2, {}, status)]), {
+        pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M020"]
+      })[0].metrics.M020;
+      expect(point.diagnosticInputs).toBeUndefined();
+      expect(point.value).toBeNull();
+    }
+    const points = aggregateBiV1MetricDays(message([
+      makeRow("M006", "ratio", 15, 15, 100, {}, "SOURCE_INCOMPLETE"),
+      makeRow("M103", "ratio", null, 2, 3, {}, "SOURCE_INCOMPLETE"),
+      makeRow("M110", "count_per_user", null, 2, 3, {}, "SOURCE_INCOMPLETE")
+    ]), { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M006", "M103", "M110"] })[0].metrics;
+    expect(points.M006.diagnosticInputs).toEqual({ numerator: 15, denominator: 100 });
+    expect(points.M103.diagnosticInputs).toEqual({ numerator: 2, denominator: 3 });
+    expect(points.M110.diagnosticInputs).toBeUndefined();
+    for (const point of Object.values(points)) expect(point).toMatchObject({ state: "no_value", value: null, numerator: null, denominator: null });
+  });
+
+  test("诊断输入遵守同一规则版本准入，旧版和缺版仅保留来源状态", () => {
+    for (const ruleVersion of ["effective_play_v3", "effective_play_v2", "", undefined]) {
+      const row = { ...makeRow("M036", "ratio", null, 2, 3, { clientPlatform: "android" }, "SOURCE_INCOMPLETE"), ruleVersion };
+      // Exercise the projection branch directly, including absent internal metadata.
+      const point = aggregateBiV1MetricDays(message([row as ReturnType<typeof makeRow>]), {
+        pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M036"],
+        dimensionFilters: { clientPlatform: "android" }, dimensions: ["clientPlatform"],
+        expectedRuleVersions: { M036: "effective_play_v3" }
+      })[0].metrics["M036|android"];
+      expect(point).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null, numerator: null, denominator: null });
+      expect(point.diagnosticInputs).toEqual(ruleVersion === "effective_play_v3" ? { numerator: 2, denominator: 3 } : undefined);
+    }
+  });
+});
+
 describe("bi-v1 留存总体与分组状态隔离", () => {
   const codes = ["M020", "M021", "M022", "M023"] as const;
   const scopes: BiV1MetricDimensionFilters[] = [
@@ -155,7 +248,8 @@ describe("bi-v1 金额、时长与同群付费率", () => {
       test(`${row.metricCode} ${dataStatus} 不消费所携带的错误业务值，缺日保留缺失`, async () => {
         for (const value of [null, 999]) {
           const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([{ ...row, dataStatus, value }, makeRow("M016", "count", 6, 6, 0)]) }) }, { ...query, endDate: "2026-09-22", metricCodes: [row.metricCode, "M016"] });
-          expect(result.days[0].metrics[row.metricCode]).toEqual({ state, dataStatus, value: null, numerator: null, denominator: null, unit: null });
+          expect(result.days[0].metrics[row.metricCode]).toEqual({ state, dataStatus, value: null, numerator: null, denominator: null, unit: null,
+            ...(dataStatus === "SOURCE_INCOMPLETE" && row.unit === "ratio" ? { diagnosticInputs: { numerator: row.numerator, denominator: row.denominator } } : {}) });
           expect(result.days[1].metrics[row.metricCode]).toMatchObject({ state: "no_record", dataStatus: null, value: null });
           expect(result.days[0].metrics.M016).toMatchObject({ state: "available", value: 6 });
         }

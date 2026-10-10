@@ -353,6 +353,9 @@ export function dailyDashboardMatchesMapping(result: DailyDashboardSuccess) {
       || isDeepStrictEqual(series.periodStatistics, periodStatistics(id, series.points, result.data.query, toBeijingDate(result.data.fetchedAt))));
   });
 }
+function usesBiV1RatioInputs(mapping: CandidateMapping) {
+  return Boolean(mapping.biV1Metric) && mapping.fields.length === 2 && (mapping.biV1Unit ?? "ratio") === "ratio";
+}
 function metric(id: CandidateId): DailyReadingMetric {
   const mapping = mappings[id];
   const referenceMetricId = mapping.referenceMetricId ?? id;
@@ -361,10 +364,11 @@ function metric(id: CandidateId): DailyReadingMetric {
   const effectivePlaySourceNote = ["M034", "M036"].includes(referenceMetricId)
     ? `${mapping.sourceNote ?? "来自 bi-v1 同平台、同日期、同维度的独立结果。"} 仅接收 ${BI_V1_EFFECTIVE_PLAY_RULE_VERSION} 有效观看规则；规则不符或缺失为无效值，非 READY 保留来源状态。`
     : null;
+  const sourceNote = effectivePlaySourceNote ?? mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null);
   return { id, referenceMetricId, name: mapping.name ?? definition.name, unit: mapping.unit, authorityVersion: definition.authority.version,
     definition: mapping.definition ?? metricBusinessDefinition(definition.authority),
     formula: mapping.formula ?? (mapping.fields.length === 2 ? mapping.inputNames ? mapping.inputNames.join(" ÷ ") + (mapping.unit === "%" ? " × 100%" : "") : definition.authority.registeredFormula : null),
-    sourceNote: effectivePlaySourceNote ?? mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null),
+    sourceNote: usesBiV1RatioInputs(mapping) ? [sourceNote, "所选来源不完整时，合法分子分母仅作为诊断输入，不用于计算正式值、人数或汇总。"].filter(Boolean).join(" ") : sourceNote,
     inputs: mapping.fields.map((key, index) => ({ key, name: mapping.inputNames?.[index] ?? mapping.name ?? getV2MetricDefinition(mapping.inputIds[index])!.name, unit: mapping.inputUnits?.[index] ?? (mapping.fields.length === 1 ? mapping.unit : mapping.payment ? "次" : key.endsWith("Amt") ? AMOUNT_UNIT : ["adsCount", "navCount", "totalClickedCount", "adsClickedNewCount", "totalVistCount", "navClickedNewCount", "newUserTotalClickedCount", "totalDownCountNoDedup", "visiCountNoDedup"].includes(key) ? "次" : ["totalDownCountByIp", "ipStatTotalCount"].includes(key) ? "IP·天" : "人") }))
   };
 }
@@ -645,14 +649,18 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           const invalidPenetration = (mapping.biV1Metric === "M111" || mapping.biV1Metric === "M061" || mapping.biV1Metric === "M064") && biV1Point.dataStatus === "READY"
             && biV1Point.numerator !== null && biV1Point.denominator !== null && biV1Point.numerator > biV1Point.denominator;
           const invalidSourceValue = unitMismatch || invalidPenetration;
-          const selectedValue = usesReturnedNumerator ? biV1Point.numerator : biV1Point.value;
+          const selectedValue = usesReturnedNumerator
+            ? biV1Point.dataStatus === "READY" ? biV1Point.numerator : null
+            : biV1Point.value;
           const selectedState = usesReturnedNumerator && biV1Point.dataStatus === "READY" && selectedValue !== null
             ? "available"
             : biV1Point.state;
           const values = usesReturnedNumerator
             ? [biV1Point.numerator]
             : mapping.fields.length === 2
-              ? [biV1Point.numerator, biV1Point.denominator]
+              ? biV1Point.diagnosticInputs && biV1Point.dataStatus === "SOURCE_INCOMPLETE" && usesBiV1RatioInputs(mapping)
+                ? [biV1Point.diagnosticInputs.numerator, biV1Point.diagnosticInputs.denominator]
+                : [biV1Point.numerator, biV1Point.denominator]
               : [biV1Point.value];
           return {
             date,

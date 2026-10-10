@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { DataOriginProvider } from "../components/DataOrigin";
 import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
-import { RetentionMatrix, type RetentionMatrixRow } from "../features/dashboards/RetentionMatrix";
+import { RetentionMatrix, retentionCellCalculationInputs, type RetentionMatrixRow } from "../features/dashboards/RetentionMatrix";
 import { useV2Resource, type V2ResourceState } from "../api/useV2Resource";
 import { fetchDailyDashboard } from "../api/client";
 import { livePointStateLabel, liveExportMetadata, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
@@ -11,7 +11,7 @@ import { PreviewExportControl } from "../features/dashboards/PreviewExportContro
 import { downloadPreviewWorkbook } from "./preview-workbook";
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { MenuSelect } from "../../components/ui/MenuSelect";
-import { REGISTRATION_COHORT_SCOPES, REGISTRATION_RETENTION_WINDOWS, isReadableRegistrationCohortPoint, registrationCohortMetricId, registrationCohortScopeLabel, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
+import { REGISTRATION_COHORT_SCOPES, REGISTRATION_RETENTION_WINDOWS, isReadableRegistrationCohortPoint, registrationCohortMetricId, registrationCohortScopeLabel, registrationCohortDiagnosticInputs, REGISTRATION_DIAGNOSTIC_LABEL, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
 
 const windows = REGISTRATION_RETENTION_WINDOWS;
 function usePageRefresh(key: string, revision: number, enabled: boolean, retry: () => void) {
@@ -53,19 +53,25 @@ export function connectedCohortRows(query: DailyDashboardQuery, state: V2Resourc
     const cells = windows.map(([id, days]) => {
       const point = read(registrationCohortMetricId(id, scope));
       const ready = isReadableRegistrationCohortPoint(point);
+      const diagnostic = registrationCohortDiagnosticInputs(registrationCohortMetricId(id, scope), point);
       return { id, rate: ready ? point?.value ?? null : null, count: ready ? point?.inputs[0]?.value ?? null : null, base: ready ? point?.inputs[1]?.value ?? null : null, availableAt: shiftDate(date, days),
-        status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? livePointStateLabel(point) + (state.refreshError ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
+        ...(diagnostic ? { diagnosticInputs: { count: diagnostic.numerator, base: diagnostic.denominator } } : {}),
+        status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? (diagnostic ? REGISTRATION_DIAGNOSTIC_LABEL : livePointStateLabel(point)) + (state.refreshError ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
     });
     const bases = [...new Set(cells.map(cell => cell.base).filter((value): value is number => value !== null))];
     return { date, base: bases.length === 1 ? bases[0] : null, cells };
   });
+}
+export function connectedCohortExportRows(query: DailyDashboardQuery, state: V2ResourceState<DailyDashboardSuccess | null>, scope: RegistrationCohortScope) {
+  return [["注册日","注册日分组","注册人数（计算输入）","留存周期","留存人数（计算输入）","留存率（%）","目标日","状态","平台","查询时间"],
+    ...connectedCohortRows(query,state,scope).flatMap(row=>row.cells.map(cell=>{const inputs=retentionCellCalculationInputs(row,cell);return [row.date,registrationCohortScopeLabel(scope),inputs.base,topicMetric(cell.id).name,inputs.count,cell.rate===null?null:cell.rate*100,cell.availableAt,cell.status,query.pid,state.status==="success"?state.data?.data.fetchedAt??null:null];}))];
 }
 export function ConnectedCohorts({ title, live, pending, open, scope = "overall", onScopeChange }: { title: string; live: LiveDashboardReading; range: {start:string;end:string}; pending:boolean; open:(title:string,content:ReactNode)=>void; scope?:RegistrationCohortScope; onScopeChange?:(scope:RegistrationCohortScope)=>void }) {
   const query = live.query, state = live.state, rows = connectedCohortRows(query, state, scope), scopeLabel = registrationCohortScopeLabel(scope);
   const tools = <PreviewExportControl name={title} dataOrigin="live" context={query.dateRange.join(" 至 ") + " · 注册日 · " + scopeLabel + " · 待验数"} pending={pending || live.controls.dirty || !live.canExport || state.status !== "success"} scope="当前期及已启用对比期的所选注册日分组、人数与状态；矩阵展示当前期" onDownloadPreview={() => {
     if (!live.canExport || pending || live.controls.dirty || state.status !== "success") return;
     const periods=[{name:"当前注册留存",query,state},...(live.comparison?[{name:"对比注册留存",query:live.comparison.query,state:live.comparison.state}]:[])];
-    downloadPreviewWorkbook(title, [{name:"数据说明",rows:[...liveExportMetadata(live),["注册日分组",scopeLabel]]},...periods.map(period=>({name:period.name,rows:[["注册日","注册日分组","注册人数","留存周期","留存人数","留存率（%）","目标日","状态","平台","查询时间"],...connectedCohortRows(period.query,period.state,scope).flatMap(row=>row.cells.map(cell=>[row.date,scopeLabel,cell.base??null,topicMetric(cell.id).name,cell.count,cell.rate===null?null:cell.rate*100,cell.availableAt,cell.status,query.pid,period.state.status==="success"?period.state.data?.data.fetchedAt??null:null]))]}))], "pending");
+    downloadPreviewWorkbook(title, [{name:"数据说明",rows:[...liveExportMetadata(live),["注册日分组",scopeLabel]]},...periods.map(period=>({name:period.name,rows:connectedCohortExportRows(period.query,period.state,scope)}))], "pending");
   }} />;
   return <DataOriginProvider value="pending"><DashboardPanel title={title} note={`注册日期 ${query.dateRange.join(" 至 ")} · ${live.platformName} · ${scopeLabel} · 按注册时的客户端或获客类型分组；观察未结束批次不计入汇总`}>
     <RetentionMatrix key={scope} title={title} rows={rows} columns={windows.map(([id, days]) => ({id,name:topicMetric(id).name,label:days===1?"次日":"第 "+days+" 天",definition:topicMetric(id).definition}))} dateLabel="注册日期" baseLabel="注册用户数" scopeLabel={scopeLabel} scopeControl={onScopeChange && <MenuSelect label="注册日分组" ariaLabel="注册日分组" density="compact" value={scope} onChange={value=>onScopeChange(value as RegistrationCohortScope)} groups={[{label:"注册日分组",options:[...REGISTRATION_COHORT_SCOPES]}]} />} onOpen={open} resetKey={JSON.stringify([query,scope])} tools={tools} />

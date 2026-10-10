@@ -7,6 +7,7 @@ import type { DateRangeValue } from "../../../components/ui/date-range-model";
 import { dailyMetricReading, dailyReferenceDates, periodMetricReading, type DailyReadingPoint } from "./daily-reading-model";
 import { livePeriodReadingStatistics } from "./live-period-statistics";
 import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, readableRegistrationCohortSeries, registrationMetricScopeLabel } from "./registration-cohort";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, safeDiagnosticSeries } from "./diagnostic-inputs";
 import { metricNumberFormatOptions } from "../../../components/metric-number-format";
 
 export type LiveSeries = DailyDashboardSuccess["data"]["series"][number];
@@ -42,7 +43,7 @@ export function liveExportMetadata(live: LiveDashboardReading) {
     ["数据性质", "真实接口候选结果，待验数；完整性未知，数据水位未返回"]];
 }
 export const liveStateLabel = { available: "已返回", no_record: dashboardNoRecordLabels.day, no_value: "字段未返回", invalid_value: "数据异常", zero_denominator: "分母为0", immature: "未成熟", source_failure: "来源读取失败" };
-export const livePointStateLabel = (point: LiveSeries["points"][number]) => point.sourceStatus === "PROCESSING" ? "计算中"
+export const livePointStateLabel = (point: LiveSeries["points"][number], metric?: LiveSeries["metric"]) => metric && diagnosticRatioInputs(metric, point) ? DIAGNOSTIC_INPUTS_LABEL : point.sourceStatus === "PROCESSING" ? "计算中"
   : point.sourceStatus === "NOT_MATURE" ? "待成熟"
     : point.sourceStatus === "SOURCE_INCOMPLETE" ? "数据接入中"
       : point.sourceStatus === "FAILED" ? "数据异常"
@@ -50,8 +51,10 @@ export const livePointStateLabel = (point: LiveSeries["points"][number]) => poin
 export const liveValue = (value: number | null, unit: string) => value === null ? "—" : (unit === "%" ? value * 100 : value).toLocaleString("zh-CN", metricNumberFormatOptions(value, unit));
 export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number]): CalculationBasis | undefined {
   if (series.metric.inputs.length !== 2) return undefined;
-  const inputs = series.metric.inputs.map((input, index) => ({ name: input.name, unit: input.unit, value: point.inputs[index].value }));
-  return { numerator: inputs[0], denominator: inputs[1], formula: series.metric.formula ?? "", scope: `${point.date} · ${isRegistrationRetentionMetric(series.metric.id) ? "注册日 · " + registrationMetricScopeLabel(series.metric.id) : "业务日"} · 待验数`, percentage: series.metric.unit === "%", result: liveValue(point.value, series.metric.unit) + " " + series.metric.unit };
+  const diagnostic = diagnosticRatioInputs(series.metric, point);
+  const readable = (!point.sourceStatus || point.sourceStatus === "READY") && (!isRegistrationRetentionMetric(series.metric.id) || isReadableRegistrationCohortPoint(point));
+  const inputs = series.metric.inputs.map((input, index) => ({ name: input.name, unit: input.unit, value: readable || diagnostic ? point.inputs[index].value : null }));
+  return { numerator: inputs[0], denominator: inputs[1], formula: series.metric.formula ?? "", scope: `${point.date} · ${isRegistrationRetentionMetric(series.metric.id) ? "注册日 · " + registrationMetricScopeLabel(series.metric.id) : "业务日"} · 待验数${diagnostic ? " · " + DIAGNOSTIC_INPUTS_LABEL : ""}`, percentage: series.metric.unit === "%", result: diagnostic ? DIAGNOSTIC_INPUTS_LABEL : liveValue(readable ? point.value : null, series.metric.unit) + " " + series.metric.unit };
 }
 function trendValue(point: LiveSeries["points"][number] | undefined, unit: string) {
   return point?.value != null ? { raw: point.value, display: liveValue(point.value, unit), actualDate: point.date } : null;
@@ -73,9 +76,10 @@ export function liveDailyPoint(live: DailySources, metricId: string, date: strin
     const data = period?.state.status === "success" ? period.state.data : null;
     const valid = data && data.data.query.pid === live.query.pid && data.data.query.boardId === live.query.boardId
       && data.data.query.dateRange[0] <= period!.query.dateRange[0] && data.data.query.dateRange[1] >= period!.query.dateRange[1];
-    const series = valid ? data.data.series.find(item => item.metric.id === metricId) : undefined;
+    const source = valid ? data.data.series.find(item => item.metric.id === metricId) : undefined;
+    const series = source ? safeDiagnosticSeries(source) : undefined;
     const point = series?.points.find(item => item.date === date);
-    const reason = period?.state.status === "failure" ? "该日查询失败" : period?.state.status === "loading" ? "该日读取中" : point ? livePointStateLabel(point) : "该日未返回";
+    const reason = period?.state.status === "failure" ? "该日查询失败" : period?.state.status === "loading" ? "该日读取中" : point ? series && diagnosticRatioInputs(series.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point) : "该日未返回";
     const freshness = period?.state.status === "success" && period.state.refreshError ? `${date} 刷新失败，保留上次查询结果` : period?.state.status === "success" && period.state.refreshing ? `${date} 刷新中，保留上次查询结果` : undefined;
     return { date, value: point?.value ?? null, state: period?.state.status === "failure" ? "source_failure" : point?.state ?? "no_value", display: series ? liveValue(point?.value ?? null, series.metric.unit) : "—", reason, freshness,
       inputs: point?.inputs ?? [], fetchedAt: valid ? data.data.fetchedAt : "", unit: series?.metric.unit ?? "",
@@ -100,7 +104,7 @@ export function liveMetricModel(original: DashboardMetricCardModel, live: LiveDa
 function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveDashboardReading): DashboardMetricCardModel {
   const sameQuery = (data: DailyDashboardSuccess, query: DailyDashboardQuery) => data.data.query.pid === query.pid && data.data.query.boardId === query.boardId && data.data.query.dateRange[0] <= query.dateRange[0] && data.data.query.dateRange[1] >= query.dateRange[1];
   const source = live.state.status === "success" && sameQuery(live.state.data, live.query) ? live.state.data.data.series.find(series => series.metric.id === original.metric.id) : undefined;
-  const series = source ? readableRegistrationCohortSeries({ ...source, points: source.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1]) }) : undefined;
+  const series = source ? readableRegistrationCohortSeries(safeDiagnosticSeries({ ...source, points: source.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1]) })) : undefined;
   const metric = { ...original.metric, aggregationLabel: `${live.query.dateRange[0]} 至 ${live.query.dateRange[1]} · ${live.platformName} · 业务日`,
     definitionLabel: series?.metric.definition ?? original.metric.definitionLabel };
   if (live.state.status === "loading") return { metric, result: { status: "loading", contextLabel: "真实后台查询", label: "正在读取真实数据", message: "", retryable: false } };
@@ -108,7 +112,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
   if (!series?.points.length) return { metric, result: { status: "no_values", label: "指标未返回", contextLabel: "真实后台查询", retryable: false } };
   const unit = series.metric.unit;
   const baselineSource = live.comparison?.state.status === "success" && live.comparison.state.data && sameQuery(live.comparison.state.data, live.comparison.query) ? live.comparison.state.data.data.series.find(item => item.metric.id === original.metric.id) : undefined;
-  const baseline = baselineSource ? readableRegistrationCohortSeries({ ...baselineSource, points: baselineSource.points.filter(point => point.date >= live.comparison!.query.dateRange[0] && point.date <= live.comparison!.query.dateRange[1]) }) : undefined;
+  const baseline = baselineSource ? readableRegistrationCohortSeries(safeDiagnosticSeries({ ...baselineSource, points: baselineSource.points.filter(point => point.date >= live.comparison!.query.dateRange[0] && point.date <= live.comparison!.query.dateRange[1]) })) : undefined;
   const cohort = isRegistrationRetentionMetric(original.metric.id);
   const eligible = series.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1] && point.state === "available" && (!cohort || isReadableRegistrationCohortPoint(point)));
   const last = cohort ? cohortSummary(series, eligible.map(point => point.date)) ?? series.points.at(-1)! : series.points.at(-1)!;
@@ -122,7 +126,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
       value: trendValue(point, unit), counterpart: trendValue(other, unit),
       differenceDisplay: point.value != null && other?.value != null ? difference(previousPeriod ? other.value : point.value, previousPeriod ? point.value : other.value, unit) : null,
       state: point.state === "available" || point.state === "no_record" ? point.state : "no_value" as const,
-      stateLabel: livePointStateLabel(point), calculation: liveCalculation(current, point)
+      stateLabel: diagnosticRatioInputs(current.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point), calculation: liveCalculation(current, point)
     };
   });
   const direction = last.value != null && previous?.value != null ? last.value > previous.value ? "up" as const : last.value < previous.value ? "down" as const : "flat" as const : null;
@@ -147,9 +151,10 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
     trendKind: original.result.status === "available" ? original.result.trendKind : "line",
     trend: { current: toPoints(series, baseline), comparison: baseline ? toPoints(baseline, series, true) : null }
   };
-  if (cohort && result.calculation) result.calculation.scope = `${live.query.dateRange.join(" 至 ")} · 注册日 · ${registrationMetricScopeLabel(original.metric.id)} · 仅汇总已结束观察且已返回的批次 · 待验数`;
+  if (cohort && result.calculation && eligible.length) result.calculation.scope = `${live.query.dateRange.join(" 至 ")} · 注册日 · ${registrationMetricScopeLabel(original.metric.id)} · 仅汇总已结束观察且已返回的批次 · 待验数`;
   if (cohort && comparison?.status === "available") comparison.detail = "当前注册批次与上一等长周期对应批次的加权留存结果；逐批次数据见明细。";
   if (last.value === null) return { metric, result: { status: last.state === "source_failure" ? "failed" : last.state === "no_record" ? "no_records" : "no_values", contextLabel: last.date, label: livePointStateLabel(last), message: `主值 — · ${last.date}。期间其他日期见趋势和明细。`, retryable: last.state === "source_failure",
+    calculation: diagnosticRatioInputs(series.metric, last) ? result.calculation : undefined,
     history: observed || priorObserved ? result : undefined } };
   return { metric, result };
 }

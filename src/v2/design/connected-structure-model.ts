@@ -4,6 +4,7 @@ import { liveCalculation, liveExportMetadata, livePointStateLabel, type LiveDash
 import type { GroupedTrendPoint } from "../features/dashboards/GroupedTrend";
 import { availablePeriodStatistics } from "../features/dashboards/live-period-statistics";
 import type { WorkbookSheet } from "./preview-workbook";
+import { diagnosticRatioInputs } from "../features/dashboards/diagnostic-inputs";
 
 export function liveStructureIds(live: LiveDashboardReading | null, id: string, dimension: string) {
   if (!live) return null;
@@ -41,7 +42,7 @@ function observation(live: LiveDashboardReading, source: ReturnType<typeof perio
   const raw = matchesDate.length === 1 ? matchesDate[0] : undefined;
   const ready = raw && (!raw.sourceStatus || raw.sourceStatus === "READY");
   const readable = ready && raw.state === "available" && validNumber(raw.value);
-  const inputsReadable = ready && (readable || raw.state === "zero_denominator");
+  const inputsReadable = ready && (readable || raw.state === "zero_denominator") || Boolean(series && diagnosticRatioInputs(series.metric, raw));
   const point = raw && series ? { ...raw, value: readable ? raw.value : null,
     inputs: series.metric.inputs.map(input => {
       const matches = raw.inputs.filter(candidate => candidate.key === input.key);
@@ -49,7 +50,7 @@ function observation(live: LiveDashboardReading, source: ReturnType<typeof perio
     }) } : undefined;
   const freshness = source.state?.status === "success" && (source.state.refreshError || source.state.refreshing) ? " · 上次查询结果" : "";
   const state = !supported ? "切片待接入" : source.state?.status === "loading" ? "读取中" : source.state?.status === "failure" ? "读取失败"
-    : matchesDate.length > 1 || matches.length > 1 ? "数据异常" : raw ? raw.state === "available" && ready && !readable ? "数据异常" : livePointStateLabel(raw) : "当日未返回";
+    : matchesDate.length > 1 || matches.length > 1 ? "数据异常" : raw ? raw.state === "available" && ready && !readable ? "数据异常" : livePointStateLabel(raw, series?.metric) : "当日未返回";
   return { value: point?.value ?? null, state: state + freshness, point, series,
     basis: point && series ? liveCalculation(series, point) : undefined };
 }

@@ -93,6 +93,8 @@ export interface BiV1MetricPoint {
   numerator: number | null;
   denominator: number | null;
   unit: BiV1MetricUnit | null;
+  /** Validated source inputs for diagnosis only; never usable as metric values. */
+  diagnosticInputs?: { numerator: number; denominator: number };
 }
 
 export interface BiV1MetricDay {
@@ -262,6 +264,17 @@ function unavailable(status: BiV1MetricDataStatus | null): BiV1MetricPoint {
   return { dataStatus: status, state, value: null, numerator: null, denominator: null, unit: null };
 }
 
+function unavailableRow(row: z.infer<typeof metricRowSchema>, expectedRuleVersion: string | undefined): BiV1MetricPoint {
+  const point = unavailable(row.dataStatus);
+  if (row.dataStatus !== "SOURCE_INCOMPLETE" || row.unit !== "ratio"
+    || expectedRuleVersion !== undefined && row.ruleVersion !== expectedRuleVersion
+    || requiredMetricUnits[row.metricCode] && requiredMetricUnits[row.metricCode] !== row.unit
+    || !Number.isSafeInteger(row.numerator) || row.numerator < 0
+    || !Number.isSafeInteger(row.denominator) || row.denominator < 0
+    || ["M020", "M021", "M022", "M023", "M061", "M064", "M111"].includes(row.metricCode) && row.numerator > row.denominator) return point;
+  return { ...point, diagnosticInputs: { numerator: row.numerator, denominator: row.denominator } };
+}
+
 function invalidMetric(): BiV1MetricPoint {
   // A malformed metric must not invalidate valid sibling metrics in the same
   // batch. dataStatus stays null so the daily-dashboard upgrade path can keep
@@ -393,10 +406,9 @@ export function aggregateBiV1MetricDays(
         }
         const row = rows[0];
         if (row.dataStatus !== "READY") {
-          // Never consume a business value from a non-ready row. Some upstream
-          // versions currently violate that contract; the status remains the
-          // authority while valid sibling metrics continue to work.
-          metrics[key] = unavailable(row.dataStatus);
+          // Non-ready values stay unavailable; validated incomplete ratio
+          // inputs remain separate from inputs admitted for calculation.
+          metrics[key] = unavailableRow(row, expectedRuleVersions[row.metricCode]);
           continue;
         }
         try {

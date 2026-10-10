@@ -2,6 +2,7 @@ import type { CalculationBasis } from "../features/dashboards/CalculationEvidenc
 import { liveCalculation, livePointStateLabel, type LiveDashboardReading, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import type { WorkbookSheet } from "./preview-workbook";
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, safeDiagnosticSeries } from "../features/dashboards/diagnostic-inputs";
 
 export function connectedDimensionSeries(live: LiveDashboardReading, id: string, before = false) {
   const period = before ? live.comparison : live;
@@ -10,10 +11,10 @@ export function connectedDimensionSeries(live: LiveDashboardReading, id: string,
   if (data.query.pid !== live.query.pid || data.query.boardId !== live.query.boardId
     || data.query.dateRange[0] > period.query.dateRange[0] || data.query.dateRange[1] < period.query.dateRange[1]) return undefined;
   const matches = data.series.filter(series => series.metric.id === id);
-  const source = matches.length === 1 ? matches[0] : undefined;
+  const source = matches.length === 1 ? safeDiagnosticSeries(matches[0]) : undefined;
   return source && { ...source, points: source.points.filter(point => point.date >= period.query.dateRange[0] && point.date <= period.query.dateRange[1]).map(point => {
     const usable = (!point.sourceStatus || point.sourceStatus === "READY") && (point.state === "available" || point.state === "zero_denominator");
-    return usable ? point : { ...point, value: null, inputs: point.inputs.map(input => ({ ...input, value: null })) };
+    return usable || diagnosticRatioInputs(source.metric, point) ? point : { ...point, value: null, inputs: point.inputs.map(input => ({ ...input, value: null })) };
   }) };
 }
 
@@ -39,7 +40,7 @@ function reading(live: LiveDashboardReading, id: string, before = false) {
     value: point?.value ?? null,
     calculation: series && point ? liveCalculation(series, point) : undefined,
     state: !period ? "未启用对比" : period.state.status === "loading" ? "读取中" : period.state.status === "failure" ? "读取失败"
-      : point ? livePointStateLabel(point) : series ? "当日未返回" : "待接入",
+      : point ? series && diagnosticRatioInputs(series.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point) : series ? "当日未返回" : "待接入",
     series,
     freshness: period?.state.status === "success" && period.state.refreshError ? "刷新失败，保留上次查询结果" : ""
   };
@@ -78,7 +79,7 @@ export function connectedDimensionSheet(live: LiveDashboardReading, id: string, 
       { label: "当前期", series: row.series, state: row.state, period: live },
       ...(live.comparison ? [{ label: "对比期", series: row.baselineSeries, state: row.baselineState, period: live.comparison }] : [])
     ].flatMap(({ label, series, state, period }) => series ? series.points.map(point => [label, live.query.pid, series.metric.name, row.name, point.date,
-      point.value, series.metric.unit === "%" ? "原始比值" : series.metric.unit, point.inputs.map(input => `${series.metric.inputs.find(item => item.key === input.key)?.name ?? input.key}：${input.value ?? "—"}`).join("；"), livePointStateLabel(point),
+      point.value, series.metric.unit === "%" ? "原始比值" : series.metric.unit, point.inputs.map(input => `${series.metric.inputs.find(item => item.key === input.key)?.name ?? input.key}：${input.value ?? "—"}`).join("；"), diagnosticRatioInputs(series.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point),
       period.state.status === "success" && period.state.refreshError ? "上次查询结果" : "本次查询结果"])
       : [[label, live.query.pid, id, row.name, period.query.dateRange.join(" 至 "), null, "", "", state, ""]]))] };
 }
