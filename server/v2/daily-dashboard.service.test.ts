@@ -166,7 +166,7 @@ describe("专题看板复用已接通的结构切片", () => {
           metricCode, businessDate: date, dimensions: { pid: "PH", ...filters },
           numerator, denominator, value: denominator ? numerator / denominator : numerator, unit,
           dataStatus: filters.clientPlatform === incomplete ? "SOURCE_INCOMPLETE" : "READY",
-          metricVersion: "bi-v1", ruleVersion: "effective_play_v2"
+          metricVersion: "bi-v1", ruleVersion: "effective_play_v3"
         });
         const platform = filters.clientPlatform;
         const rows = platform && Object.keys(filters).length === 1 && params.metricCodes.split(",").includes("M036")
@@ -520,7 +520,7 @@ describe("bi-v1 播放指标接入", () => {
   const playbackRows = [
     ["M034", "default", 27, 27, 0, "count"], ["M036", "default", 27 / 89, 27, 89, "ratio"], ["M097", "default", 89, 89, 0, "count"],
     ["M034", "long_video", 6, 6, 0, "count"], ["M036", "long_video", 6 / 9, 6, 9, "ratio"], ["M097", "long_video", 9, 9, 0, "count"]
-  ].map(([metricCode, videoType, value, numerator, denominator, unit]) => ({ metricCode, businessDate: date, dimensions: { pid: "PH", videoType }, value, numerator, denominator, unit, dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "effective_play_v2" }));
+  ].map(([metricCode, videoType, value, numerator, denominator, unit]) => ({ metricCode, businessDate: date, dimensions: { pid: "PH", videoType }, value, numerator, denominator, unit, dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "effective_play_v3" }));
   const make = (rows: Record<string, unknown>[] = playbackRows) => new DailyDashboardService({ get: async path => {
     if (path.includes("/bi/v1/playback")) return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-22T10:00:00+08:00", watermark: "2026-09-22 10:00:00.000", rows } };
     if (path.endsWith("pRealDayLine")) return { msg: [] };
@@ -546,6 +546,40 @@ describe("bi-v1 播放指标接入", () => {
     expect(result.data.series.find(series => series.metric.id === "M097")!.points[0]).toMatchObject({ state: "available", value: 98, sourceStatus: "READY" });
     expect(core.metricIds).not.toContain("M075");
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
+  });
+
+  test("三个关联看板隔离旧有效规则并保留成功起播", async () => {
+    const rows = playbackRows.map(row => row.metricCode === "M097" ? row : { ...row, ruleVersion: "effective_play_v2" });
+    for (const boardId of ["5.2", "5.9", "5.12"]) {
+      const result = await make(rows).execute({ boardId, pid: "PH", dateRange: [date, date] });
+      for (const id of ["M034", "M036"]) {
+        const point = result.data.series.find(series => series.metric.id === id)!.points[0];
+        expect(point).toMatchObject({ state: "invalid_value", value: null });
+        expect(point.inputs.every(input => input.value === null)).toBe(true);
+      }
+      expect(result.data.series.find(series => series.metric.id === "M097")!.points[0]).toMatchObject({ state: "available", value: 98 });
+      expect(dailyDashboardSuccessSchema.safeParse(result).error?.issues).toBeUndefined();
+    }
+  });
+
+  test("总体及全部客户端有效观看元数据使旧缓存失效，起播不附加有效门槛", async () => {
+    const oldNotes: Record<string, string> = {
+      M034: "来自 bi-v1 播放域；仅展示 READY 结果，其他状态保留为数据状态，不补 0。",
+      M036: "来自 bi-v1 播放域；先汇总各视频类型的分子、分母再计算，不平均分类比率或日比率。"
+    };
+    for (const boardId of ["5.2", "5.9", "5.12"]) {
+      const result = await make().execute({ boardId, pid: "PH", dateRange: [date, date] });
+      expect(dailyDashboardMatchesMapping(result)).toBe(true);
+      for (const series of result.data.series.filter(series => ["M034", "M036"].includes(series.metric.referenceMetricId))) {
+        expect(series.metric.sourceNote).toContain("仅接收 effective_play_v3 有效观看规则");
+        const stale = structuredClone(result);
+        stale.data.series.find(item => item.metric.id === series.metric.id)!.metric.sourceNote = oldNotes[series.metric.id]
+          ?? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。";
+        expect(dailyDashboardMatchesMapping(stale)).toBe(false);
+      }
+      for (const series of result.data.series.filter(series => series.metric.referenceMetricId === "M097"))
+        expect(series.metric.sourceNote).not.toContain("effective_play_v3");
+    }
   });
 
   test("未接通状态保留为状态，不补0且不污染旧接口指标", async () => {
@@ -638,7 +672,7 @@ describe("bi-v1 付费人数与广告点击人数", () => {
 describe("bi-v1 播放专题客户端切片", () => {
   const date = "2020-01-01";
   const counts = { android: [2, 3], ios: [5, 6], web: [0, 0] } as const;
-  const execute = async (invalidPlatform?: string, dataStatus = "READY") => {
+  const execute = async (invalidPlatform?: string, dataStatus = "READY", transform: (row: Record<string, unknown>) => Record<string, unknown> = row => row) => {
     const requests: Record<string, string>[] = [];
     const result = await new DailyDashboardService({ get: async (path, params) => {
       if (path === "/api/admin/bi/v1/metrics") {
@@ -652,8 +686,8 @@ describe("bi-v1 播放专题客户端切片", () => {
           return { metricCode, businessDate: date, dimensions: { pid: "PH", clientPlatform: platform },
             value: ratio ? starts === 0 ? null : effective / starts : numerator,
             numerator, denominator: ratio ? starts : 0, unit: ratio ? "ratio" : "count",
-            dataStatus: platform === invalidPlatform ? dataStatus : "READY", metricVersion: "bi-v1", ruleVersion: "playback-v1" };
-        }) : [];
+            dataStatus: platform === invalidPlatform ? dataStatus : "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M097" ? "successful-start-v1" : "effective_play_v3" };
+        }).filter(row => params.metricCodes.split(",").includes(row.metricCode)).map(transform) : [];
         return { code: 200, msg: { ...emptyMetrics.msg, rows } };
       }
       if (path.endsWith("pRealDayLine")) return { msg: [] };
@@ -677,6 +711,19 @@ describe("bi-v1 播放专题客户端切片", () => {
     expect(core.some(id => /^M(034|036|097)\./.test(id))).toBe(false);
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
   });
+
+  for (const ruleVersion of ["effective_play_v2", "", undefined]) {
+    test(`客户端有效规则 ${ruleVersion ?? "缺失"} 不回退，起播和其他平台保留`, async () => {
+      const { point } = await execute(undefined, "READY", row => (row.dimensions as Record<string, string>).clientPlatform === "android" && row.metricCode !== "M097"
+        ? { ...row, ruleVersion } : row);
+      for (const code of ["M034", "M036"]) {
+        expect(point(`${code}.android`)).toMatchObject({ value: null, state: ruleVersion === undefined ? "source_failure" : "invalid_value" });
+        expect(point(`${code}.android`).inputs.every(input => input.value === null)).toBe(true);
+        expect(point(`${code}.ios`).state).toBe("available");
+      }
+      expect(point("M097.android")).toMatchObject({ state: "available", value: 3 });
+    });
+  }
 
   for (const [status, state] of [["SOURCE_INCOMPLETE", "no_value"], ["PROCESSING", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]]) {
     test(`${status} 仅影响对应客户端并丢弃附带值`, async () => {

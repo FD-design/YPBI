@@ -99,6 +99,7 @@ type ComparisonTooltipInput = {
   comparisonValue: TooltipValue;
   unit: string;
   differenceUnit?: string;
+  comparisonUnavailableReason?: string;
 };
 
 type MultiPidTooltipInput = {
@@ -155,6 +156,8 @@ export function comparisonTooltip(input: ComparisonTooltipInput) {
   const comparisonMissing = input.comparisonValue === null || input.comparisonValue === undefined;
   const current = `当前期 ${input.currentDate} · ${currentMissing ? "—" : formatTooltipValue(input.currentValue, input.unit)}`;
   const comparison = `对比期 ${input.comparisonDate} · ${comparisonMissing ? "—" : formatTooltipValue(input.comparisonValue, input.unit)}`;
+
+  if (input.comparisonUnavailableReason) return lines(current, comparison, escapeChartTooltipText(input.comparisonUnavailableReason));
 
   if (currentMissing || comparisonMissing) {
     const missingPeriod = currentMissing && comparisonMissing ? "两期" : currentMissing ? "当前期" : "对比期";

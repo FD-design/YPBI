@@ -22,6 +22,51 @@ const message = (rows: ReturnType<typeof makeRow>[]) => ({
   rows
 });
 
+describe("bi-v1 留存总体与分组状态隔离", () => {
+  const codes = ["M020", "M021", "M022", "M023"] as const;
+  const scopes: BiV1MetricDimensionFilters[] = [
+    { clientPlatform: "android" }, { clientPlatform: "ios" },
+    { sourceType: "natural" }, { sourceType: "internal_channel" }
+  ];
+  for (const filters of scopes) {
+    const scopeName = JSON.stringify(filters);
+    const query = {
+      pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", metricCodes: codes,
+      dimensions: Object.keys(filters) as (keyof BiV1MetricDimensionFilters)[], dimensionFilters: filters
+    };
+
+    test(`${scopeName} 四周期 READY 日记录不被总体或同组无日期 SOURCE_INCOMPLETE 覆盖`, async () => {
+      const result = await readBiV1MetricDays({ get: async (path, params) => {
+        expect(path).toBe("/api/admin/bi/v1/metrics");
+        expect(params).toEqual({ pid: "PH", startDate: "2026-09-21", endDate: "2026-09-23",
+          granularity: "day", metricCodes: codes.join(","), includeIncomplete: "true",
+          dimensions: Object.keys(filters).join(","), dimensionFilters: scopeName });
+        return { code: 200, msg: { ...message([]), rows: codes.flatMap(code => [
+          { ...makeRow(code, "ratio", null, 0, 0, {}, "SOURCE_INCOMPLETE"), businessDate: undefined },
+          makeRow(code, "ratio", null, 0, 0, {}, "SOURCE_INCOMPLETE"),
+          { ...makeRow(code, "ratio", null, 0, 0, filters, "SOURCE_INCOMPLETE"), businessDate: undefined },
+          makeRow(code, "ratio", 0.8, 8, 10, filters)
+        ]) } };
+      } }, query);
+      for (const code of codes) {
+        const key = biV1MetricKey(code, filters);
+        expect(result.days[0].metrics[key]).toEqual({ state: "available", dataStatus: "READY", value: 0.8, numerator: 8, denominator: 10, unit: "ratio" });
+        expect(result.days[1].metrics[key]).toEqual({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null, numerator: null, denominator: null, unit: null });
+        expect(result.days[0].metrics[code]).toBeUndefined();
+      }
+    });
+
+    test(`${scopeName} 总体 SOURCE_INCOMPLETE 不能伪装成该分组的源状态`, async () => {
+      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: { ...message([]),
+        rows: codes.map(code => ({ ...makeRow(code, "ratio", null, 0, 0, {}, "SOURCE_INCOMPLETE"), businessDate: undefined }))
+      } }) }, query);
+      for (const day of result.days) for (const code of codes) {
+        expect(day.metrics[biV1MetricKey(code, filters)]).toEqual({ state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null });
+      }
+    });
+  }
+});
+
 describe("bi-v1 金额、时长与同群付费率", () => {
   const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M058", "M061", "M064", "M102"] as const };
   const rows = [

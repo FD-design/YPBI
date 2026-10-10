@@ -89,6 +89,7 @@ test("分组主值不跨日汇总，比较失败/刷新与错范围保留边界"
 });
 
 test("既有付费维度入口与详情使用真实分支，保留原控制且不重建新老面板", async () => {
+  await import("echarts/core");
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", { configurable: true, value: { location: new URL("http://localhost/dashboards/public?board=5.10") } });
   try {

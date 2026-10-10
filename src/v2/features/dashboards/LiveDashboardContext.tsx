@@ -7,6 +7,7 @@ import type { DateRangeValue } from "../../../components/ui/date-range-model";
 import { dailyMetricReading, dailyReferenceDates, periodMetricReading, type DailyReadingPoint } from "./daily-reading-model";
 import { livePeriodReadingStatistics } from "./live-period-statistics";
 import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, readableRegistrationCohortSeries, registrationMetricScopeLabel } from "./registration-cohort";
+import { metricNumberFormatOptions } from "../../../components/metric-number-format";
 
 export type LiveSeries = DailyDashboardSuccess["data"]["series"][number];
 export interface LiveDashboardReading {
@@ -19,6 +20,8 @@ export interface LiveDashboardReading {
   comparison?: { label: string; query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null> };
   dayReference?: { query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null> };
   retry: () => void;
+  /** Page refresh intent, independent of any request's success or result ID. */
+  refreshRevision?: number;
   canExport: boolean;
 }
 export const LiveDashboardContext = createContext<LiveDashboardReading | null>(null);
@@ -44,7 +47,7 @@ export const livePointStateLabel = (point: LiveSeries["points"][number]) => poin
     : point.sourceStatus === "SOURCE_INCOMPLETE" ? "数据接入中"
       : point.sourceStatus === "FAILED" ? "数据异常"
         : liveStateLabel[point.state];
-export const liveValue = (value: number | null, unit: string) => value === null ? "—" : (unit === "%" ? value * 100 : value).toLocaleString("zh-CN", { maximumFractionDigits: ["人", "次"].includes(unit) ? 0 : unit.includes("/人") && Math.abs(value) > 0 && Math.abs(value) < .1 ? 4 : 2, minimumFractionDigits: unit === "%" ? 2 : 0 });
+export const liveValue = (value: number | null, unit: string) => value === null ? "—" : (unit === "%" ? value * 100 : value).toLocaleString("zh-CN", metricNumberFormatOptions(value, unit));
 export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number]): CalculationBasis | undefined {
   if (series.metric.inputs.length !== 2) return undefined;
   const inputs = series.metric.inputs.map((input, index) => ({ name: input.name, unit: input.unit, value: point.inputs[index].value }));

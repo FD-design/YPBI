@@ -126,6 +126,56 @@ export const dailyAcquisitionGroupsSchema = z.object({
   if (Object.values(groups).reduce((total, dimension) => total + dimension.groups.reduce((sum, group) => sum + group.series.reduce((count, series) => count + series.points.length + 1, 0), 0), 0) > DAILY_ACQUISITION_MAX_POINTS) ctx.addIssue({ code: "custom", message: "获客分组总结果超出安全上限" });
 });
 export type DailyAcquisitionGroups = z.infer<typeof dailyAcquisitionGroupsSchema>;
+
+export const DAILY_PLAYBACK_METRIC_IDS = ["M034", "M036", "M097"] as const;
+export const DAILY_PLAYBACK_MAX_GROUPS = 1000;
+export const DAILY_PLAYBACK_MAX_POINTS = 100_000;
+const playbackReadingFields = { ...dailyPointSchema.shape, ruleVersion: z.string().max(128).refine(value => value.trim().length > 0).nullable() };
+function validatePlaybackReading(point: { state: string; value: number | null; inputs: Array<{ value: number | null }>; sourceStatus?: string; ruleVersion: string | null }, ctx: z.RefinementCtx) {
+  const readable = point.state === "available" || point.state === "zero_denominator";
+  if ((point.state === "available") !== (point.value !== null)) ctx.addIssue({ code: "custom", message: "播放分组数值与状态不一致" });
+  if (readable && (point.sourceStatus !== "READY" || !point.ruleVersion || point.inputs.some(input => input.value === null))) ctx.addIssue({ code: "custom", message: "可读播放结果必须保留 READY 状态、规则版本和计算输入" });
+  if (!readable && point.inputs.some(input => input.value !== null)) ctx.addIssue({ code: "custom", message: "不可读播放结果不得携带计算数值" });
+  if (point.sourceStatus && point.sourceStatus !== "READY" && (point.value !== null || point.inputs.some(input => input.value !== null))) ctx.addIssue({ code: "custom", message: "未就绪播放分组不得携带数值" });
+  if (point.sourceStatus && point.state !== "invalid_value") {
+    const expected = point.sourceStatus === "READY" ? readable : point.state === (point.sourceStatus === "FAILED" ? "source_failure" : point.sourceStatus === "NOT_MATURE" ? "immature" : "no_value");
+    if (!expected) ctx.addIssue({ code: "custom", message: "播放来源状态与结果状态不一致" });
+  }
+}
+export const dailyPlaybackPointSchema = z.object(playbackReadingFields).strict().superRefine((point, ctx) => {
+  validatePlaybackReading(point, ctx);
+});
+export type DailyPlaybackPoint = z.infer<typeof dailyPlaybackPointSchema>;
+export const dailyPlaybackSummarySchema = z.object({
+  state: z.enum([...dailyPointSchema.shape.state.options, "incomplete"]),
+  sourceStatus: dailyPointSchema.shape.sourceStatus, value: dailyPointSchema.shape.value,
+  inputs: dailyPointSchema.shape.inputs, ruleVersion: playbackReadingFields.ruleVersion
+}).strict().superRefine((summary, ctx) => {
+  validatePlaybackReading(summary, ctx);
+});
+export type DailyPlaybackSummary = z.infer<typeof dailyPlaybackSummarySchema>;
+export const dailyPlaybackGroupSeriesSchema = z.object({
+  metric: dailyReadingMetricSchema, points: z.array(dailyPlaybackPointSchema).min(1).max(366), summary: dailyPlaybackSummarySchema
+}).strict();
+export type DailyPlaybackGroupSeries = z.infer<typeof dailyPlaybackGroupSeriesSchema>;
+export const dailyPlaybackGroupResultSchema = z.object({
+  dimension: z.literal("videoType"), completeness: z.literal("unknown"), day: dailyAcquisitionRequestStatusSchema,
+  groups: z.array(z.object({ key: shortText.refine(value => value.trim().length > 0, "视频类型键不能为空白"), label: shortText,
+    series: z.array(dailyPlaybackGroupSeriesSchema).length(3) }).strict()).max(DAILY_PLAYBACK_MAX_GROUPS)
+}).strict().superRefine((result, ctx) => {
+  if (new Set(result.groups.map(group => group.key)).size !== result.groups.length) ctx.addIssue({ code: "custom", message: "视频类型键不能重复" });
+  if (result.day.scopeStatuses.some(scope => !(DAILY_PLAYBACK_METRIC_IDS as readonly string[]).includes(scope.metricId))) ctx.addIssue({ code: "custom", message: "播放范围状态指标不匹配" });
+  if (result.day.state !== "returned" && result.groups.length) ctx.addIssue({ code: "custom", message: "未返回播放分组的请求不生成分组" });
+  let points = 0;
+  for (const group of result.groups) {
+    if (group.series.some((series, index) => series.metric.id !== DAILY_PLAYBACK_METRIC_IDS[index])) ctx.addIssue({ code: "custom", message: "播放分组指标必须符合固定集合及顺序" });
+    points += group.series.reduce((sum, series) => sum + series.points.length + 1, 0);
+  }
+  if (points > DAILY_PLAYBACK_MAX_POINTS) ctx.addIssue({ code: "custom", message: "播放分组结果超出安全上限" });
+});
+export type DailyPlaybackGroupResult = z.infer<typeof dailyPlaybackGroupResultSchema>;
+export const dailyPlaybackGroupsSchema = z.object({ videoType: dailyPlaybackGroupResultSchema }).strict();
+export type DailyPlaybackGroups = z.infer<typeof dailyPlaybackGroupsSchema>;
 export const dailyPeriodStatisticsSchema = z.object({
   aggregationVersion: z.literal(DAILY_STATISTICS_VERSION),
   dateRange: z.tuple([z.iso.date(), z.iso.date()]), dayCount: z.number().int().min(1).max(366),
@@ -154,9 +204,11 @@ const dailyDashboardV1DataSchema = z.object({ ...dailyDashboardDataFields,
 const dailyDashboardV2DataSchema = z.object({ ...dailyDashboardDataFields,
   schemaVersion: z.literal(DAILY_DASHBOARD_VERSION),
   acquisitionGroups: dailyAcquisitionGroupsSchema.optional(),
+  playbackGroups: dailyPlaybackGroupsSchema.optional(),
   series: z.array(dailySeriesSchema.extend({ periodStatistics: dailyPeriodStatisticsSchema })).min(1).max(DAILY_DASHBOARD_MAX_SERIES)
 }).strict().superRefine((data, ctx) => {
   if (data.acquisitionGroups && data.query.boardId !== "5.7") ctx.addIssue({ code: "custom", path: ["acquisitionGroups"], message: "动态获客分组仅适用于获客看板" });
+  if (data.playbackGroups && data.query.boardId !== "5.12") ctx.addIssue({ code: "custom", path: ["playbackGroups"], message: "视频类型分组仅适用于播放看板" });
   if (data.acquisitionGroups && data.query.dateRange[0] !== data.query.dateRange[1]
     && (data.acquisitionGroups.channel.summary.scopeStatuses.some(scope => scope.metricId === "M099") || data.acquisitionGroups.channel.groups.some(group => group.series.some(series => series.metric.id === "M099" && series.summary.state !== "unsupported")))) ctx.addIssue({ code: "custom", path: ["acquisitionGroups"], message: "多日M099汇总不适用" });
 });
@@ -172,6 +224,15 @@ export function dailyDashboardMatchesQuery(result: DailyDashboardSuccess, query:
   if (data.query.boardId !== query.boardId || data.query.pid !== query.pid || data.query.dateRange.some((date, index) => date !== query.dateRange[index])) return false;
   if (data.series.length !== metricIds.length || data.series.some((s, index) => s.metric.id !== metricIds[index])) return false;
   const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
+  if (data.schemaVersion === DAILY_DASHBOARD_VERSION && data.playbackGroups) {
+    if (query.boardId !== "5.12") return false;
+    const grouped = data.playbackGroups.videoType;
+    if (grouped.day.scopeStatuses.some(status => status.businessDate && (status.businessDate < query.dateRange[0] || status.businessDate > query.dateRange[1]))) return false;
+    for (const group of grouped.groups) for (const series of group.series) {
+      if (series.points.length !== days || series.points.some((point, index) => point.date !== new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10))) return false;
+      if ([...series.points, series.summary].some(point => point.inputs.length !== series.metric.inputs.length || point.inputs.some((input, index) => input.key !== series.metric.inputs[index].key))) return false;
+    }
+  }
   if (data.schemaVersion === DAILY_DASHBOARD_VERSION && data.acquisitionGroups) {
     if (query.boardId !== "5.7") return false;
     for (const dimension of Object.values(data.acquisitionGroups)) {

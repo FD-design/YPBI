@@ -9,9 +9,9 @@ export function useOperatingLive(live: LiveDashboardReading | null) {
   const [resources, setResources] = useState<OperatingResources>({});
   const platforms = live?.platforms ?? [], date = live?.query.dateRange[1] ?? "";
   const key = JSON.stringify([date, platforms, live?.metricIds]);
-  const revision = live?.state.status === "success" ? live.state.data.data.queryId : live?.state.status;
+  const revision = live?.refreshRevision ?? 0;
   useEffect(() => {
-    if (!live || live.state.status === "loading") return;
+    if (!live) return;
     const controller = new AbortController();
     setResources(current => Object.fromEntries(platforms.map(platform => {
       const prior = operatingResource(current[platform.pid], platform.pid, date);

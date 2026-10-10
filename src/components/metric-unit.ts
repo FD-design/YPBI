@@ -1,3 +1,7 @@
+export function isIntegerMetricUnit(unit: string) {
+  return ["人", "次", "单"].includes(unit);
+}
+
 /** Omit only units already unambiguously expressed by a named metric. */
 export function metricHeadingUnit(name: string, unit: string) {
   if (unit === "人" && /用户|人数|人次/.test(name)) return "";

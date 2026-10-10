@@ -21,6 +21,7 @@ import { validRange as validTopicRange } from "./topic-preview-fixtures";
 import { validDemoRange } from "./extended-board-model";
 import { previousDailyQuery, supplementaryDailyQuery } from "../features/dashboards/daily-reference-plan";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
+import { playbackDiagnosisBoardSheets } from "./live-playback-groups";
 
 export default function ConnectedBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: DailyDashboardCatalog["items"][number]; platforms: V2PlatformCatalogSuccess["data"]["items"] }) {
   const location = useBrowserLocation();
@@ -32,11 +33,12 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
   const reference = useV2Resource(JSON.stringify(["day-references", referenceQuery]), async signal => referenceQuery && board.metricIds.length ? fetchDailyDashboard(referenceQuery, board.metricIds, signal) : null);
   const [range, setRange] = useState({ start: query.dateRange[0], end: query.dateRange[1] }), [pid, setPid] = useState(query.pid);
   const [comparison, setComparison] = useState(compared ? "previous" : "none");
+  const [refreshRevision, setRefreshRevision] = useState(0);
   const authentication = useAuthentication();
   const canExport = authentication.state.status === "authenticated" && authentication.state.session.user.permissions.includes("bi:export");
   const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   const dirty = range.start !== query.dateRange[0] || range.end !== query.dateRange[1] || pid !== query.pid || compared !== (comparison === "previous");
-  const refresh = () => { retry(); previous.retry(); if (referenceQuery) reference.retry(); };
+  const refresh = () => { setRefreshRevision(revision => revision + 1); retry(); previous.retry(); if (referenceQuery) reference.retry(); };
   const apply = () => {
     if (!dirty) { refresh(); return; }
     const params = new URLSearchParams(window.location.search);
@@ -57,6 +59,7 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
           return (statistics?.values ?? []).map(item => [period.name, period.result.data.query.pid, series.metric.name, ...period.result.data.query.dateRange, periodStatisticLabel(item.kind), item.value, series.metric.unit, "待验数", "未知", period.result.data.fetchedAt, period.stale ? "上次查询结果" : "本次查询结果", statistics!.aggregationVersion]);
         }))] },
       ...(compared ? [{ name: "日值比较基准", rows: [["指标", "参考", "平台", "日期", "结果（原始值）", "单位", "计算输入", "状态", "查询时间", "刷新状态"], ...dayReferences.map(point => [state.data!.data.series.find(series => series.metric.id === point.metricId)?.metric.name ?? point.metricId, point.label, query.pid, point.date, point.value, point.unit === "%" ? "原始比值" : point.unit, point.calculation ? `${point.calculation.numerator.name}：${point.calculation.numerator.value ?? "—"} ${point.calculation.numerator.unit}；${point.calculation.denominator.name}：${point.calculation.denominator.value ?? "—"} ${point.calculation.denominator.unit}` : "", point.reason ?? "该日未返回", point.fetchedAt, point.freshness ?? "本次查询结果"])] }] : []),
+      ...playbackDiagnosisBoardSheets({ query, state: { ...state, data: state.data }, comparison: compared ? { label: "上一等长周期", query: previousQuery, state: previous.state } : undefined }),
       ...periods.flatMap(period => period.result.data.series.map(series => ({ name: period.name + "-" + series.metric.name, rows: [
         ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态"],
         ...series.points.map(point => [point.date, point.value, ...point.inputs.map(input => input.value), livePointStateLabel(point), period.result.data.fetchedAt, period.stale ? "上次查询结果" : "本次查询结果"])
@@ -72,7 +75,7 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
       comparison: <MenuSelect className="dashboard-query__live-comparison" label="对比周期" ariaLabel="对比周期" value={comparison} density="compact" groups={[{ label: "同口径对比", options: [{ value: "previous", label: "上一等长周期" }, { value: "none", label: "不对比" }] }]} onChange={setComparison} />,
       dirty, acceptsSharedRange: board.id === "5.8" || board.id === "5.9" ? validTopicRange : validDemoRange, apply, export: exportData
     }, comparison: compared ? { label: "上一等长周期", query: previousQuery, state: previous.state } : undefined,
-    dayReference: referenceQuery ? { query: referenceQuery, state: reference.state } : undefined, retry: refresh, canExport }}>
+    dayReference: referenceQuery ? { query: referenceQuery, state: reference.state } : undefined, retry: refresh, refreshRevision, canExport }}>
     <PreviewBoardPresentation board={board.id}><DemoDataProvider>
       {dirty && <p className="topic-preview__pending" role="status">筛选已修改，点击应用后更新真实结果。</p>}
       {state.status === "success" && state.refreshError && <RefreshNotice onRetry={refresh}>刷新失败，真实区域保留上次结果。</RefreshNotice>}

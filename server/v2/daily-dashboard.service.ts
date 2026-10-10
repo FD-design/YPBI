@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import plan from "../../contracts/official-dashboards.json";
-import { DAILY_DASHBOARD_VERSION, DAILY_STATISTICS_VERSION, dailyDashboardV2SuccessSchema, type DailyDashboardQuery, type DailyDashboardSuccess, type DailyDashboardV2Success, type DailyPeriodStatistics, type DailyReadingMetric } from "../../contracts/daily-dashboard";
+import { DAILY_DASHBOARD_VERSION, DAILY_STATISTICS_VERSION, DAILY_PLAYBACK_METRIC_IDS, dailyDashboardV2SuccessSchema, type DailyDashboardQuery, type DailyDashboardSuccess, type DailyDashboardV2Success, type DailyPeriodStatistics, type DailyPlaybackGroups, type DailyReadingMetric } from "../../contracts/daily-dashboard";
 import { metricBusinessDefinition } from "../../contracts/metric-description";
 import { getV2MetricDefinition } from "./metric-definitions";
 import { P_DAY_SUM_API } from "../upstream/overview.adapter";
 import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { REALTIME_API } from "../upstream/realtime.adapter";
 import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-daily.adapter";
-import { BI_V1_PLAYBACK_API, readBiV1PlaybackDays, type BiV1PlaybackDay } from "../upstream/bi-v1.adapter";
+import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API, aggregateBiV1Playback, projectBiV1PlaybackGroups, queryBiV1Playback, unavailableBiV1PlaybackGroups, type BiV1PlaybackDay, type BiV1PlaybackMetricCode } from "../upstream/bi-v1.adapter";
 import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension } from "../upstream/bi-v1.metrics-adapter";
 import { readBiV1MonthlyMetricDays } from "../upstream/bi-v1.monthly-adapter";
 import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
@@ -24,7 +24,7 @@ const AMOUNT_UNIT = "元";
 const AMOUNT_PER_USER_UNIT = `${AMOUNT_UNIT}/人`;
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_MINUTE = 60;
-const VALUE_RULE_VERSIONS = { M058: "paid-order-value-v1", M102: "foreground-watch-duration-v1" } as const;
+const VALUE_RULE_VERSIONS = { M034: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M036: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M058: "paid-order-value-v1", M102: "foreground-watch-duration-v1" } as const;
 const WATCH_TIME_NOTE = `来自 bi-v1 M102 的播放成功后前台观看时长，规则版本 ${VALUE_RULE_VERSIONS.M102}，单位为秒。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态。`;
 const RECHARGE_AMOUNT_NOTE = `来自 bi-v1 M058 的人民币元金额，规则版本 ${VALUE_RULE_VERSIONS.M058}，保留接口数值。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态；按完整业务日提供合计及日均。`;
 const baseMappings = {
@@ -329,6 +329,14 @@ export function dailyDashboardMatchesMapping(result: DailyDashboardSuccess) {
   const sources = sourceApis(ids);
   if (!isDeepStrictEqual(result.data.sourceApiIds, sources)) return false;
   if (!isDeepStrictEqual(result.data.series.map(series => series.metric.id), ids)) return false;
+  if (result.data.query.boardId === "5.12" && (result.data.schemaVersion !== DAILY_DASHBOARD_VERSION || !result.data.playbackGroups)) return false;
+  if (result.data.schemaVersion === DAILY_DASHBOARD_VERSION && result.data.playbackGroups) {
+    if (result.data.query.boardId !== "5.12") return false;
+    const grouped = result.data.playbackGroups.videoType;
+    if (grouped.dimension !== "videoType" || grouped.groups.some(group => group.series.length !== DAILY_PLAYBACK_METRIC_IDS.length
+      || group.series.some((series, index) => series.metric.id !== DAILY_PLAYBACK_METRIC_IDS[index]
+        || !isDeepStrictEqual(series.metric, playbackGroupMetric(DAILY_PLAYBACK_METRIC_IDS[index]))))) return false;
+  }
   if (result.data.schemaVersion === DAILY_DASHBOARD_VERSION && result.data.acquisitionGroups) {
     if (result.data.query.boardId !== "5.7") return false;
     for (const dimension of ["channel", "downloadPlatform"] as const) {
@@ -350,15 +358,23 @@ function metric(id: CandidateId): DailyReadingMetric {
   const referenceMetricId = mapping.referenceMetricId ?? id;
   const definition = getV2MetricDefinition(referenceMetricId);
   if (!definition) throw new Error("Daily reading metric definition missing");
+  const effectivePlaySourceNote = ["M034", "M036"].includes(referenceMetricId)
+    ? `${mapping.sourceNote ?? "来自 bi-v1 同平台、同日期、同维度的独立结果。"} 仅接收 ${BI_V1_EFFECTIVE_PLAY_RULE_VERSION} 有效观看规则；规则不符或缺失为无效值，非 READY 保留来源状态。`
+    : null;
   return { id, referenceMetricId, name: mapping.name ?? definition.name, unit: mapping.unit, authorityVersion: definition.authority.version,
     definition: mapping.definition ?? metricBusinessDefinition(definition.authority),
     formula: mapping.formula ?? (mapping.fields.length === 2 ? mapping.inputNames ? mapping.inputNames.join(" ÷ ") + (mapping.unit === "%" ? " × 100%" : "") : definition.authority.registeredFormula : null),
-    sourceNote: mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null),
+    sourceNote: effectivePlaySourceNote ?? mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null),
     inputs: mapping.fields.map((key, index) => ({ key, name: mapping.inputNames?.[index] ?? mapping.name ?? getV2MetricDefinition(mapping.inputIds[index])!.name, unit: mapping.inputUnits?.[index] ?? (mapping.fields.length === 1 ? mapping.unit : mapping.payment ? "次" : key.endsWith("Amt") ? AMOUNT_UNIT : ["adsCount", "navCount", "totalClickedCount", "adsClickedNewCount", "totalVistCount", "navClickedNewCount", "newUserTotalClickedCount", "totalDownCountNoDedup", "visiCountNoDedup"].includes(key) ? "次" : ["totalDownCountByIp", "ipStatTotalCount"].includes(key) ? "IP·天" : "人") }))
   };
 }
 function acquisitionMetric(id: AcquisitionGroupMetric): DailyReadingMetric {
   return { ...metric(id), sourceNote: "来自 bi-v1 同平台、同维度、同日期范围的独立分组结果；日值与区间汇总分别直读，分组键保留原值。仅使用 READY 数值，不从分组推算总体或占比；分组全量完整性未知。" };
+}
+function playbackGroupMetric(id: BiV1PlaybackMetricCode): DailyReadingMetric {
+  const reading = metric(id);
+  return { ...reading, formula: id === "M036" ? reading.formula : `同视频类型${id === "M034" ? "有效观看" : "成功起播"}次数`,
+    sourceNote: `来自 bi-v1 同平台、同视频类型的逐日结果，类型键保留原值；分组全量完整性未知，不从分组补总体。区间仅汇总完整业务日、相同规则版本的次数及比率分子分母，不平均比率；缺日或未就绪不补 0。${id === "M097" ? "成功起播规则独立保留。" : `仅接收 ${BI_V1_EFFECTIVE_PLAY_RULE_VERSION} 有效观看规则。`}` };
 }
 const badSource = () => new UpstreamError("DAILY_SOURCE_CONFLICT", "日汇总数据结构或范围异常", 502);
 function assertScopeEcho(row: Record<string, unknown>, pid: string, date: string) {
@@ -383,8 +399,11 @@ function count(value: unknown, decimal = false) {
 }
 const rowSchema = z.object({ pid: z.string(), sumDate: z.string() }).loose();
 const envelopeSchema = z.object({ msg: z.object({ pageData: z.array(rowSchema) }).loose() }).loose();
+const failedPlaybackGroups = (error: unknown) => unavailableBiV1PlaybackGroups(error instanceof UpstreamError
+  && ["BI_V1_RESPONSE_INVALID", "BI_V1_SCOPE_CONFLICT", "BI_V1_VALUE_CONFLICT"].includes(error.code) ? "invalid_response" : "source_failure");
 export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery): Promise<DailyDashboardSuccess> }
 export class DailyDashboardService implements DailyDashboardExecutor {
+  protected projectPlaybackGroups = projectBiV1PlaybackGroups;
   constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date()) {}
   async execute(query: DailyDashboardQuery): Promise<DailyDashboardV2Success> {
     const fetchedAt = this.now().toISOString();
@@ -500,14 +519,22 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     })();
     const playbackDays = new Map<string, BiV1PlaybackDay>();
     let playbackFailure = false;
+    let playbackGroups: DailyPlaybackGroups | undefined;
     const playbackTask = (async () => {
       if (!sourceIds.some(id => mappings[id].biV1Playback)) return;
       try {
-        const result = await readBiV1PlaybackDays(this.client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] });
-        result.days.forEach(day => playbackDays.set(day.date, day));
-      } catch {
+        const scope = { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] };
+        const message = await queryBiV1Playback(this.client, scope);
+        if (query.boardId === "5.12") {
+          try { playbackGroups = this.projectPlaybackGroups(message, scope, today, playbackGroupMetric); }
+          catch (error) { playbackGroups = failedPlaybackGroups(error); }
+        }
+        try { aggregateBiV1Playback(message, scope).forEach(day => playbackDays.set(day.date, day)); }
+        catch { playbackFailure = true; playbackDays.clear(); }
+      } catch (error) {
         playbackFailure = true;
         playbackDays.clear();
+        if (query.boardId === "5.12") playbackGroups = failedPlaybackGroups(error);
       }
     })();
     const biV1MetricDays = new Map<string, BiV1MetricDay>();
@@ -675,6 +702,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       schemaVersion: DAILY_DASHBOARD_VERSION, query, queryId: randomUUID(), fetchedAt,
       timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: sourceApis(ids),
       ...(acquisitionGroups ? { acquisitionGroups } : {}),
+      ...(playbackGroups ? { playbackGroups } : {}),
       series: ids.map(id => {
         const points = Array.from({ length: days }, (_, i) => pointFor(id, new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10)));
         return { metric: metric(id), points, periodStatistics: periodStatistics(id, points, query, today) };

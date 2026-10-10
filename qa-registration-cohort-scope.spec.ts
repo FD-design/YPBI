@@ -14,7 +14,7 @@ const generated=JSON.parse(execFileSync("bun",["-e",`
 const url=base+"/dashboards/public?board=5.8&pid=PH&start=2026-07-01&end=2026-08-31&compare=previous";
 const matrix=(page:Page)=>page.locator(".dashboard-panel").filter({has:page.getByRole("heading",{name:"注册留存明细",exact:true})});
 const card=(page:Page,name:string)=>page.locator(".dashboard-metric-card").filter({has:page.getByRole("link",{name,exact:true})}).first();
-async function fixtures(page:Page,splitState=false) {
+async function fixtures(page:Page,options:{splitState?:boolean;d1Status?:()=>"SOURCE_INCOMPLETE"|"READY"}={}) {
   const calls:DailyDashboardQuery[]=[],errors:string[]=[];
   page.on("pageerror",error=>errors.push(error.message));
   await page.route("**/api/bi/v2/**",async route=>{
@@ -35,8 +35,9 @@ async function fixtures(page:Page,splitState=false) {
         const retention=/^M02[0-3](\.|$)/.test(id),n=retention?scope:100,denominator=retention?10:200;
         const value=series.metric.inputs.length===2?n/denominator:n;
         const point:DailyDashboardSuccess["data"]["series"][number]["points"][number]={date,state:"available",sourceStatus:"READY",value,inputs:series.metric.inputs.map((input,j)=>({key:input.key,value:j===0?n:denominator}))};
-        if(splitState && id==="M021.android") {point.inputs[1].value=7;point.value=1/7;}
-        if(splitState && ["M020.android","M022.android","M023.android"].includes(id)) return {...point,state:id==="M020.android"?"no_record":id==="M022.android"?"source_failure":"immature",sourceStatus:id==="M020.android"?undefined:id==="M022.android"?"FAILED":"NOT_MATURE",value:null,inputs:point.inputs.map(input=>({...input,value:null}))};
+        if(options.d1Status?.()==="SOURCE_INCOMPLETE" && /^M020\.(android|ios|natural|internal)$/.test(id)) return {...point,state:"no_value",sourceStatus:"SOURCE_INCOMPLETE",value:null,inputs:point.inputs.map(input=>({...input,value:null}))};
+        if(options.splitState && id==="M021.android") {point.inputs[1].value=7;point.value=1/7;}
+        if(options.splitState && ["M020.android","M022.android","M023.android"].includes(id)) return {...point,state:id==="M020.android"?"no_record":id==="M022.android"?"source_failure":"immature",sourceStatus:id==="M020.android"?undefined:id==="M022.android"?"FAILED":"NOT_MATURE",value:null,inputs:point.inputs.map(input=>({...input,value:null}))};
         return point;
       })}));
       body=result;
@@ -64,10 +65,11 @@ test("五范围联动卡片矩阵，保持活跃与公共查询并恢复历史�
   await page.goForward();await expect(matrix(page).getByRole("button",{name:"注册日分组：内部导量",exact:true})).toBeVisible();
   await page.reload();await expect(matrix(page).getByRole("button",{name:"注册日分组：内部导量",exact:true})).toBeVisible();
   const before=control.calls.length;await page.getByRole("button",{name:"刷新看板",exact:true}).click();
+  expect(await page.locator(".ui-toast").allTextContents()).toEqual([]);
   await expect.poll(()=>control.calls.length).toBeGreaterThan(before);
   await expect(matrix(page).getByRole("button",{name:"注册日分组：内部导量",exact:true})).toBeVisible();
   const scope=JSON.parse(new URL(page.url()).searchParams.get("view")!).reading.cohortScope;expect(scope).toBe("internal");
-  await page.getByRole("button",{name:"关闭提示",exact:true}).click();
+  await expect(page.locator(".ui-toast")).toHaveCount(0);
   for(const width of [1280,1440,1024,390]) {
     await page.setViewportSize({width,height:900});await matrix(page).scrollIntoViewIfNeeded();
     await expect(matrix(page).getByRole("button",{name:"注册日分组：内部导量",exact:true})).toBeVisible();
@@ -96,7 +98,7 @@ test("切换关闭详情并重置分页，矩阵与整页导出只含当前D0分
 });
 
 test("D1缺失D3独立可读，单周期失败与未成熟保留状态和直接分母",async({page})=>{
-  const control=await fixtures(page,true);await page.goto(url);await choose(page,"注册Android");
+  const control=await fixtures(page,{splitState:true});await page.goto(url);await choose(page,"注册Android");
   await expect(matrix(page).getByRole("button",{name:"2026-07-01 次日 当日未返回记录 · 待验数",exact:true})).toBeVisible();
   await expect(matrix(page).getByRole("button",{name:"2026-07-01 第 7 天 数据异常 · 待验数",exact:true})).toBeVisible();
   await expect(matrix(page).getByRole("button",{name:"2026-07-01 第 30 天 待成熟 · 待验数",exact:true})).toBeVisible();
@@ -105,3 +107,29 @@ test("D1缺失D3独立可读，单周期失败与未成熟保留状态和直接�
   await expect(dialog.locator(".calculation-evidence")).toContainText("7");
   expect(control.errors).toEqual([]);
 });
+
+for(const [scope,label,value] of [["android","注册Android","10.00"],["ios","注册iOS","20.00"],["natural","自然新增","30.00"],["internal","内部导量","40.00"]] as const) {
+  test(`${label}D1来源未就绪不补0，刷新READY恢复且保留分组`,async({page})=>{
+    let status:"SOURCE_INCOMPLETE"|"READY"="SOURCE_INCOMPLETE";
+    const control=await fixtures(page,{d1Status:()=>status});
+    const singleDay=new URL(url);singleDay.searchParams.set("end","2026-07-01");singleDay.searchParams.delete("compare");
+    await page.goto(singleDay.toString());await choose(page,label);
+    const d1=card(page,"注册用户D1留存率");
+    await expect(d1).toContainText("数据接入中");
+    await expect(d1.locator(".dashboard-metric-card__value")).toHaveCount(0);
+    await expect(matrix(page).getByRole("button",{name:"2026-07-01 次日 数据接入中 · 待验数",exact:true})).toBeVisible();
+    await expect(card(page,"注册用户D3留存率").locator(".dashboard-metric-card__value")).toContainText(value);
+
+    const before=control.calls.length;status="READY";
+    await page.getByRole("button",{name:"刷新看板",exact:true}).click();
+    expect(await page.locator(".ui-toast").allTextContents()).toEqual([]);
+    await expect.poll(()=>control.calls.length).toBeGreaterThan(before);
+    await expect(d1.locator(".dashboard-metric-card__value")).toContainText(value);
+    await expect(matrix(page).getByRole("button",{name:`2026-07-01 次日 ${value}%`,exact:true})).toBeVisible();
+    await expect(matrix(page).getByRole("button",{name:`注册日分组：${label}`,exact:true})).toBeVisible();
+    expect(JSON.parse(new URL(page.url()).searchParams.get("view")!).reading.cohortScope).toBe(scope);
+    expect(control.calls.slice(before)).toContainEqual({boardId:"5.8",pid:"PH",dateRange:["2026-07-01","2026-07-01"]});
+    await expect(page.locator(".ui-toast")).toHaveCount(0);
+    expect(control.errors).toEqual([]);
+  });
+}

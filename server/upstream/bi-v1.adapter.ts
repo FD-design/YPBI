@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { DAILY_PLAYBACK_MAX_GROUPS, DAILY_PLAYBACK_MAX_POINTS, DAILY_PLAYBACK_METRIC_IDS, type DailyPlaybackGroupResult, type DailyPlaybackGroups, type DailyPlaybackPoint, type DailyPlaybackSummary, type DailyReadingMetric } from "../../contracts/daily-dashboard";
 import { UpstreamError, type UpstreamClient } from "./client";
 
 export const BI_V1_PLAYBACK_API = "/api/admin/bi/v1/playback";
+export const BI_V1_EFFECTIVE_PLAY_RULE_VERSION = "effective_play_v3";
 const playbackMetricCodeSchema = z.enum(["M034", "M036", "M097"]);
 export type BiV1PlaybackMetricCode = z.infer<typeof playbackMetricCodeSchema>;
 
@@ -21,7 +23,7 @@ const rowSchema = z.object({
   unit: z.enum(["count", "ratio"]),
   dataStatus: dataStatusSchema,
   metricVersion: z.literal("bi-v1"),
-  ruleVersion: z.string().max(128)
+  ruleVersion: z.string().max(128).optional()
 }).loose();
 
 const successSchema = z.object({
@@ -51,7 +53,7 @@ export interface BiV1MetricQuery {
 
 export interface BiV1PlaybackMetricPoint {
   dataStatus: BiV1DataStatus | null;
-  state: "available" | "no_record" | "no_value" | "immature" | "source_failure" | "zero_denominator";
+  state: "available" | "no_record" | "no_value" | "invalid_value" | "immature" | "source_failure" | "zero_denominator";
   value: number | null;
   numerator: number | null;
   denominator: number | null;
@@ -76,6 +78,12 @@ function parseEnvelope(payload: unknown) {
   throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 数据结构无法识别", 502);
 }
 
+function assertPlaybackDimensions(row: BiV1MetricRow) {
+  if (Object.keys(row.dimensions).some(key => key !== "pid" && key !== "videoType")) {
+    throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "播放数据包含未请求的分组维度", 502);
+  }
+}
+
 export async function queryBiV1Playback(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
   const codes: readonly BiV1PlaybackMetricCode[] = ["M034", "M036", "M097"];
   const payload = await client.get(BI_V1_PLAYBACK_API, {
@@ -90,6 +98,7 @@ export async function queryBiV1Playback(client: Pick<UpstreamClient, "get">, que
   const message = parseEnvelope(payload);
   const requested = new Set(codes);
   for (const row of message.rows) {
+    assertPlaybackDimensions(row);
     if (!requested.has(row.metricCode) || row.dimensions.pid !== query.pid) {
       throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
     }
@@ -129,6 +138,7 @@ export function aggregateBiV1Playback(message: BiV1MetricMessage, query: Pick<Bi
   for (const row of message.rows) {
     if (!playbackCodes.has(row.metricCode)) continue;
     if (row.dimensions.pid !== query.pid) throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "播放数据 PID 与请求不一致", 502);
+    assertPlaybackDimensions(row);
     if (!row.businessDate) {
       const previous = globalStatuses.get(row.metricCode);
       if (previous && previous !== row.dataStatus) throw new UpstreamError("BI_V1_VALUE_CONFLICT", "播放指标范围状态不一致", 502);
@@ -156,8 +166,10 @@ export function aggregateBiV1Playback(message: BiV1MetricMessage, query: Pick<Bi
       continue;
     }
     const videoTypes = [...new Set(rows.map((row) => row.dimensions.videoType ?? ""))];
+    if (videoTypes.includes("") && videoTypes.length > 1) throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "播放总体与视频类型分组不能混合汇总", 502);
     let effective = 0;
     let starts = 0;
+    let invalidEffectiveRule = false;
     let unavailable: BiV1DataStatus | null = null;
     for (const videoType of videoTypes) {
       const find = (code: "M034" | "M036" | "M097") => rows.find((row) => row.metricCode === code && (row.dimensions.videoType ?? "") === videoType);
@@ -171,18 +183,24 @@ export function aggregateBiV1Playback(message: BiV1MetricMessage, query: Pick<Bi
         if (!unavailable || priority[status] > priority[unavailable]) unavailable = status;
         continue;
       }
-      const effectiveValue = safeCount(effectiveRow.value!, "有效观看次数");
       const startsValue = safeCount(startsRow.value!, "成功起播次数");
-      if (effectiveRow.unit !== "count" || startsRow.unit !== "count" || ratioRow.unit !== "ratio"
+      if (startsRow.unit !== "count" || startsRow.numerator !== startsValue || startsRow.denominator !== 0) {
+        throw new UpstreamError("BI_V1_VALUE_CONFLICT", "成功起播次数分子分母不一致", 502);
+      }
+      starts = safeCount(starts + startsValue, "成功起播次数合计");
+      if (effectiveRow.ruleVersion !== BI_V1_EFFECTIVE_PLAY_RULE_VERSION || ratioRow.ruleVersion !== BI_V1_EFFECTIVE_PLAY_RULE_VERSION) {
+        invalidEffectiveRule = true;
+        continue;
+      }
+      const effectiveValue = safeCount(effectiveRow.value!, "有效观看次数");
+      if (effectiveRow.unit !== "count" || ratioRow.unit !== "ratio"
         || effectiveRow.numerator !== effectiveValue || effectiveRow.denominator !== 0
-        || startsRow.numerator !== startsValue || startsRow.denominator !== 0
         || effectiveValue > startsValue
         || ratioRow.numerator !== effectiveValue || ratioRow.denominator !== startsValue
         || (startsValue === 0 ? ratioRow.value !== null : Math.abs(ratioRow.value! - effectiveValue / startsValue) > 1e-12)) {
         throw new UpstreamError("BI_V1_VALUE_CONFLICT", "播放指标分子分母不一致", 502);
       }
       effective = safeCount(effective + effectiveValue, "有效观看次数合计");
-      starts = safeCount(starts + startsValue, "成功起播次数合计");
     }
     if (unavailable) {
       days.push({ date, metrics: {
@@ -191,9 +209,11 @@ export function aggregateBiV1Playback(message: BiV1MetricMessage, query: Pick<Bi
       continue;
     }
     days.push({ date, metrics: {
-      M034: { dataStatus: "READY", state: "available", value: effective, numerator: effective, denominator: 0 },
+      M034: invalidEffectiveRule ? { ...unavailablePoint(null, "invalid_value"), dataStatus: "READY" }
+        : { dataStatus: "READY", state: "available", value: effective, numerator: effective, denominator: 0 },
       M097: { dataStatus: "READY", state: "available", value: starts, numerator: starts, denominator: 0 },
-      M036: starts === 0
+      M036: invalidEffectiveRule ? { ...unavailablePoint(null, "invalid_value"), dataStatus: "READY" }
+        : starts === 0
         ? { dataStatus: "READY", state: "zero_denominator", value: null, numerator: effective, denominator: starts }
         : { dataStatus: "READY", state: "available", value: effective / starts, numerator: effective, denominator: starts }
     } });
@@ -207,4 +227,83 @@ export async function readBiV1PlaybackDays(client: Pick<UpstreamClient, "get">, 
     includeIncomplete: true
   });
   return { message, days: aggregateBiV1Playback(message, query) };
+}
+
+export function unavailableBiV1PlaybackGroups(state: "source_failure" | "invalid_response"): DailyPlaybackGroups {
+  return { videoType: { dimension: "videoType", completeness: "unknown", day: { state, scopeStatuses: [], generatedAt: null, watermark: null }, groups: [] } };
+}
+
+const emptyGroupReading = (metric: DailyReadingMetric, state: DailyPlaybackSummary["state"], ruleVersion: string | null = null): DailyPlaybackSummary => ({
+  state, value: null, inputs: metric.inputs.map(input => ({ key: input.key, value: null })), ruleVersion
+});
+
+function playbackGroupSummary(metric: DailyReadingMetric, points: DailyPlaybackPoint[], endDate: string, today: string): DailyPlaybackSummary {
+  const versions = new Set(points.map(point => point.ruleVersion));
+  const ruleVersion = versions.size === 1 ? points[0].ruleVersion : null;
+  if (endDate >= today) return emptyGroupReading(metric, "immature", ruleVersion);
+  if (points.some(point => !["available", "zero_denominator"].includes(point.state))
+    || versions.size !== 1 || points.length > 1 && !ruleVersion) return emptyGroupReading(metric, "incomplete", ruleVersion);
+  const sums = metric.inputs.map((_, index) => points.reduce((sum, point) => sum + (point.inputs[index].value ?? Number.NaN), 0));
+  if (sums.some(value => !Number.isSafeInteger(value) || value < 0)) return emptyGroupReading(metric, "invalid_value", ruleVersion);
+  const ratio = metric.id === "M036";
+  const value = ratio ? sums[1] === 0 ? null : sums[0] / sums[1] : sums[0];
+  return { state: ratio && sums[1] === 0 ? "zero_denominator" : "available", value,
+    inputs: metric.inputs.map((input, index) => ({ key: input.key, value: sums[index] })), sourceStatus: "READY", ruleVersion };
+}
+
+/** Project the same day response independently; malformed groups do not supply or repair the overall result. */
+export function projectBiV1PlaybackGroups(message: BiV1MetricMessage, query: Pick<BiV1MetricQuery, "pid" | "startDate" | "endDate">,
+  today: string, metricFor: (id: BiV1PlaybackMetricCode) => DailyReadingMetric): DailyPlaybackGroups {
+  const dates: string[] = [];
+  for (let date = query.startDate; date <= query.endDate; date = nextDate(date)) dates.push(date);
+  const grouped = new Map<string, Map<string, BiV1MetricRow[]>>();
+  const scopes = new Map<string, BiV1MetricRow[]>();
+  const identity = (code: BiV1PlaybackMetricCode, date?: string) => JSON.stringify([code, date ?? null]);
+  for (const row of message.rows) {
+    if (row.dimensions.pid !== query.pid || row.businessDate && (row.businessDate < query.startDate || row.businessDate > query.endDate)) return unavailableBiV1PlaybackGroups("invalid_response");
+    try { assertPlaybackDimensions(row); } catch { return unavailableBiV1PlaybackGroups("invalid_response"); }
+    const key = row.dimensions.videoType;
+    if (key === undefined) {
+      if (row.dataStatus === "READY") continue;
+      const id = identity(row.metricCode, row.businessDate);
+      scopes.set(id, [...(scopes.get(id) ?? []), row]);
+      continue;
+    }
+    if (!key.trim() || row.dataStatus === "READY" && !row.businessDate) return unavailableBiV1PlaybackGroups("invalid_response");
+    const rows = grouped.get(key) ?? new Map<string, BiV1MetricRow[]>();
+    const id = identity(row.metricCode, row.businessDate);
+    rows.set(id, [...(rows.get(id) ?? []), row]);
+    grouped.set(key, rows);
+  }
+  if (grouped.size > DAILY_PLAYBACK_MAX_GROUPS || grouped.size * DAILY_PLAYBACK_METRIC_IDS.length * (dates.length + 1) > DAILY_PLAYBACK_MAX_POINTS
+    || [...scopes.values()].some(rows => rows.length !== 1)) return unavailableBiV1PlaybackGroups("invalid_response");
+  const scopeRows = [...scopes.values()].flat();
+  if (scopeRows.some(row => row.businessDate && scopes.has(identity(row.metricCode)) && scopes.get(identity(row.metricCode))![0].dataStatus !== row.dataStatus)) return unavailableBiV1PlaybackGroups("invalid_response");
+  const day: DailyPlaybackGroupResult["day"] = { state: message.rows.length ? "returned" : "empty", generatedAt: message.generatedAt, watermark: message.watermark,
+    scopeStatuses: scopeRows.map(row => ({ metricId: row.metricCode, sourceStatus: row.dataStatus as "PROCESSING" | "NOT_MATURE" | "SOURCE_INCOMPLETE" | "FAILED", ...(row.businessDate ? { businessDate: row.businessDate } : {}) })) };
+  return { videoType: { dimension: "videoType", completeness: "unknown", day, groups: [...grouped].map(([key, rows]) => {
+    const points = new Map<BiV1PlaybackMetricCode, DailyPlaybackPoint[]>(DAILY_PLAYBACK_METRIC_IDS.map(id => [id, []]));
+    for (const date of dates) {
+      const selected = DAILY_PLAYBACK_METRIC_IDS.flatMap(id => rows.get(identity(id, date)) ?? rows.get(identity(id)) ?? scopes.get(identity(id, date)) ?? scopes.get(identity(id)) ?? [])
+        .map(row => ({ ...row, businessDate: date, dimensions: { pid: query.pid, videoType: key } }));
+      let values: BiV1PlaybackDay["metrics"];
+      try { values = aggregateBiV1Playback({ ...message, rows: selected }, { ...query, startDate: date, endDate: date })[0].metrics; }
+      catch { values = { M034: unavailablePoint(null, "invalid_value"), M036: unavailablePoint(null, "invalid_value"), M097: unavailablePoint(null, "invalid_value") }; }
+      for (const id of DAILY_PLAYBACK_METRIC_IDS) {
+        const metric = metricFor(id), point = values[id];
+        const sourceRows = selected.filter(row => row.metricCode === id);
+        const sourceRule = sourceRows.length === 1 ? sourceRows[0].ruleVersion : undefined;
+        const ruleVersion = sourceRule?.trim() ? sourceRule : null;
+        const missingRule = ["available", "zero_denominator"].includes(point.state) && !ruleVersion;
+        const inputs = missingRule ? metric.inputs.map(() => null) : id === "M036" ? [point.numerator, point.denominator] : [point.value];
+        const sourceStatus = sourceRows.length === 1 ? sourceRows[0].dataStatus : point.dataStatus;
+        points.get(id)!.push({ date, state: missingRule ? "invalid_value" : point.state, value: missingRule ? null : point.value, ruleVersion,
+          inputs: metric.inputs.map((input, index) => ({ key: input.key, value: inputs[index] })), ...(sourceStatus ? { sourceStatus } : {}) });
+      }
+    }
+    return { key, label: key, series: DAILY_PLAYBACK_METRIC_IDS.map(id => {
+      const metric = metricFor(id), daily = points.get(id)!;
+      return { metric, points: daily, summary: playbackGroupSummary(metric, daily, query.endDate, today) };
+    }) };
+  }) } };
 }

@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactElement, type ReactNode } from "react";
 import { Search } from "lucide-react";
-import { Chart } from "../../components/Chart";
+import { Chart, escapeChartTooltipText } from "../../components/Chart";
 import { ChartDataTable } from "../../components/ui/ChartDataTable";
 import { Button } from "../../components/ui/Button";
 import { MenuSelect } from "../../components/ui/MenuSelect";
@@ -10,6 +10,7 @@ import { CHART_PALETTE } from "../../theme/tokens";
 import { DataOriginProvider } from "../components/DataOrigin";
 import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
 import { missingCalculation } from "../features/dashboards/CalculationEvidence";
+import { ComparisonDetails } from "../features/dashboards/ComparisonDetails";
 import { LiveSeriesDetails, LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
 import { LiveDashboardContext, liveDailyReferenceRows, liveExportMetadata, livePeriodStatus, liveValue, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
@@ -28,6 +29,11 @@ export interface ConnectedCategorySource {
   unit: (live: LiveDashboardReading, id: string, group: string) => string;
   guidanceKey: string;
   inlineInputs?: boolean;
+  notice?: (live: LiveDashboardReading, id: string, group: string) => string | null;
+  reading?: (live: LiveDashboardReading, id: string) => LiveDashboardReading;
+  detailExport?: (live: LiveDashboardReading, row: ConnectedDimensionRow) => ReactElement | undefined;
+  detailModel?: (live: LiveDashboardReading, id: string, original: DashboardMetricCardModel) => DashboardMetricCardModel | undefined;
+  comparisonIssue?: (live: LiveDashboardReading, row: ConnectedDimensionRow) => string | null;
   cross?: (group: string) => { rows: { key: string; label: string }[]; columns: string[] } | undefined;
 }
 type SelectProps = { label: string; value: string; onChange: (value: string) => void; values: { value: string; label: string }[] };
@@ -44,8 +50,9 @@ export function ConnectedCategoryDimension({ spec, live, pending, open, onSelect
   const filtered = rows.filter(row => `${row.name} ${row.key}`.toLowerCase().includes(search.trim().toLowerCase()));
   const inputs = unit === "%" || unit.includes("/人") ? rows.find(row => row.calculation)?.calculation ?? missingCalculation(metric.definition, live.query.dateRange.join(" 至 "), "待接入", unit === "%") : undefined;
   const cross = source.cross?.(group);
+  const notice = source.notice?.(live, id, group) ?? (!source.supported(id, group) ? `${metric.name} · ${group}真实分组待接入` : null);
   const format = (value: number | null) => `${liveValue(value, unit)}${value === null ? "" : unit}`;
-  const difference = (row: ConnectedDimensionRow) => row.value === null || row.baseline === null ? "—" : `${liveValue(row.value - row.baseline, unit)}${unit === "%" ? " 个百分点" : unit}`;
+  const difference = (row: ConnectedDimensionRow) => source.comparisonIssue?.(live, row) ?? (row.value === null || row.baseline === null ? "—" : `${liveValue(row.value - row.baseline, unit)}${unit === "%" ? " 个百分点" : unit}`);
   const inputValue = (value: { value: number | null; unit: string } | undefined) => value?.value == null ? "—" : `${liveValue(value.value, value.unit)} ${value.unit}`;
   const status = (row: ConnectedDimensionRow) => `${row.state}${row.freshness ? ` · ${row.freshness}` : ""}`;
   const select = (props: SelectProps) => renderSelect ? renderSelect(props) : <MenuSelect label={props.label} ariaLabel={props.label} value={props.value} density="compact" onChange={props.onChange} groups={[{ label: props.label, options: props.values }]} />;
@@ -58,18 +65,21 @@ export function ConnectedCategoryDimension({ spec, live, pending, open, onSelect
       metric: { id: row.seriesId, name: `${metric.name} · ${row.name}`, definitionLabel: metric.definition, aggregationLabel: live.query.dateRange.join(" 至 ") },
       result: { status: "no_values", label: "待接入", contextLabel: "真实后台查询", retryable: false }
     };
-    const selected = connectedDimensionReading(live, row.seriesId);
+    const selected = (source.reading ?? connectedDimensionReading)(live, row.seriesId);
     const current = selected.state.status === "success" ? selected.state.data : null;
     const previous = selected.comparison?.state.status === "success" ? selected.comparison.state.data : null;
+    const detailModel = source.detailModel?.(selected, row.seriesId, original);
+    const records = row.series && current && <><LiveSeriesDetails series={row.series} result={current} />{row.baselineSeries && previous && <LiveSeriesDetails series={row.baselineSeries} result={previous} />}</>;
     const metricExport = row.series && current && live.canExport && !live.controls.dirty
-      ? <LiveSeriesExport series={row.series} result={current} comparison={previous} comparisonStatus={livePeriodStatus(selected, true)}
+      ? source.detailExport?.(live, row) ?? <LiveSeriesExport series={row.series} result={current} comparison={previous} comparisonStatus={livePeriodStatus(selected, true)}
         dayReferences={liveDailyReferenceRows(selected, [row.seriesId])} stale={Boolean(selected.state.status === "success" && selected.state.refreshError || selected.comparison?.state.status === "success" && selected.comparison.state.refreshError)} />
       : <Button disabled>导出未就绪</Button>;
     open(`${spec.title} · ${row.name}`, <DataOriginProvider value="pending">
       <p>{metric.name} · {row.name} · 主值 {live.query.dateRange[1]}</p><p>当前值 {format(row.value)} · {status(row)}</p>
       {compared && <p>对比 {live.comparison!.query.dateRange[1]} · {format(row.baseline)} · {row.baselineState}；差值 {difference(row)}</p>}
-      <LiveDashboardContext.Provider value={selected}><PreviewMetricCard model={original} open={open} retry={selected.retry} exportAction={metricExport} /></LiveDashboardContext.Provider>
-      {row.series && current && <details><summary>来源记录与计算输入</summary><LiveSeriesDetails series={row.series} result={current} />{row.baselineSeries && previous && <LiveSeriesDetails series={row.baselineSeries} result={previous} />}</details>}
+      <LiveDashboardContext.Provider value={detailModel ? null : selected}><PreviewMetricCard model={detailModel ?? original} open={open} retry={selected.retry} exportAction={metricExport} readingContext={detailModel ? records : undefined}
+        comparisonContext={detailModel?.result.reading && <>{detailModel.result.reading.comparisons.map((comparison, index) => <ComparisonDetails key={index} comparison={comparison} />)}{records}</>} /></LiveDashboardContext.Provider>
+      {records && <details><summary>来源记录与计算输入</summary>{records}</details>}
     </DataOriginProvider>);
   };
   return <DataOriginProvider value="pending"><DashboardPanel title={spec.title} guidanceKey={source.guidanceKey} note={`${metric.name} · ${live.query.dateRange.join(" 至 ")} · 主值 ${live.query.dateRange[1]}`} tools={<>
@@ -78,10 +88,10 @@ export function ConnectedCategoryDimension({ spec, live, pending, open, onSelect
     <div className="board-control-group board-control-group--secondary"><span>排序</span>{select({label:`${spec.title}排序`, value:order, onChange:value => { setOrder(value as BoardSortOrder); notify({ order: value as BoardSortOrder }); }, values:[{ value: "position", label: "按业务顺序" }, { value: "desc", label: "按当前值降序" }]})}</div>
     {cross && exported}
   </>}>
-    {!source.supported(id, group) && <p className="dashboard-table-context" role="status">{metric.name} · {group}真实分组待接入</p>}
+    {notice && <p className="dashboard-table-context" role="status">{notice}</p>}
     {cross ? <PivotTable label={`${spec.title}二维交叉表`} rowHeading={group} columns={cross.columns} rows={cross.rows.map(row => ({ ...row, values: cross.columns.map(() => "待接入") }))} /> : <>
     <div className="board-preview__category-scroll" aria-label={`${spec.title}全部分类图`}><Chart theme="v13" ariaLabel={`${spec.title}分类比较`} style={{ height: Math.max(260, rows.length * (compared ? 46 : 32) + 60) }} onClick={params => { const row = rows[(params as { dataIndex: number }).dataIndex]; if (row) point(row); }} option={{
-      grid: HORIZONTAL_BAR_GRID, tooltip: { trigger: "axis", formatter: (params: { dataIndex: number }[]) => { const row = rows[params[0]?.dataIndex]; return row ? `${row.name}<br/>当前 ${live.query.dateRange[1]} · ${format(row.value)} · ${status(row)}${compared ? `<br/>对比 ${live.comparison!.query.dateRange[1]} · ${format(row.baseline)} · ${row.baselineState}<br/>差值 ${difference(row)}` : ""}` : ""; } },
+      grid: HORIZONTAL_BAR_GRID, tooltip: { trigger: "axis", formatter: (params: { dataIndex: number }[]) => { const row = rows[params[0]?.dataIndex]; return row ? `${escapeChartTooltipText(row.name)}<br/>当前 ${live.query.dateRange[1]} · ${format(row.value)} · ${status(row)}${compared ? `<br/>对比 ${live.comparison!.query.dateRange[1]} · ${format(row.baseline)} · ${row.baselineState}<br/>差值 ${difference(row)}` : ""}` : ""; } },
       xAxis: { type: "value", axisLabel: { hideOverlap: true, formatter: (value: number) => unit === "%" ? format(value) : liveValue(value, unit) } },
       yAxis: { type: "category", inverse: true, data: rows.map(row => row.name), axisLabel: { width: 132, overflow: "truncate" } },
       series: [{ name: "当前期", type: "bar", data: rows.map(row => row.value), label: horizontalBarEndLabel(format), barMaxWidth: 16, itemStyle: { color: CHART_PALETTE[0] } }, ...(compared ? [{ name: "对比期", type: "bar", data: rows.map(row => row.baseline), barMaxWidth: 16, itemStyle: { color: CHART_PALETTE[1] } }] : [])]

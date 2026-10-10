@@ -3,13 +3,13 @@ import { DashboardCardModeControl } from "./DashboardCardMode";
 import { LiveHeaderExportContext, useLiveDashboard } from "./LiveDashboardContext";
 import type { DateRangeValue } from "../../../components/ui/date-range-model";
 
-function withAction(node: ReactNode, action: () => void): ReactNode {
+function withAction(node: ReactNode, action: () => void, mode: "append" | "replace" = "append"): ReactNode {
   if (!isValidElement(node)) return node;
   const element = node as ReactElement<{ onClick?: (...args: unknown[]) => void; children?: ReactNode }>;
   if (!element.props.onClick && element.type !== "button") {
-    return cloneElement(element, { children: isValidElement(element.props.children) ? withAction(element.props.children, action) : Children.map(element.props.children, child => withAction(child, action)) });
+    return cloneElement(element, { children: isValidElement(element.props.children) ? withAction(element.props.children, action, mode) : Children.map(element.props.children, child => withAction(child, action, mode)) });
   }
-  return cloneElement(element, { onClick: (...args: unknown[]) => { element.props.onClick?.(...args); action(); } });
+  return cloneElement(element, { onClick: (...args: unknown[]) => { if (mode === "append") element.props.onClick?.(...args); action(); } });
 }
 
 function samePresentation(target: ReactNode, source: ReactNode) {
@@ -49,5 +49,5 @@ export function DashboardActions({ favorite, copyLink, refresh, fullscreen, expo
   favorite?: ReactNode; copyLink?: ReactNode; refresh?: ReactNode; fullscreen?: ReactNode; exportAction?: ReactNode;
 }) {
   const live = useLiveDashboard();
-  return <><DashboardCardModeControl />{favorite}{copyLink}{live ? withAction(refresh, live.retry) : refresh}{fullscreen}<LiveHeaderExportContext.Provider value={Boolean(live)}>{exportAction}</LiveHeaderExportContext.Provider></>;
+  return <><DashboardCardModeControl />{favorite}{copyLink}{live ? withAction(refresh, live.retry, "replace") : refresh}{fullscreen}<LiveHeaderExportContext.Provider value={Boolean(live)}>{exportAction}</LiveHeaderExportContext.Provider></>;
 }

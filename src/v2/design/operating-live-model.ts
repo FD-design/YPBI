@@ -5,6 +5,7 @@ import { shiftDate } from "../../components/ui/date-range-model";
 import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, type DetailColumn } from "./operating-detail-columns";
 import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
 import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
+import { metricNumberFormatOptions } from "../../components/metric-number-format";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
@@ -87,7 +88,7 @@ export function operatingLiveSummary(live: LiveDashboardReading, resources: Oper
   });
   return OPERATING_SUMMARY_IDS.map(metricId => {
     const column = summaryColumn(metricId), value = rows.find(row => row.pid === platform)?.values[DETAIL_COLUMNS.indexOf(column)];
-    const original: DashboardMetricCardModel = { metric: { id:metricId, name:column.metric.name, definitionLabel:column.metric.definition, aggregationLabel:date }, result: value?.current != null ? { status:"available",completeness:"unknown",refresh:{status:"idle"},value:{raw:value.current,display:(value.current*(column.kind==="ratio"?100:1)).toLocaleString("zh-CN",{maximumFractionDigits:2}),unit:column.unit},comparison:null,trendKind:"line",trend:{current:[],comparison:null},validationLabel:"演示数据",watermarkLabel:"" } : {status:"unsupported",label:"待接口支持",contextLabel:date,retryable:false} };
+    const original: DashboardMetricCardModel = { metric: { id:metricId, name:column.metric.name, definitionLabel:column.metric.definition, aggregationLabel:date }, result: value?.current != null ? { status:"available",completeness:"unknown",refresh:{status:"idle"},value:{raw:value.current,display:(value.current*(column.kind==="ratio"?100:1)).toLocaleString("zh-CN",column.kind==="currency"||column.kind==="average"?metricNumberFormatOptions(value.current,column.unit):{maximumFractionDigits:2}),unit:column.unit},comparison:null,trendKind:"line",trend:{current:[],comparison:null},validationLabel:"演示数据",watermarkLabel:"" } : {status:"unsupported",label:"待接口支持",contextLabel:date,retryable:false} };
     const id = OPERATING_LIVE_IDS[original.metric.id + ":overall"];
     if (platform === "all" || !live.metricIds.includes(id)) return original;
     const result = liveMetricModel({ ...original, metric: { ...original.metric, id } }, { ...live, query: { ...live.query, pid: platform, dateRange: [date, date] }, comparison: undefined,

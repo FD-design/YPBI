@@ -101,6 +101,7 @@ test("主值、详情趋势、比较和导出保留对应日期，不平均多�
 });
 
 test("实际组件与详情卡渲染真实平台值，计数不生成比率分母表", async () => {
+  await import("echarts/core");
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", { configurable: true, value: { location: new URL("http://localhost/dashboards/public?board=5.12") } });
   try {

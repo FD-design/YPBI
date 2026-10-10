@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { DataOriginProvider } from "../components/DataOrigin";
 import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
 import { RetentionMatrix, type RetentionMatrixRow } from "../features/dashboards/RetentionMatrix";
@@ -14,16 +14,35 @@ import { MenuSelect } from "../../components/ui/MenuSelect";
 import { REGISTRATION_COHORT_SCOPES, REGISTRATION_RETENTION_WINDOWS, isReadableRegistrationCohortPoint, registrationCohortMetricId, registrationCohortScopeLabel, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
 
 const windows = REGISTRATION_RETENTION_WINDOWS;
+function usePageRefresh(key: string, revision: number, enabled: boolean, retry: () => void) {
+  const previous = useRef({ key, revision });
+  useEffect(() => {
+    const last = previous.current;
+    previous.current = { key, revision };
+    // A changed business key already starts its own request. A page refresh
+    // retries the same resource without discarding its last successful result.
+    if (enabled && last.key === key && last.revision !== revision) retry();
+  }, [key, revision, enabled, retry]);
+}
+function cohortState(state: V2ResourceState<DailyDashboardSuccess | null>, query: DailyDashboardQuery): V2ResourceState<DailyDashboardSuccess> {
+  if (state.status !== "success") return state;
+  const actual = state.data?.data.query;
+  return actual && actual.boardId === query.boardId && actual.pid === query.pid
+    && actual.dateRange.every((date, index) => date === query.dateRange[index])
+    ? { ...state, data: state.data! } : { status: "loading" };
+}
 export function useCohortReading(live: LiveDashboardReading | null, range: {start:string;end:string}) {
   const query = live ? {...live.query,dateRange:[range.start,range.end] as [string,string]} : null;
   const same = query?.dateRange.every((date,i)=>date===live!.query.dateRange[i]);
-  const key = JSON.stringify([query,live?.state.status==="success"?live.state.data.data.queryId:live?.state.status]);
+  const key = JSON.stringify([query,live?.metricIds,Boolean(same)]);
   const extra=useV2Resource(key,signal=>!query||same?Promise.resolve(null):fetchDailyDashboard(query,live!.metricIds,signal));
   const before=query?{...query,dateRange:[shiftDate(range.start,-((Date.parse(range.end)-Date.parse(range.start))/86400000+1)),shiftDate(range.start,-1)] as [string,string]}:null;
-  const previous=useV2Resource(JSON.stringify([key,before,Boolean(live?.comparison)]),signal=>!before||same||!live?.comparison?Promise.resolve(null):fetchDailyDashboard(before,live.metricIds,signal));
+  const previousKey = JSON.stringify([before,live?.metricIds,Boolean(same),Boolean(live?.comparison)]);
+  const previous=useV2Resource(previousKey,signal=>!before||same||!live?.comparison?Promise.resolve(null):fetchDailyDashboard(before,live.metricIds,signal));
+  usePageRefresh(key, live?.refreshRevision ?? 0, Boolean(query && !same), extra.retry);
+  usePageRefresh(previousKey, live?.refreshRevision ?? 0, Boolean(before && !same && live?.comparison), previous.retry);
   if(!live||!query||same)return live;
-  const state:V2ResourceState<DailyDashboardSuccess>=extra.state.status==="success"?extra.state.data?{...extra.state,data:extra.state.data}:{status:"loading"}:extra.state;
-  return {...live,query,state,retry:()=>{extra.retry();previous.retry();},comparison:live.comparison&&before?{...live.comparison,query:before,state:previous.state}:undefined};
+  return {...live,query,state:cohortState(extra.state,query),retry:()=>{extra.retry();if(live.comparison)previous.retry();},comparison:live.comparison&&before?{...live.comparison,query:before,state:cohortState(previous.state,before)}:undefined};
 }
 export function connectedCohortRows(query: DailyDashboardQuery, state: V2ResourceState<DailyDashboardSuccess | null>, scope: RegistrationCohortScope = "overall"): RetentionMatrixRow[] {
   const series = state.status === "success" ? state.data?.data.series ?? [] : [];

@@ -47,3 +47,19 @@ test("次数、人均广告、订单、ARPPU 与端别比值单位独立", () =>
   assert.equal(formatDetailValue(2.5, "platformRatio"), "2.5 : 1");
   assert.equal(detailChange(2.5, 2, "platformRatio"), null);
 });
+
+test("小额人均金额和次数保留四位精度，不改变其他类型与单位样式", () => {
+  for (const value of [.004, -.004, 0, 12345.6789]) {
+    const formatted = value === 12345.6789 ? "12,345.68" : String(value);
+    assert.equal(formatDetailValue(value, "currency", true, "元/人"), `${formatted} 元/人`);
+    assert.equal(formatDetailValue(value, "currency", false, "元/人"), formatted);
+    assert.equal(formatDetailValue(value, "currency", true, "USD/人"), `$${formatted}/人`);
+    assert.equal(formatDetailValue(value, "average", true, "次/人"), `${formatted} 次/人`);
+  }
+  for (const kind of ["currency", "average"] as const) assert.equal(formatDetailValue(null, kind, false, "元/人"), "—");
+  assert.equal(formatDetailValue(.004, "currency", true, "元"), "0 元");
+  assert.equal(formatDetailValue(.004, "currency", true, "USD"), "$0");
+  assert.equal(formatDetailValue(.004, "ratio"), "0.40%");
+  assert.equal(formatDetailValue(.004, "count", false), "0");
+  assert.equal(formatDetailValue(64 / 3600, "duration", false, "小时"), "0.01778");
+});

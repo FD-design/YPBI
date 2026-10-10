@@ -18,6 +18,12 @@ export interface GroupedTrendPoint {
   overall?:number|null; overallBasis?:CalculationBasis; shares?:Record<string,number|null>;
   comparison?:{date:string;values:Record<string,number|null>;overall?:number|null;basis?:Record<string,CalculationBasis>;overallBasis?:CalculationBasis};
 }
+export function groupedTrendValueAxis(unit: string) {
+  return { type: "value" as const, name: unit, min: 0,
+    // Per-user averages use the chart engine's tick precision at every scale.
+    axisLabel: unit.includes("/人") ? {} : { formatter: (value: number) => unit === "%"
+      ? `${(value * 100).toFixed(0)}%` : value.toLocaleString("zh-CN", { notation: "compact", maximumFractionDigits: 1 }) } };
+}
 export function useGroupSelection(groups:TrendGroup[], queryKey:string) {
   const key=queryKey+groups.map(group=>group.id).join("|"),all=groups.map(group=>group.id);
   const [state,setState]=useState({key,selected:all});
@@ -75,7 +81,7 @@ export function GroupedTrend({title,groups,points,kind,stack=false,unit,format,q
     {showLegend&&!overall&&groups.length>6&&<label className="grouped-trend__search">查找分组<input aria-label={`${title}查找分组`} value={search} onChange={event=>setSearch(event.target.value.slice(0,100))}/></label>}
     {showLegend&&!overall&&groups.length>1&&<PaginatedLegend label={`${title}分组`} items={groups.filter(group=>group.label.toLowerCase().includes(search.toLowerCase())).map(group=>({...group,selected:selected.includes(group.id)}))} onToggle={id=>setSelected(selected.includes(id)?selected.filter(value=>value!==id):[...selected,id])} />}
     {!overall&&summary?.(selected)}
-    <Chart theme="v13" ariaLabel={`${title}日趋势`} style={{height:280}} onClick={params=>{const point=visible[(params as {dataIndex:number}).dataIndex];if(point)openPoint(point);}} option={{grid:{left:58,right:20,top:24,bottom:36},tooltip:{trigger:"axis",formatter:(params:{dataIndex:number}[])=>params[0]&&visible[params[0].dataIndex]?tooltip(visible[params[0].dataIndex]):""},xAxis:{type:"category",data:visible.map(point=>point.date),axisLabel:{formatter:(date:string)=>date.slice(5),hideOverlap:true}},yAxis:{type:"value",name:unit,min:0,axisLabel:{formatter:(value:number)=>unit==="%"?`${(value*100).toFixed(0)}%`:value.toLocaleString("zh-CN",{notation:"compact",maximumFractionDigits:1})}},series:shown.flatMap(group=>[{name:group.label,type:kind,data:visible.map(point=>value(point,group.id)),stack:stack&&!overall?"groups":undefined,connectNulls:false,showSymbol:visible.length<=7,symbolSize:7,barMaxWidth:36,itemStyle:{color:group.color},lineStyle:{color:group.color}},...(hasComparison?[{name:`${group.label}（对比）`,type:"line",data:visible.map(point=>previous(point,group.id)),connectNulls:false,showSymbol:false,lineStyle:{color:group.color,type:"dashed",width:1.5},itemStyle:{color:group.color}}]:[])])}} />
+    <Chart theme="v13" ariaLabel={`${title}日趋势`} style={{height:280}} onClick={params=>{const point=visible[(params as {dataIndex:number}).dataIndex];if(point)openPoint(point);}} option={{grid:{left:58,right:20,top:24,bottom:36},tooltip:{trigger:"axis",formatter:(params:{dataIndex:number}[])=>params[0]&&visible[params[0].dataIndex]?tooltip(visible[params[0].dataIndex]):""},xAxis:{type:"category",data:visible.map(point=>point.date),axisLabel:{formatter:(date:string)=>date.slice(5),hideOverlap:true}},yAxis:groupedTrendValueAxis(unit),series:shown.flatMap(group=>[{name:group.label,type:kind,data:visible.map(point=>value(point,group.id)),stack:stack&&!overall?"groups":undefined,connectNulls:false,showSymbol:visible.length<=7,symbolSize:7,barMaxWidth:36,itemStyle:{color:group.color},lineStyle:{color:group.color}},...(hasComparison?[{name:`${group.label}（对比）`,type:"line",data:visible.map(point=>previous(point,group.id)),connectNulls:false,showSymbol:false,lineStyle:{color:group.color,type:"dashed",width:1.5},itemStyle:{color:group.color}}]:[])])}} />
     <TrendRange dates={dates} values={points.map(point=>value(point,shown[0]?.id))} {...range} onChange={range.setRange}/>
     {showDataTable&&<ChartDataTable title={`${title}同口径数据表`} exportAction={exportAction}>
       <div className="grouped-trend__controls"><span>{allTable?"全部分组与总体":`已显示：${shown.map(group=>group.label).join("、")}`}</span><button type="button" onClick={()=>setAllTable(!allTable)}>{allTable?"仅查看已显示分组":"查看全部分组"}</button></div>

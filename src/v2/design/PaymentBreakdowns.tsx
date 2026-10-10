@@ -11,7 +11,7 @@ import { downloadPreviewWorkbook, type WorkbookSheet, type WorkbookCell } from "
 import { shiftDate } from "../../components/ui/date-range-model";
 import { demoMetric } from "./extended-board-model";
 import "./payment-breakdowns.css";
-import { useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
+import { liveValue, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { connectedPaymentSnapshot, connectedPaymentPoints, connectedPaymentUnit, ConnectedPaymentExport } from "./connected-payment-data";
 
@@ -60,7 +60,7 @@ export function NewOldPayment({range,compared,pending,onOpen}:Props) {
   const [measure,setMeasure]=useState("amount"),categories=groups("stage"),selection=useGroupSelection(categories,JSON.stringify(range));
   const read=(group?:string,before=false)=>live?connectedPaymentSnapshot(live,group?"stage":undefined,group,before?live.comparison?.query.dateRange[1]??range.end:range.end,before):paymentAggregate(before?previous(range):range,group?{stage:group}:{});
   const amountUnit=live?connectedPaymentUnit(live):"USD",arppuUnit=live?connectedPaymentUnit(live,"arppu"):"USD/人";
-  const total=read(),money=(value:number|null,perUser=false)=>value===null?"—":value.toLocaleString("zh-CN",{maximumFractionDigits:2})+" "+(perUser?arppuUnit:amountUnit);
+  const total=read(),money=(value:number|null,perUser=false)=>value===null?"—":(perUser&&arppuUnit==="元/人"?liveValue(value,arppuUnit):value.toLocaleString("zh-CN",{maximumFractionDigits:2}))+" "+(perUser?arppuUnit:amountUnit);
   const complete=total.amount!==null&&categories.every(group=>read(group.id).amount!==null)&&Math.abs(categories.reduce((sum,group)=>sum+read(group.id).amount!,0)-total.amount)<.01;
   const share=(value:number|null)=>!complete||value===null||!total.amount?"—":(value/total.amount*100).toFixed(2)+"%";
   const summaryScope=live?range.end+" · "+live.platformName+" · 单日 · "+amountUnit+" · 待验数":scope(range);

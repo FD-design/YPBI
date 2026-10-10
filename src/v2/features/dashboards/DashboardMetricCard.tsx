@@ -1,6 +1,7 @@
 import { CircleAlert, Info, Maximize2 } from "lucide-react";
 import { useId, useEffect, useRef, useState, type CSSProperties, type ReactElement } from "react";
 import { chartAxisLabels, chartAxisScale } from "../../../components/chart-axis";
+import { isIntegerMetricUnit } from "../../../components/metric-unit";
 import { FloatingHint } from "../../../components/ui/FloatingHint";
 import { ComparisonDetails } from "./ComparisonDetails";
 import { ChangeValue } from "../../../components/ui/ChangeValue";
@@ -59,7 +60,7 @@ function DashboardMiniTrend({ model, onOpenTrendPoint }: Pick<DashboardMetricCar
   if (!result.trend.current.length && !result.trend.comparison?.length) return <div className="dashboard-metric-card__trend-empty" role="status">当前范围暂无可展示趋势</div>;
   const dataDomain = dashboardTrendDomain(result.trend, result.trendKind === "bar");
   if (!dataDomain) return <div className="dashboard-metric-card__trend-empty" role="status">当前范围暂无可展示趋势</div>;
-  const domain = chartAxisScale(dataDomain.min, dataDomain.max, ["人", "次", "单"].includes(result.value.unit) ? 1 : 0);
+  const domain = chartAxisScale(dataDomain.min, dataDomain.max, isIntegerMetricUnit(result.value.unit) ? 1 : 0);
   const comparisonVisible = Boolean(result.trend.comparison?.length);
   const pointCount = Math.max(result.trend.current.length, result.trend.comparison?.length ?? 0, 1);
   const pointStep = pointCount > 1 ? 224 / (pointCount - 1) : 240;
@@ -122,7 +123,7 @@ function DashboardMiniTrend({ model, onOpenTrendPoint }: Pick<DashboardMetricCar
       const currentLabel = series === "current" ? valueLabel : point.counterpart ? `${point.counterpart.actualDate} · ${point.counterpart.display}` : null;
       const comparisonLabel = series === "comparison" ? valueLabel : point.counterpart ? `${point.counterpart.actualDate} · ${point.counterpart.display}` : null;
       const ariaLabel = paired
-        ? `${seriesLabel}${point.label}，当前 ${currentLabel}，对比 ${comparisonLabel}，差值 ${point.differenceDisplay ?? "不可比"}`
+        ? `${seriesLabel}${point.label}，当前 ${currentLabel}，对比 ${comparisonLabel}，差值 ${point.comparisonUnavailableReason ?? point.differenceDisplay ?? "不可比"}`
         : `${seriesLabel}${point.label}，${valueLabel}`;
       const step = points.length > 1 ? 224 / (points.length - 1) : 240;
       const bandStart = index === 0 ? 0 : center - step / 2;
@@ -137,7 +138,7 @@ function DashboardMiniTrend({ model, onOpenTrendPoint }: Pick<DashboardMetricCar
           ? { left: `${hitStart / 240 * 100}%`, top: `${10 / 58 * 100}%`, width: `${hitWidth / 240 * 100}%`, height: `${40 / 58 * 100}%`, translate: "0 0", "--point-left": `${(plottedX - hitStart) / hitWidth * 100}%`, "--point-top": `${(y * 58 / 100 - 10) / 40 * 100}%` } as CSSProperties
           : { left: `${x}%`, top: `${y}%` }}
         content={<div className="dashboard-mini-trend__tooltip">{paired
-          ? <><span>当前 {currentLabel}</span><span>对比 {comparisonLabel}</span><span>较对比期 <ChangeValue direction={differenceDirection} onEmphasis>{point.differenceDisplay ?? "不可比"}</ChangeValue></span></>
+          ? <><span>当前 {currentLabel}</span><span>对比 {comparisonLabel}</span><span>较对比期 <ChangeValue direction={differenceDirection} onEmphasis>{point.comparisonUnavailableReason ?? point.differenceDisplay ?? "不可比"}</ChangeValue></span></>
           : <span>{seriesLabel} {valueLabel}</span>}</div>}>
       <button
         type="button"

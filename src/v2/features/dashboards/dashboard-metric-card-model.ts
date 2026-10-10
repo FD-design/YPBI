@@ -25,6 +25,7 @@ export interface DashboardMetricTrendPoint {
   value: DashboardMetricTrendValue | null;
   counterpart: DashboardMetricTrendValue | null;
   differenceDisplay: string | null;
+  comparisonUnavailableReason?: string;
   state: "available" | "no_record" | "no_value" | "not_produced" | "immature";
   stateLabel: string;
 }
