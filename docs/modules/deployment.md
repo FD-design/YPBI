@@ -19,6 +19,8 @@ PH／2020-01-01注册用户D1留存率M020四组的上游结果由开发提供�
 
 本地样例只验证BI代码，不写测试后台原始/指标表、不运行回算、不代表真实历史验数。证据位于`outputs/20261010-bi-page-acceptance/diagnostic-local-*`。浏览器采用CUA，未运行Playwright批量运行器。正式生产SLA、完整起始日与历史覆盖不在本次结论内。应用可回退上一版本，无数据迁移。Google需求表、逐视频ID与内容排行保持原状；应用发布状态另行登记。
 
+`417c123abc765b0ce17bf7d3eba243b13ba024d9`于17:21（UTC+08:00）[自动部署成功](https://github.com/FD-design/YPBI/actions/runs/38040977463)。新入口`/assets/index-BUSbSW90.js`及真实JS/CSS资源返回200且类型正确，health为`ok / real`，匿名会话401。Chrome已加载新版，原测试标签页返回`DATA_PREVIEW_SESSION_REQUIRED`，已打开数据源维护等待用户重新验证；发布后真实诊断输入尚未复验，不计已通过。既有三个HTML缓存策略及缺失JS返回HTML共四项服务器配置问题仍保留，不属于本次新增问题。脱敏证据为`diagnostic-deploy.log`、`diagnostic-postdeploy-static.json`、`diagnostic-postdeploy-maintenance.png`。发布只含应用及技术说明，无业务数据或测试夹具变更。
+
 ## 2026-10-10 播放视频类型与查询修复合并验证
 
 本批应用范围为调整方案9.43、9.44：发布经营／专题查询刷新、小额精度、播放v3准入修复，并在5.12现有诊断接入视频类型的起播次数及有效观影率。只读响应增加可选`playbackGroups.videoType`；总体与分组分别准入，分组投影异常不影响总体，也不增加上游请求。内容排行、逐视频ID、93列目录、布局、指标定义、权限、数据库、上游夹具和Google需求表保持不变。
