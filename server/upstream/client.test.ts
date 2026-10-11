@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdir, mkdtemp, readFile, readdir, rm, unlink } from "node:fs/promises";
 import { runWithUpstreamRequestProfile } from "./request-profile";
+import { isBiV1MetricSelectionRejection } from "./bi-v1.request-isolation";
 
 const env: AppEnv = {
   NODE_ENV: "test",
@@ -255,5 +256,100 @@ describe("UpstreamClient business errors", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("UpstreamClient HTTP 参数拒绝兼容", () => {
+  const metricMessage = "Unsupported metricCodes: M007";
+  const jsonResponse = (payload: unknown, status: number) => new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
+  const readError = async (response: Response, path = "/api/admin/bi/v1/metrics") => {
+    const client = new UpstreamClient(env, async () => response);
+    try {
+      await client.get(path, {});
+    } catch (error) {
+      return error;
+    }
+    throw new Error("拒绝响应必须保持失败");
+  };
+
+  for (const httpStatus of [200, 400, 422]) for (const code of [400, 422]) for (const array of [false, true]) {
+    test(`HTTP ${httpStatus} / 业务 ${code} / ${array ? "字符串数组" : "字符串"}指标拒绝保留隔离依据`, async () => {
+      const err = array ? [metricMessage, "请调整指标编码"] : metricMessage;
+      const error = await readError(jsonResponse({ code, err }, httpStatus));
+      expect(error).toBeInstanceOf(UpstreamError);
+      expect(error).toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message: array ? `${metricMessage}；请调整指标编码` : metricMessage });
+      expect(isBiV1MetricSelectionRejection(error)).toBe(true);
+    });
+  }
+
+  const invalidPayloads = [
+    ["成功业务码", { code: 200, err: metricMessage }],
+    ["其他业务码", { code: 500, err: metricMessage }],
+    ["字符串业务码", { code: "422", err: metricMessage }],
+    ["缺业务码", { err: metricMessage }],
+    ["缺错误说明", { code: 422 }],
+    ["空错误说明", { code: 422, err: "" }],
+    ["空白错误说明", { code: 422, err: "   " }],
+    ["空错误数组", { code: 400, err: [] }],
+    ["空白错误数组项", { code: 400, err: [metricMessage, " "] }],
+    ["混合类型错误数组", { code: 400, err: [metricMessage, 1] }],
+    ["对象错误说明", { code: 422, err: { message: metricMessage } }],
+    ["空响应", null]
+  ] as const;
+  for (const status of [400, 422]) {
+    for (const [label, payload] of invalidPayloads) test(`HTTP ${status} ${label}保持HTTP失败`, async () => {
+      const error = await readError(jsonResponse(payload, status));
+      expect(error).toMatchObject({ code: "UPSTREAM_FAILED", statusCode: 502, message: `后台接口返回 ${status}` });
+      expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+    });
+    test(`HTTP ${status} 非JSON错误体保持HTTP失败`, async () => {
+      const error = await readError(new Response("upstream rejected request", { status }));
+      expect(error).toMatchObject({ code: "UPSTREAM_FAILED", statusCode: 502, message: `后台接口返回 ${status}` });
+      expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+    });
+    for (const err of ["Unsupported metricCodes: M007; permission denied", "指标查询没有权限，token无效", "endDate必须晚于startDate"]) {
+      test(`HTTP ${status} ${err}保持参数失败且不触发指标隔离`, async () => {
+        const error = await readError(jsonResponse({ code: 422, err }, status));
+        expect(error).toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message: err });
+        expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+      });
+    }
+    test(`HTTP ${status} 留存无当日数据说明不转为成功空结果`, async () => {
+      const error = await readError(jsonResponse({ code: 400, err: "没有该平台当日数据" }, status), "/api/admin/statistics/reletionsStatPlus/getDays");
+      expect(error).toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422 });
+      expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+    });
+  }
+
+  for (const status of [200, 400, 422]) for (const ipRestricted of [false, true]) {
+    test(`HTTP ${status} 业务2002保持${ipRestricted ? "IP限制" : "认证"}错误`, async () => {
+      const error = await readError(jsonResponse({ code: 2002, err: ipRestricted ? "ip限制，请联系管理员" : "请重新登陆" }, status));
+      expect(error).toMatchObject({ code: ipRestricted ? "UPSTREAM_IP_RESTRICTED" : "UPSTREAM_AUTH_FAILED", statusCode: ipRestricted ? 403 : 401 });
+      expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+    });
+  }
+
+  for (const [status, code, statusCode] of [
+    [401, "UPSTREAM_AUTH_FAILED", 401], [403, "UPSTREAM_AUTH_FAILED", 403],
+    [429, "UPSTREAM_RATE_LIMITED", 429], [500, "UPSTREAM_FAILED", 502]
+  ] as const) test(`HTTP ${status} 优先保留原错误边界`, async () => {
+    const error = await readError(jsonResponse({ code: 422, err: metricMessage }, status));
+    expect(error).toMatchObject({ code, statusCode });
+    expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+  });
+
+  test("网络错误保持来源失败且不触发指标隔离", async () => {
+    const client = new UpstreamClient(env, async () => { throw new TypeError(metricMessage); });
+    const error = await client.get("/api/admin/bi/v1/metrics", {}).catch(error => error);
+    expect(error).toMatchObject({ code: "UPSTREAM_NETWORK_ERROR", statusCode: 502 });
+    expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+  });
+  test("请求超时保持504且不触发指标隔离", async () => {
+    const client = new UpstreamClient({ ...env, REQUEST_TIMEOUT_MS: 5 }, async (_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("request aborted", "AbortError")), { once: true });
+    }));
+    const error = await client.get("/api/admin/bi/v1/metrics", {}).catch(error => error);
+    expect(error).toMatchObject({ code: "UPSTREAM_TIMEOUT", statusCode: 504 });
+    expect(isBiV1MetricSelectionRejection(error)).toBe(false);
   });
 });

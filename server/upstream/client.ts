@@ -179,21 +179,28 @@ export class UpstreamClient {
       });
       if (response.status === 401 || response.status === 403) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
       if (response.status === 429) throw new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429);
-      if (!response.ok) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
-      const payload = await response.json();
-      if (payload && typeof payload === "object") {
-        const businessCode = String(Reflect.get(payload, "code") ?? "200");
-        const rawMessage = Reflect.get(payload, "err");
-        const message = Array.isArray(rawMessage) ? rawMessage.map(String).join("；") : String(rawMessage ?? "后台请求失败");
-        if (businessCode === "2002") {
-          if (/ip\s*限制|IP\s*限制/i.test(message)) throw new UpstreamError("UPSTREAM_IP_RESTRICTED", "服务器出口 IP 未加入后台白名单", 403);
-          throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效，请更新 Token", 401);
-        }
-        if (businessCode !== "200" && /reletionsStat(?:Plus)?\/getDays/.test(url.pathname) && /没有该平台当日数据/.test(message)) {
-          return { code: 200, data: [] };
-        }
-        if (businessCode !== "200") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", message, 422);
+      if (!response.ok && ![400, 422].includes(response.status)) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+      const payload = await response.json().catch((error: unknown) => {
+        if (!response.ok && error instanceof SyntaxError) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+        throw error;
+      });
+      const rawCode = payload && typeof payload === "object" ? Reflect.get(payload, "code") : undefined;
+      const businessCode = String(rawCode ?? "200");
+      const rawMessage = payload && typeof payload === "object" ? Reflect.get(payload, "err") : undefined;
+      const message = Array.isArray(rawMessage) ? rawMessage.map(String).join("；") : String(rawMessage ?? "后台请求失败");
+      if (businessCode === "2002") {
+        if (/ip\s*限制|IP\s*限制/i.test(message)) throw new UpstreamError("UPSTREAM_IP_RESTRICTED", "服务器出口 IP 未加入后台白名单", 403);
+        throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效，请更新 Token", 401);
       }
+      if (!response.ok) {
+        const validMessage = typeof rawMessage === "string" ? rawMessage.trim().length > 0
+          : Array.isArray(rawMessage) && rawMessage.length > 0 && rawMessage.every(value => typeof value === "string" && value.trim().length > 0);
+        if (![400, 422].includes(rawCode) || !validMessage) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+      }
+      if (response.ok && businessCode !== "200" && /reletionsStat(?:Plus)?\/getDays/.test(url.pathname) && /没有该平台当日数据/.test(message)) {
+        return { code: 200, data: [] };
+      }
+      if (businessCode !== "200") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", message, 422);
       return payload;
     } catch (error) {
       if (error instanceof UpstreamError) throw error;

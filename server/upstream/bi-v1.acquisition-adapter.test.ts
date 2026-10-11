@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { dailyAcquisitionGroupsSchema, type DailyReadingMetric } from "../../contracts/daily-dashboard";
 import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, type AcquisitionGroupMetric } from "./bi-v1.acquisition-adapter";
-import { UpstreamError } from "./client";
+import { UpstreamClient, UpstreamError } from "./client";
+import { loadEnv } from "../config/env";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const query = { pid: "PH", dateRange: ["2026-09-21", "2026-09-22"] as [string, string] };
 const metricFor = (id: AcquisitionGroupMetric): DailyReadingMetric => ({ id, name: id, unit: ["M001", "M003"].includes(id) ? "次" : "%",
@@ -14,6 +18,86 @@ type Params = Record<string, string>;
 const run = (getRows: (params: Params) => unknown[] = () => [], q = query) => readBiV1AcquisitionGroups({ get: async (_path, params) => envelope(getRows(params)) }, q, metricFor);
 const onlyDay = (rows: unknown[]) => run(params => params.dimensions === "channel" && params.granularity === "day" ? rows : []);
 const series = (result: Awaited<ReturnType<typeof run>>, id: string, key = "A-B") => result.channel.groups.find(group => group.key === key)!.series.find(item => item.metric.id === id)!;
+
+describe("真实 HTTP 客户端到获客分组的拒绝隔离", () => {
+  const singleDay = { pid: "PH", dateRange: ["2020-01-01", "2020-01-01"] as [string, string] };
+  const testEnv = () => loadEnv({ NODE_ENV: "test", UPSTREAM_API_BASE_URL: "https://example.com",
+    UPSTREAM_X_TOKEN: "fixture-only", UPSTREAM_USER_NAME: "fixture-user",
+    UPSTREAM_CREDENTIALS_FILE: join(tmpdir(), `bi-acquisition-http-${randomUUID()}.json`) });
+  const response = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
+    status, headers: { "content-type": "application/json" }
+  });
+  const healthyRows = (params: Params) => params.metricCodes.split(",").map(id => row({ metricCode: id,
+    businessDate: params.granularity === "day" ? singleDay.dateRange[0] : undefined,
+    dimensions: { pid: "PH", [params.dimensions]: params.dimensions === "channel" ? "bi_e2e_20260924" : "android" },
+    ...(["M001", "M003"].includes(id) ? { value: id === "M001" ? 4 : 3, numerator: id === "M001" ? 4 : 3 }
+      : { unit: "ratio", value: 0.75, numerator: 3, denominator: 4 }),
+    ...(id === "M006" || id === "M007" ? { dimensions: { pid: "PH" },
+      dataStatus: "SOURCE_INCOMPLETE", value: null, numerator: null, denominator: null } : {})
+  }));
+  for (const status of [200, 400, 422]) test(`HTTP ${status} 显式指标拒绝保留其余 READY 日值和区间值`, async () => {
+    const calls: Params[] = [];
+    const client = new UpstreamClient(testEnv(), async input => {
+      const url = new URL(String(input)); const params = Object.fromEntries(url.searchParams);
+      calls.push(params);
+      if (params.dimensions === "channel" && params.metricCodes.split(",").includes("M007")) {
+        return response({ code: 422, err: "Unsupported metricCodes: M007" }, status);
+      }
+      return response(envelope(healthyRows(params)));
+    });
+    const result = await readBiV1AcquisitionGroups(client, singleDay, metricFor);
+    expect(calls.filter(params => params.dimensions === "channel")).toHaveLength(14);
+    expect(calls.filter(params => params.dimensions === "downloadPlatform")).toHaveLength(2);
+    for (const params of calls) expect(params).toMatchObject({ pid: "PH", startDate: "2020-01-01",
+      endDate: "2020-01-02", includeIncomplete: "true" });
+    expect(result.channel.day.state).toBe("returned"); expect(result.channel.summary.state).toBe("returned");
+    expect(result.channel.groups.map(group => group.key)).toEqual(["bi_e2e_20260924"]);
+    for (const [id, value] of [["M001", 4], ["M003", 3], ["M005", 0.75], ["M099", 0.75]] as const) {
+      const reading = series(result, id, "bi_e2e_20260924");
+      expect(reading.points[0]).toMatchObject({ state: "available", sourceStatus: "READY", value });
+      expect(reading.summary).toMatchObject({ state: "available", sourceStatus: "READY", value });
+    }
+    expect(series(result, "M006", "bi_e2e_20260924").summary).toMatchObject({ sourceStatus: "SOURCE_INCOMPLETE", value: null });
+    expect(series(result, "M007", "bi_e2e_20260924").summary).toMatchObject({ state: "source_failure", value: null });
+    expect(result.downloadPlatform.day.state).toBe("returned");
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+  });
+  test("同批两项来源不完整只影响所属指标，保留健康分组", async () => {
+    let calls = 0;
+    const client = new UpstreamClient(testEnv(), async input => {
+      calls++;
+      return response(envelope(healthyRows(Object.fromEntries(new URL(String(input)).searchParams))));
+    });
+    const result = await readBiV1AcquisitionGroups(client, singleDay, metricFor);
+    expect(calls).toBe(4);
+    expect(result.channel.day.state).toBe("returned"); expect(result.channel.summary.state).toBe("returned");
+    expect(series(result, "M001", "bi_e2e_20260924").summary.value).toBe(4);
+    for (const id of ["M006", "M007"]) expect(series(result, id, "bi_e2e_20260924").summary)
+      .toMatchObject({ sourceStatus: "SOURCE_INCOMPLETE", value: null });
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+  });
+  for (const [label, status, payload] of [
+    ["认证", 401, { code: 422, err: "Unsupported metricCodes" }],
+    ["权限", 403, { code: 422, err: "Unsupported metricCodes" }],
+    ["限流", 429, { code: 422, err: "Unsupported metricCodes" }],
+    ["服务异常", 500, { code: 422, err: "Unsupported metricCodes" }],
+    ["指标权限", 422, { code: 422, err: "指标查询没有权限，token无效" }],
+    ["日期参数", 400, { code: 400, err: "endDate必须晚于startDate" }],
+    ["无效错误体", 422, { code: 200, err: "Unsupported metricCodes" }],
+    ["认证业务码", 400, { code: 2002, err: "登录失败" }]
+  ] as const) test(`${label} 不拆单且不污染下载目标`, async () => {
+    const calls: Params[] = [];
+    const client = new UpstreamClient(testEnv(), async input => {
+      const params = Object.fromEntries(new URL(String(input)).searchParams); calls.push(params);
+      return params.dimensions === "channel" ? response(payload, status) : response(envelope(healthyRows(params)));
+    });
+    const result = await readBiV1AcquisitionGroups(client, singleDay, metricFor);
+    expect(calls).toHaveLength(4);
+    expect(result.channel).toMatchObject({ groups: [], day: { state: "source_failure" }, summary: { state: "source_failure" } });
+    expect(result.downloadPlatform.day.state).toBe("returned"); expect(result.downloadPlatform.summary.state).toBe("returned");
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
+  });
+});
 
 describe("获客动态分组独立读取", () => {
   test("四路并发、显式维度、排除结束日、跨日 M099 不查询 summary", async () => {
