@@ -22,17 +22,19 @@ import { validDemoRange } from "./extended-board-model";
 import { previousDailyQuery, supplementaryDailyQuery } from "../features/dashboards/daily-reference-plan";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
 import { playbackDiagnosisBoardSheets } from "./live-playback-groups";
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL } from "../features/dashboards/diagnostic-inputs";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
 
 export function connectedBoardMetricSheet(series: DailyDashboardSuccess["data"]["series"][number], result: DailyDashboardSuccess, period: string, stale = false): WorkbookSheet {
+  const hasReference = series.points.some(point => retentionReferenceRatio(series.metric, point));
   return { name: period + "-" + series.metric.name, rows: [
-    ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态"],
+    ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态", ...(hasReference ? ["参考比率（%）", "参考说明"] : [])],
     ...series.points.map(point => {
       const readable = (!point.sourceStatus || point.sourceStatus === "READY") && (point.state === "available" || point.state === "zero_denominator");
       const diagnostic = diagnosticRatioInputs(series.metric, point);
+      const reference = retentionReferenceRatio(series.metric, point);
       return [point.date, readable && point.state === "available" ? point.value : null,
         ...series.metric.inputs.map(input => readable || diagnostic ? point.inputs.find(value => value.key === input.key)?.value ?? null : null),
-        diagnostic ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point), result.data.fetchedAt, stale ? "上次查询结果" : "本次查询结果"];
+        diagnostic ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point), result.data.fetchedAt, stale ? "上次查询结果" : "本次查询结果", ...(hasReference ? [reference ? reference.value * 100 : null, reference?.label ?? null] : [])];
     })
   ] };
 }

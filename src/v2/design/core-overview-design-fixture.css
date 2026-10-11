@@ -578,6 +578,10 @@
 .core-review__comparison-label { color: var(--color-text-2); font-size: var(--font-size-body-sm); white-space: nowrap; }
 .core-review__complete { color: var(--color-text-3); font-size: var(--font-size-body-sm); }
 .core-review__snapshot-content { display: grid; align-content: start; gap: 20px; }
+.core-review__snapshot-evidence { min-width: 0; overflow-x: auto; }
+.core-review__snapshot-evidence table { width: 100%; min-width: 760px; }
+.core-review__snapshot-evidence th { white-space: nowrap; }
+.core-review__reference-label { display: block; font-size: var(--font-size-caption); line-height: var(--line-height-body); }
 .core-review__baseline { display: grid; gap: 4px; font-size: var(--font-size-body-sm); line-height: var(--line-height-body); }
 
 .core-review__detail-actions time {

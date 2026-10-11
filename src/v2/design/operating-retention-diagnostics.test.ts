@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import type { LiveDashboardReading, LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import { REGISTRATION_DIAGNOSTIC_LABEL } from "../features/dashboards/registration-cohort";
-import { DIAGNOSTIC_INPUTS_LABEL } from "../features/dashboards/diagnostic-inputs";
+import { DIAGNOSTIC_INPUTS_LABEL, RETENTION_REFERENCE_LABEL } from "../features/dashboards/diagnostic-inputs";
 import { DETAIL_COLUMNS, detailColumnKey } from "./operating-detail-columns";
 import { OPERATING_LIVE_IDS, operatingLiveCalculationRows, operatingLiveColumns, operatingLiveExportRows, operatingLiveRows } from "./operating-live-model";
+import { operatingValueLabel } from "./operating-detail-snapshot";
+import { detailChange } from "./operating-detail-presentation";
 
 const IDS = ["M020", "M020.android", "M020.ios", "M020.natural", "M020.internal", "M021", "M022", "M023", "M115.d1", "M036", "M006", "M007", "M061", "M064", "M114"];
 function reading(): LiveDashboardReading {
@@ -23,7 +25,7 @@ function value(live: LiveDashboardReading, id = "M020.android") {
   return operatingLiveRows(live, { PH: live.state })[0].values[index];
 }
 
-test("经营四D1及总体D1/D3/D7/D30只在evidence保留诊断输入，结果与人数不恢复", () => {
+test("经营四D1参考率独立保存，总体D1/D3/D7/D30与正式结果人数不恢复", () => {
   const live = reading();
   for (const id of IDS.filter(id => /^M02/.test(id))) {
     const entry = value(live, id);
@@ -31,12 +33,34 @@ test("经营四D1及总体D1/D3/D7/D30只在evidence保留诊断输入，结果�
     for (const period of ["current", "previousDay", "previousWeek"] as const) {
       expect(entry.evidence?.[period].label).toBe(REGISTRATION_DIAGNOSTIC_LABEL);
       expect(entry.evidence?.[period].inputs.map(input => input.value)).toEqual([84, 105]);
+      expect(entry.evidence?.[period].referenceRatio?.value ?? null).toBe(id.startsWith("M020.") ? .8 : null);
     }
   }
   expect(value(live, "M115.d1").current).toBeNull();
   expect(value(live, "M115.d1").evidence?.current.inputs.map(input => input.value)).toEqual([null, null]);
   expect(value(live, "M036").current).toBeNull();
   expect(value(live, "M036").evidence?.current.inputs.map(input => input.value)).toEqual([84, 105]);
+});
+
+test("四D1按各自人数显示参考百分比，正式三期和比较仍为空", () => {
+  const live = reading();
+  const cases = [["M020.android", 1, 2, "50.00%"], ["M020.ios", 1, 1, "100.00%"], ["M020.natural", 1, 2, "50.00%"], ["M020.internal", 1, 1, "100.00%"]] as const;
+  for (const [id, numerator, denominator, display] of cases) {
+    selected(live, id).points.forEach(point => { point.inputs[0].value = numerator; point.inputs[1].value = denominator; });
+    const entry = value(live, id), column = DETAIL_COLUMNS.find(column => OPERATING_LIVE_IDS[detailColumnKey(column)] === id)!;
+    expect(entry.evidence?.current.referenceRatio).toEqual({ value: numerator / denominator, numerator, denominator, label: RETENTION_REFERENCE_LABEL });
+    expect(operatingValueLabel(entry, column)).toBe(`${display} · ${RETENTION_REFERENCE_LABEL}`);
+    expect([entry.current, entry.previousDay, entry.previousWeek]).toEqual([null, null, null]);
+    expect(detailChange(entry.current, entry.previousDay, column.kind)).toBeNull();
+    expect(selected(live, id).points.at(-1)).toMatchObject({ value: null, state: "no_value", sourceStatus: "SOURCE_INCOMPLETE" });
+  }
+  const rows = operatingLiveRows(live, { PH: live.state }), columns = operatingLiveColumns(live), sheet = operatingLiveExportRows(rows, columns, "2020-01-01");
+  const start = 3 + columns.length * 9;
+  expect(sheet[0].slice(start)).toHaveLength(24);
+  expect(sheet[1].slice(start, start + 6)).toEqual([50, RETENTION_REFERENCE_LABEL, 50, RETENTION_REFERENCE_LABEL, 50, RETENTION_REFERENCE_LABEL]);
+  expect(sheet[1].slice(start + 6, start + 12)).toEqual([100, RETENTION_REFERENCE_LABEL, 100, RETENTION_REFERENCE_LABEL, 100, RETENTION_REFERENCE_LABEL]);
+  const inputRows = operatingLiveCalculationRows(rows, columns).filter(row => row[3] === "M020:Android" && row[4] === "当日");
+  expect(inputRows.every(row => row.slice(-2).join("|") === `50|${RETENTION_REFERENCE_LABEL}`)).toBe(true);
 });
 
 test("经营已映射泛比例保留合法核对输入，注册转化允许分子大于分母但不产生正式比率", () => {
@@ -57,6 +81,9 @@ test("经营已映射泛比例保留合法核对输入，注册转化允许分�
 test("诊断零输入保留0/0但不生成0%，其他非READY和脏结果不扩展", () => {
   const zero = reading(); selected(zero).points.forEach(point => point.inputs.forEach(input => { input.value = 0; }));
   expect(value(zero)).toMatchObject({ current: null, evidence: { current: { label: REGISTRATION_DIAGNOSTIC_LABEL, inputs: [{ value: 0 }, { value: 0 }] } } });
+  expect(value(zero).evidence?.current.referenceRatio).toBeUndefined();
+  selected(zero).points.forEach(point => { point.inputs[1].value = 2; });
+  expect(value(zero).evidence?.current.referenceRatio?.value).toBe(0);
   for (const status of ["PROCESSING", "NOT_MATURE", "FAILED"] as const) {
     const live = reading(); selected(live).points.forEach(point => { point.sourceStatus = status; });
     expect(value(live).current).toBeNull(); expect(value(live).evidence?.current.inputs.map(input => input.value)).toEqual([null, null]);
@@ -75,6 +102,7 @@ test("异常输入不进入经营核对，READY结果及零分母维持原行为
   }
   const ready = reading(); selected(ready).points.forEach(point => { point.value = .8; point.state = "available"; point.sourceStatus = "READY"; });
   expect(value(ready).current).toBe(.8); expect(value(ready).evidence?.current.inputs.map(input => input.value)).toEqual([84, 105]);
+  expect(value(ready).evidence?.current.referenceRatio).toBeUndefined();
   selected(ready).points.forEach(point => { point.value = null; point.state = "zero_denominator"; point.inputs.forEach(input => { input.value = 0; }); });
   expect(value(ready)).toMatchObject({ current: null, evidence: { current: { label: "分母为0", inputs: [{ value: 0 }, { value: 0 }] } } });
 });
@@ -98,7 +126,9 @@ test("通用逐指标整板导出保留合法诊断输入并隔离其他非READY
     const { connectedBoardMetricSheet } = await import("./ConnectedBoard");
     const live = reading(), series = selected(live);
     expect(connectedBoardMetricSheet(series, payload(live), "当前期").rows[1].slice(1, 5)).toEqual([null, 84, 105, REGISTRATION_DIAGNOSTIC_LABEL]);
-    expect(connectedBoardMetricSheet(series, payload(live), "对比期", true).rows[1].at(-1)).toBe("上次查询结果");
+    const previous = connectedBoardMetricSheet(series, payload(live), "对比期", true).rows;
+    expect(previous[1][previous[0].indexOf("刷新状态")]).toBe("上次查询结果");
+    expect(previous[1].slice(-2)).toEqual([80, RETENTION_REFERENCE_LABEL]);
     for (const sourceStatus of ["PROCESSING", "NOT_MATURE", "FAILED"] as const) {
       series.points[0].sourceStatus = sourceStatus;
       expect(connectedBoardMetricSheet(series, payload(live), "当前期").rows[1].slice(1, 4)).toEqual([null, null, null]);

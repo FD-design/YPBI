@@ -6,7 +6,7 @@ import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, 
 import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
 import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 import { metricNumberFormatOptions } from "../../components/metric-number-format";
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL } from "../features/dashboards/diagnostic-inputs";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
@@ -40,6 +40,7 @@ export function operatingResource(resource: OperatingResources[string] | undefin
 export interface DetailEvidence {
   state: string; label: string; date: string; fetchedAt: string | null; stale: boolean; unit?: string; sourceNote?: string | null;
   inputs: { name: string; unit: string; value: number | null }[]; formula: string | null;
+  referenceRatio?: NonNullable<ReturnType<typeof retentionReferenceRatio>>;
 }
 export function operatingLiveColumns(live: LiveDashboardReading | null): DetailColumn[] {
   return DETAIL_COLUMNS.map(column => {
@@ -65,10 +66,12 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
       const evidence = (day: string): DetailEvidence => {
         const value = point(day);
         const diagnostic = series && diagnosticRatioInputs(series.metric, value);
+        const reference = series && retentionReferenceRatio(series.metric, value);
         return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : value?.state === "available" && !readable(value) ? "no_value" : value?.state ?? "no_value",
           label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : value ? livePointStateLabel(value) : "字段未返回",
           fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: resource?.status === "success" && Boolean(resource.refreshError),
-          inputs: series?.metric.inputs.map(input => ({ ...input, value: readable(value) || diagnostic ? value?.inputs.find(value => value.key === input.key)?.value ?? null : null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote };
+          inputs: series?.metric.inputs.map(input => ({ ...input, value: readable(value) || diagnostic ? value?.inputs.find(value => value.key === input.key)?.value ?? null : null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote,
+          ...(reference ? { referenceRatio: reference } : {}) };
       };
       return { current: resultValue(date), previousDay: resultValue(shiftDate(date, -1)), previousWeek: resultValue(shiftDate(date, -7)),
         evidence: { current: evidence(date), previousDay: evidence(shiftDate(date, -1)), previousWeek: evidence(shiftDate(date, -7)) } };
@@ -103,7 +106,9 @@ export function operatingLiveSummary(live: LiveDashboardReading, resources: Oper
 export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn[], date: string) {
   const periods = ["current", "previousDay", "previousWeek"] as const;
   const labels = ["当日", "昨日", "上周同日"];
-  return [["数据日", "业务平台", "PID", ...columns.flatMap(column => periods.flatMap((_, i) => [column.metric.name + "｜" + labels[i] + "（" + column.unit + "）", column.metric.name + "｜" + labels[i] + "状态", column.metric.name + "｜" + labels[i] + "查询时间"]))],
+  const referenceColumns = columns.map((column, index) => ({ column, index })).filter(({ index }) => rows.some(row => periods.some(period => row.values[index]?.evidence?.[period].referenceRatio)));
+  return [["数据日", "业务平台", "PID", ...columns.flatMap(column => periods.flatMap((_, i) => [column.metric.name + "｜" + labels[i] + "（" + column.unit + "）", column.metric.name + "｜" + labels[i] + "状态", column.metric.name + "｜" + labels[i] + "查询时间"])),
+    ...referenceColumns.flatMap(({ column }) => periods.flatMap((_, i) => [`${column.metric.name}｜${labels[i]}参考比率（%）`, `${column.metric.name}｜${labels[i]}参考说明`]))],
     ...rows.map(row => [date, row.name, row.pid, ...row.values.flatMap((value, i) => periods.flatMap(period => {
       const evidence = value.evidence?.[period];
       const status = evidence ? "待验数 · " + evidence.label + (evidence.stale ? " · 上次查询结果" : "")
@@ -112,17 +117,22 @@ export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn
         : value.state === "no_record" && period === "current" ? dashboardNoRecordLabels.day
         : "无可用结果";
       return [value[period] === null ? null : value[period]! * (columns[i].kind === "ratio" ? 100 : 1), status, evidence?.fetchedAt ?? null];
+    })), ...referenceColumns.flatMap(({ index }) => periods.flatMap(period => {
+      const reference = row.values[index]?.evidence?.[period].referenceRatio;
+      return [reference ? reference.value * 100 : null, reference?.label ?? null];
     }))])];
 }
 
 export function operatingLiveCalculationRows(rows: DetailRow[], columns: DetailColumn[]) {
   const periods = [["current", "当日"], ["previousDay", "昨日"], ["previousWeek", "上周同日"]] as const;
-  return [["PID", "业务平台", "指标", "列键", "周期", "实际日期", "计算公式", "输入指标", "输入值", "输入单位", "状态", "查询时间", "刷新状态", "来源口径"],
+  const hasReferences = rows.some(row => row.values.some(value => periods.some(([period]) => value.evidence?.[period].referenceRatio)));
+  return [["PID", "业务平台", "指标", "列键", "周期", "实际日期", "计算公式", "输入指标", "输入值", "输入单位", "状态", "查询时间", "刷新状态", "来源口径", ...(hasReferences ? ["参考比率（%）", "参考说明"] : [])],
     ...rows.flatMap(row => row.values.flatMap((value, index) => periods.flatMap(([period, label]) => {
       const evidence = value.evidence?.[period];
       if (!evidence) return [];
       const inputs = evidence.inputs.length ? evidence.inputs : [{name:"来源未返回计算输入", value:null, unit:""}];
       return inputs.map(input => [row.pid, row.name, columns[index].metric.name, detailColumnKey(columns[index]), label, evidence.date, evidence.formula,
-        input.name, input.value, input.unit, "待验数 · " + evidence.label, evidence.fetchedAt, evidence.stale ? "上次查询结果" : "本次查询结果", evidence.sourceNote ?? ""]);
+        input.name, input.value, input.unit, "待验数 · " + evidence.label, evidence.fetchedAt, evidence.stale ? "上次查询结果" : "本次查询结果", evidence.sourceNote ?? "",
+        ...(hasReferences ? [evidence.referenceRatio ? evidence.referenceRatio.value * 100 : null, evidence.referenceRatio?.label ?? null] : [])]);
     })))];
 }

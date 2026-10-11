@@ -61,6 +61,7 @@ export function operatingDetailRows(date: string): DetailRow[] {
 export function selectOperatingRows(rows: DetailRow[], platform: string) { return platform === "all" ? rows : rows.filter(row => row.pid === platform); }
 export function operatingValueLabel(value: DetailValue, column: DetailColumn, period: "current" | "previousDay" | "previousWeek" = "current", includeUnit = false) {
   const evidence = value.evidence?.[period];
+  if (evidence?.referenceRatio) return `${formatDetailValue(evidence.referenceRatio.value, "ratio")} · ${evidence.referenceRatio.label}`;
   if (evidence && evidence.state !== "available") return evidence.label;
   if (value.state === "unsupported") return "待接口支持";
   if (period === "current") {
@@ -79,7 +80,7 @@ export function operatingDetailBreakdown(model: DashboardMetricCardModel, rows: 
     const value = row?.values[columnIndex];
     if (model.metric.id === "M020" && model.result.status === "immature") return { status: "immature", label: "未成熟", reason: "该注册日用户的次日观察尚未结束。" };
     if (value && value.current !== null && column) return { status: "available", raw: value.current, display: column.kind === "ratio" ? (value.current * 100).toFixed(2) : value.current.toLocaleString("en-US", column.kind === "currency" || column.kind === "average" ? metricNumberFormatOptions(value.current, value.evidence?.current.unit ?? column.unit) : { maximumFractionDigits: 2 }), origin: value.evidence ? "pending" : "demo", sample: value.evidence?.current.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ") };
-    if (value?.evidence) return { status: "no_record", label: value.evidence.current.label, reason: "真实查询状态；不使用演示数据补齐。" };
+    if (value?.evidence) return { status: "no_record", label: column ? operatingValueLabel(value, column) : value.evidence.current.label, reason: "真实查询状态；不使用演示数据补齐。" };
     if (value?.state === "no_record") return { status: "no_record", label: dashboardNoRecordLabels.day, reason: "本次查询未返回当前日期、业务平台和维度的记录。" };
     return { status: "unsupported", label: "待接口支持", reason: operatingPendingReason(model.metric.id, slice) };
   });

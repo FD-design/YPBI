@@ -11,7 +11,7 @@ import { PreviewExportControl } from "../features/dashboards/PreviewExportContro
 import { downloadPreviewWorkbook } from "./preview-workbook";
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { MenuSelect } from "../../components/ui/MenuSelect";
-import { REGISTRATION_COHORT_SCOPES, REGISTRATION_RETENTION_WINDOWS, isReadableRegistrationCohortPoint, registrationCohortMetricId, registrationCohortScopeLabel, registrationCohortDiagnosticInputs, REGISTRATION_DIAGNOSTIC_LABEL, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
+import { REGISTRATION_COHORT_SCOPES, REGISTRATION_RETENTION_WINDOWS, isReadableRegistrationCohortPoint, registrationCohortMetricId, registrationCohortScopeLabel, registrationCohortDiagnosticInputs, registrationCohortReferenceRatio, REGISTRATION_DIAGNOSTIC_LABEL, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
 
 const windows = REGISTRATION_RETENTION_WINDOWS;
 function usePageRefresh(key: string, revision: number, enabled: boolean, retry: () => void) {
@@ -49,13 +49,15 @@ export function connectedCohortRows(query: DailyDashboardQuery, state: V2Resourc
   const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
   return Array.from({ length: days }, (_, index) => {
     const date = shiftDate(query.dateRange[0], index);
-    const read = (id: string) => series.find(series => series.metric.id === id)?.points.find(point => point.date === date);
     const cells = windows.map(([id, days]) => {
-      const point = read(registrationCohortMetricId(id, scope));
+      const source = series.find(series => series.metric.id === registrationCohortMetricId(id, scope));
+      const point = source?.points.find(point => point.date === date);
       const ready = isReadableRegistrationCohortPoint(point);
       const diagnostic = registrationCohortDiagnosticInputs(registrationCohortMetricId(id, scope), point);
+      const referenceRate = source ? registrationCohortReferenceRatio(source.metric, point) : null;
       return { id, rate: ready ? point?.value ?? null : null, count: ready ? point?.inputs[0]?.value ?? null : null, base: ready ? point?.inputs[1]?.value ?? null : null, availableAt: shiftDate(date, days),
         ...(diagnostic ? { diagnosticInputs: { count: diagnostic.numerator, base: diagnostic.denominator } } : {}),
+        ...(referenceRate ? { referenceRate } : {}),
         status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? (diagnostic ? REGISTRATION_DIAGNOSTIC_LABEL : livePointStateLabel(point)) + (state.refreshError ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
     });
     const bases = [...new Set(cells.map(cell => cell.base).filter((value): value is number => value !== null))];
@@ -63,8 +65,8 @@ export function connectedCohortRows(query: DailyDashboardQuery, state: V2Resourc
   });
 }
 export function connectedCohortExportRows(query: DailyDashboardQuery, state: V2ResourceState<DailyDashboardSuccess | null>, scope: RegistrationCohortScope) {
-  return [["注册日","注册日分组","注册人数（计算输入）","留存周期","留存人数（计算输入）","留存率（%）","目标日","状态","平台","查询时间"],
-    ...connectedCohortRows(query,state,scope).flatMap(row=>row.cells.map(cell=>{const inputs=retentionCellCalculationInputs(row,cell);return [row.date,registrationCohortScopeLabel(scope),inputs.base,topicMetric(cell.id).name,inputs.count,cell.rate===null?null:cell.rate*100,cell.availableAt,cell.status,query.pid,state.status==="success"?state.data?.data.fetchedAt??null:null];}))];
+  return [["注册日","注册日分组","注册人数（计算输入）","留存周期","留存人数（计算输入）","留存率（%）","目标日","状态","平台","查询时间","参考留存率（%）","参考说明"],
+    ...connectedCohortRows(query,state,scope).flatMap(row=>row.cells.map(cell=>{const inputs=retentionCellCalculationInputs(row,cell);return [row.date,registrationCohortScopeLabel(scope),inputs.base,topicMetric(cell.id).name,inputs.count,cell.rate===null?null:cell.rate*100,cell.availableAt,cell.status,query.pid,state.status==="success"?state.data?.data.fetchedAt??null:null,cell.referenceRate ? cell.referenceRate.value*100 : null,cell.referenceRate?.label ?? null];}))];
 }
 export function ConnectedCohorts({ title, live, pending, open, scope = "overall", onScopeChange }: { title: string; live: LiveDashboardReading; range: {start:string;end:string}; pending:boolean; open:(title:string,content:ReactNode)=>void; scope?:RegistrationCohortScope; onScopeChange?:(scope:RegistrationCohortScope)=>void }) {
   const query = live.query, state = live.state, rows = connectedCohortRows(query, state, scope), scopeLabel = registrationCohortScopeLabel(scope);

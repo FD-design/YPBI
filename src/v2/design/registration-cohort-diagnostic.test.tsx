@@ -4,8 +4,8 @@ import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { connectedCohortExportRows, connectedCohortRows } from "./ConnectedCohorts";
 import { connectedTopicExportSheets } from "./connected-topic-export";
 import { liveCalculation, liveMetricModel, type LiveDashboardReading, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
-import { REGISTRATION_DIAGNOSTIC_LABEL, REGISTRATION_RETENTION_WINDOWS, readableRegistrationCohortSeries, registrationCohortDiagnosticInputs } from "../features/dashboards/registration-cohort";
-import { diagnosticRatioInputs, safeDiagnosticSeries } from "../features/dashboards/diagnostic-inputs";
+import { REGISTRATION_DIAGNOSTIC_LABEL, REGISTRATION_RETENTION_WINDOWS, readableRegistrationCohortSeries, registrationCohortDiagnosticInputs, registrationCohortReferenceRatio, isReadableRegistrationCohortPoint } from "../features/dashboards/registration-cohort";
+import { diagnosticRatioInputs, safeDiagnosticSeries, RETENTION_REFERENCE_LABEL } from "../features/dashboards/diagnostic-inputs";
 import { connectedDimensionRows, connectedDimensionSheet } from "./connected-dimension-model";
 import { liveObservation } from "./live-reading-projection";
 import { RetentionMatrix, retentionCellCalculationInputs } from "../features/dashboards/RetentionMatrix";
@@ -29,7 +29,7 @@ function fixture() {
 }
 const original = (id: string) => ({ metric: { id, name: "注册留存率", aggregationLabel: "", definitionLabel: "留存人数 ÷ 注册人数" }, result: { status: "no_values" as const, contextLabel: date, retryable: false } });
 
-describe("来源不完整留存输入只供核对", () => {
+describe("来源不完整留存输入与四个D1分组参考展示", () => {
   test("共享比例诊断覆盖付费、广告、支付、播放平台和获客，不生成正式值", () => {
     for (const id of ["M061", "M064", "M111.new", "M114.alipay", "M036.android", "M006", "M007"]) {
       const { live, result, series } = fixture(), source = series[0];
@@ -78,6 +78,8 @@ describe("来源不完整留存输入只供核对", () => {
       expect([cell.rate, cell.count, cell.base]).toEqual([null, null, null]);
       expect(retentionCellCalculationInputs(rows[0], cell)).toEqual({ count: numerator, base: denominator });
       expect(cell.status).toContain(REGISTRATION_DIAGNOSTIC_LABEL);
+      if (cell.id === "M020") expect(cell.referenceRate).toMatchObject({ value: numerator / denominator, label: RETENTION_REFERENCE_LABEL });
+      else expect(cell.referenceRate).toBeUndefined();
     });
     for (const [id] of REGISTRATION_RETENTION_WINDOWS) {
       const source = series.find(series => series.metric.id === `${id}.${scope}`)!;
@@ -86,28 +88,40 @@ describe("来源不完整留存输入只供核对", () => {
       expect(safe.points[0].value).toBeNull();
       const model = liveMetricModel(original(source.metric.id), live);
       expect(model.result.status).toBe("no_values");
-      expect(model.result.calculation).toMatchObject({ numerator: { value: numerator }, denominator: { value: denominator }, result: REGISTRATION_DIAGNOSTIC_LABEL });
+      expect(model.result.calculation).toMatchObject({ numerator: { value: numerator }, denominator: { value: denominator } });
+      expect(model.result.calculation?.result).toContain(id === "M020" ? RETENTION_REFERENCE_LABEL : REGISTRATION_DIAGNOSTIC_LABEL);
       expect(model.result.status !== "available" && model.result.history).toBeUndefined();
       const detail = renderToStaticMarkup(<LiveSeriesDetails series={source} result={result} />);
       expect(detail).toContain(REGISTRATION_DIAGNOSTIC_LABEL);
       expect(detail).toContain(`<td>${numerator}</td><td>${denominator}</td><td>—</td>`);
+      if (id === "M020") {
+        expect(detail).toContain(RETENTION_REFERENCE_LABEL);
+        expect(detail).toContain(`${(numerator / denominator * 100).toFixed(2)}%`);
+      } else expect(detail).not.toContain(RETENTION_REFERENCE_LABEL);
       const calculation = renderToStaticMarkup(<CalculationEvidence basis={liveCalculation(source, source.points[0])} />);
-      expect(calculation).toContain(REGISTRATION_DIAGNOSTIC_LABEL);
       expect(calculation).toContain(`${denominator} 人`);
-      expect(calculation).not.toContain("50.00%");
-      expect(calculation).not.toContain("100.00%");
+      if (id === "M020") {
+        expect(calculation).toContain(RETENTION_REFERENCE_LABEL);
+        expect(calculation).toContain(`${(numerator / denominator * 100).toFixed(2)} %`);
+      } else {
+        expect(calculation).toContain(REGISTRATION_DIAGNOSTIC_LABEL);
+        expect(calculation).not.toContain("50.00%");
+        expect(calculation).not.toContain("100.00%");
+      }
     }
     const rowsExport = connectedCohortExportRows(live.query, live.state, scope);
     expect(rowsExport[0][2]).toContain("计算输入");
-    rowsExport.slice(1).forEach(row => {
+    expect(rowsExport[0].slice(10)).toEqual(["参考留存率（%）", "参考说明"]);
+    rowsExport.slice(1).forEach((row, index) => {
       expect([row[2], row[4], row[5]]).toEqual([denominator, numerator, null]);
       expect(String(row[7])).toContain(REGISTRATION_DIAGNOSTIC_LABEL);
+      expect(row.slice(10)).toEqual(index === 0 ? [numerator / denominator * 100, RETENTION_REFERENCE_LABEL] : [null, null]);
     });
     const topicRows = connectedTopicExportSheets(live, live, scope).find(sheet => sheet.name === "当前注册留存")!.rows;
     expect(topicRows).toEqual(rowsExport);
   });
 
-  test("人数/比率模式和色阶均不使用诊断输入，原有主卡空态保留计算入口", async () => {
+  test("单格比率显示参考标记，人数、色阶、趋势与主卡保留正式空值", async () => {
     const { live } = fixture(), rows = connectedCohortRows(live.query, live.state, "android");
     const columns = REGISTRATION_RETENTION_WINDOWS.map(([id, days]) => ({ id, name: id, label: `D${days}`, definition: "留存人数 ÷ 注册人数 × 100%" }));
     for (const mode of ["rate", "count"] as const) {
@@ -116,10 +130,21 @@ describe("来源不完整留存输入只供核对", () => {
         const html = renderToStaticMarkup(<RetentionMatrix title="注册留存" rows={rows} columns={columns} dateLabel="注册日" baseLabel="注册用户数" onOpen={() => {}} resetKey="fixture" initialView={initialView} initialMode={mode} />);
         expect(html).toContain("当前范围暂无成熟结果");
         expect(html).toContain(REGISTRATION_DIAGNOSTIC_LABEL);
-        expect(html).not.toContain("50.00%");
+        if (mode === "rate") {
+          expect(html).toContain("50.00%");
+          expect(html).toContain(RETENTION_REFERENCE_LABEL);
+          expect(html).toContain(`aria-label="${date} D1 50.00% · ${RETENTION_REFERENCE_LABEL}"`);
+        } else {
+          expect(html).not.toContain("50.00%");
+          expect(html).not.toContain(RETENTION_REFERENCE_LABEL);
+        }
         expect(html).not.toContain("100.00%");
         expect(html).toContain("is-pending");
+        expect(html).not.toMatch(/--retention-intensity:(?!0%)[\d.]+%/);
       }
+      const trendHtml = renderToStaticMarkup(<RetentionMatrix title="注册留存" rows={rows} columns={columns} dateLabel="注册日" baseLabel="注册用户数" onOpen={() => {}} resetKey="fixture" initialView="line" initialMode={mode} />);
+      expect(trendHtml).not.toContain("50.00%");
+      expect(trendHtml).not.toContain(RETENTION_REFERENCE_LABEL);
     }
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     Object.defineProperty(globalThis, "window", { configurable: true, value: { location: new URL("http://localhost/dashboards/public?board=5.8") } });
@@ -157,10 +182,13 @@ describe("来源不完整留存输入只供核对", () => {
     ];
     for (const bad of invalid) {
       expect(registrationCohortDiagnosticInputs(source.metric.id, bad)).toBeNull();
+      expect(registrationCohortReferenceRatio(source.metric, bad)).toBeNull();
       expect(readableRegistrationCohortSeries({ ...source, points: [bad] }).points[0].inputs.every(input => input.value === null)).toBe(true);
       expect(liveCalculation(source, bad)?.numerator.value).toBeNull();
     }
     for (const id of ["M081", "M024", "M115.d1", "M020.web"]) expect(registrationCohortDiagnosticInputs(id, point)).toBeNull();
+    for (const id of ["M020", "M020.web", "M021.android", "M022.ios", "M023.natural", "M081", "M115.d1"]) expect(registrationCohortReferenceRatio({ ...source.metric, id }, point)).toBeNull();
+    expect(registrationCohortReferenceRatio(source.metric, { ...point, inputs: [...point.inputs].reverse() })).toBeNull();
   });
 
   test("0/0诊断保留0而非正式零人数，READY零分母原行为不变", () => {
@@ -168,10 +196,57 @@ describe("来源不完整留存输入只供核对", () => {
     source.points[0].inputs.forEach(input => { input.value = 0; });
     let cell = connectedCohortRows(live.query, live.state, "android")[0].cells[0];
     expect(cell).toMatchObject({ rate: null, count: null, base: null, diagnosticInputs: { count: 0, base: 0 } });
+    expect(cell.referenceRate).toBeUndefined();
+    expect(connectedCohortExportRows(live.query, live.state, "android")[1].slice(10)).toEqual([null, null]);
     Object.assign(source.points[0], { state: "zero_denominator", sourceStatus: "READY" });
     cell = connectedCohortRows(live.query, live.state, "android")[0].cells[0];
     expect(cell).toMatchObject({ rate: null, count: 0, base: 0 });
     expect(cell.diagnosticInputs).toBeUndefined();
+    expect(cell.referenceRate).toBeUndefined();
+  });
+
+  test("0/2参考显示0%，缺失输入保留空值，总体不取得参考展示", () => {
+    const { live, series, result } = fixture(), source = series[0];
+    source.points[0].inputs[0].value = 0;
+    const cell = connectedCohortRows(live.query, live.state, "android")[0].cells[0];
+    expect(cell).toMatchObject({ rate: null, count: null, base: null, referenceRate: { value: 0, label: RETENTION_REFERENCE_LABEL } });
+    expect(connectedCohortExportRows(live.query, live.state, "android")[1].slice(10)).toEqual([0, RETENTION_REFERENCE_LABEL]);
+    const columns = [{ id: "M020", name: "D1留存率", label: "D1", definition: "留存人数 ÷ 注册人数 × 100%" }];
+    const html = renderToStaticMarkup(<RetentionMatrix title="注册留存" rows={[{date,base:null,cells:[cell]}]} columns={columns} dateLabel="注册日" baseLabel="注册用户数" onOpen={() => {}} resetKey="fixture" />);
+    expect(html).toContain("0.00%");
+    expect(html).toContain(RETENTION_REFERENCE_LABEL);
+    expect(html).toContain("当前范围暂无成熟结果");
+    source.points[0].inputs[1].value = null;
+    expect(connectedCohortRows(live.query, live.state, "android")[0].cells[0].referenceRate).toBeUndefined();
+    source.points[0].inputs[1].value = 2;
+    const overall = { ...source, metric: { ...source.metric, id: "M020", referenceMetricId: "M020" } };
+    result.data.series.push(overall);
+    const overallCell = connectedCohortRows(live.query, live.state, "overall")[0].cells[0];
+    expect(overallCell.rate).toBeNull();
+    expect(overallCell.referenceRate).toBeUndefined();
+    expect(connectedCohortExportRows(live.query, live.state, "overall")[1].slice(10)).toEqual([null, null]);
+  });
+
+  test("四组SOURCE_INCOMPLETE仍不可读，READY的2/3正式结果与D3保持原行为", () => {
+    for (const [scope] of groups) {
+      const { live, series } = fixture();
+      const d1 = series.find(source => source.metric.id === `M020.${scope}`)!;
+      expect(isReadableRegistrationCohortPoint(d1.points[0])).toBe(false);
+      expect(readableRegistrationCohortSeries(d1).points[0].value).toBeNull();
+      Object.assign(d1.points[0], { state: "available", sourceStatus: "READY", value: 2 / 3, inputs: [{ key: "retainedUserCount", value: 2 }, { key: "registeredUserCount", value: 3 }] });
+      const rows = connectedCohortRows(live.query, live.state, scope);
+      expect(rows[0].cells[0]).toMatchObject({ rate: 2 / 3, count: 2, base: 3 });
+      expect(rows[0].cells[0].referenceRate).toBeUndefined();
+      expect(rows[0].cells[1]).toMatchObject({ rate: null, count: null, base: null });
+      expect(rows[0].cells[1].referenceRate).toBeUndefined();
+      const exported = connectedCohortExportRows(live.query, live.state, scope);
+      expect(exported[1][5]).toBe(2 / 3 * 100);
+      expect(exported[1].slice(10)).toEqual([null, null]);
+      const columns = REGISTRATION_RETENTION_WINDOWS.map(([id, days]) => ({ id, name: id, label: `D${days}`, definition: "留存人数 ÷ 注册人数 × 100%" }));
+      const html = renderToStaticMarkup(<RetentionMatrix title="注册留存" rows={rows} columns={columns} dateLabel="注册日" baseLabel="注册用户数" onOpen={() => {}} resetKey="fixture" />);
+      expect(html).toContain("66.67%");
+      expect(html).not.toContain(RETENTION_REFERENCE_LABEL);
+    }
   });
 
   test("单卡CSV当前/比较独立保留诊断inputs、空结果与核对状态", async () => {

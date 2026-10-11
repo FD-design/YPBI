@@ -7,7 +7,7 @@ import type { DateRangeValue } from "../../../components/ui/date-range-model";
 import { dailyMetricReading, dailyReferenceDates, periodMetricReading, type DailyReadingPoint } from "./daily-reading-model";
 import { livePeriodReadingStatistics } from "./live-period-statistics";
 import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, readableRegistrationCohortSeries, registrationMetricScopeLabel } from "./registration-cohort";
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, safeDiagnosticSeries } from "./diagnostic-inputs";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
 import { metricNumberFormatOptions } from "../../../components/metric-number-format";
 
 export type LiveSeries = DailyDashboardSuccess["data"]["series"][number];
@@ -49,12 +49,13 @@ export const livePointStateLabel = (point: LiveSeries["points"][number], metric?
       : point.sourceStatus === "FAILED" ? "数据异常"
         : liveStateLabel[point.state];
 export const liveValue = (value: number | null, unit: string) => value === null ? "—" : (unit === "%" ? value * 100 : value).toLocaleString("zh-CN", metricNumberFormatOptions(value, unit));
-export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number]): CalculationBasis | undefined {
+export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number], referencePresentation = true): CalculationBasis | undefined {
   if (series.metric.inputs.length !== 2) return undefined;
   const diagnostic = diagnosticRatioInputs(series.metric, point);
+  const reference = referencePresentation ? retentionReferenceRatio(series.metric, point) : null;
   const readable = (!point.sourceStatus || point.sourceStatus === "READY") && (!isRegistrationRetentionMetric(series.metric.id) || isReadableRegistrationCohortPoint(point));
   const inputs = series.metric.inputs.map((input, index) => ({ name: input.name, unit: input.unit, value: readable || diagnostic ? point.inputs[index].value : null }));
-  return { numerator: inputs[0], denominator: inputs[1], formula: series.metric.formula ?? "", scope: `${point.date} · ${isRegistrationRetentionMetric(series.metric.id) ? "注册日 · " + registrationMetricScopeLabel(series.metric.id) : "业务日"} · 待验数${diagnostic ? " · " + DIAGNOSTIC_INPUTS_LABEL : ""}`, percentage: series.metric.unit === "%", result: diagnostic ? DIAGNOSTIC_INPUTS_LABEL : liveValue(readable ? point.value : null, series.metric.unit) + " " + series.metric.unit };
+  return { numerator: inputs[0], denominator: inputs[1], formula: series.metric.formula ?? "", scope: `${point.date} · ${isRegistrationRetentionMetric(series.metric.id) ? "注册日 · " + registrationMetricScopeLabel(series.metric.id) : "业务日"} · 待验数${diagnostic ? " · " + (reference?.label ?? DIAGNOSTIC_INPUTS_LABEL) : ""}`, percentage: series.metric.unit === "%", result: reference ? `${liveValue(reference.value, "%")} % · ${reference.label}` : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : liveValue(readable ? point.value : null, series.metric.unit) + " " + series.metric.unit };
 }
 function trendValue(point: LiveSeries["points"][number] | undefined, unit: string) {
   return point?.value != null ? { raw: point.value, display: liveValue(point.value, unit), actualDate: point.date } : null;
@@ -126,7 +127,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
       value: trendValue(point, unit), counterpart: trendValue(other, unit),
       differenceDisplay: point.value != null && other?.value != null ? difference(previousPeriod ? other.value : point.value, previousPeriod ? point.value : other.value, unit) : null,
       state: point.state === "available" || point.state === "no_record" ? point.state : "no_value" as const,
-      stateLabel: diagnosticRatioInputs(current.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point), calculation: liveCalculation(current, point)
+      stateLabel: diagnosticRatioInputs(current.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point), calculation: liveCalculation(current, point, false)
     };
   });
   const direction = last.value != null && previous?.value != null ? last.value > previous.value ? "up" as const : last.value < previous.value ? "down" as const : "flat" as const : null;

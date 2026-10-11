@@ -1,4 +1,4 @@
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, isRegistrationRetentionMetric } from "./diagnostic-inputs";
+import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, isRegistrationRetentionMetric, retentionReferenceRatio } from "./diagnostic-inputs";
 export { isRegistrationRetentionMetric } from "./diagnostic-inputs";
 export const REGISTRATION_COHORT_SCOPES = [
   { value: "overall", label: "总体" },
@@ -15,6 +15,9 @@ export const registrationCohortMetricId = (id: string, scope: RegistrationCohort
 export const REGISTRATION_DIAGNOSTIC_LABEL = DIAGNOSTIC_INPUTS_LABEL;
 export function registrationCohortDiagnosticInputs(metricId: string, point: CohortPoint | undefined) {
   return isRegistrationRetentionMetric(metricId) ? diagnosticRatioInputs({ id: metricId, unit: "%", inputs: point?.inputs ?? [] }, point) : null;
+}
+export function registrationCohortReferenceRatio(metric: Pick<CohortSeries["metric"], "id" | "unit" | "inputs">, point: CohortPoint | undefined) {
+  return retentionReferenceRatio(metric, point);
 }
 export const isReadableRegistrationCohortPoint = (point: CohortPoint | undefined) => Boolean(point
   && (point.state === "available" || point.state === "zero_denominator")
