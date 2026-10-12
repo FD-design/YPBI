@@ -15,11 +15,14 @@ export type AcquisitionGroupValue = {
 export type AcquisitionGroupMetric = { metric: DailyReadingMetric; summary: AcquisitionGroupValue; points: AcquisitionGroupValue[] };
 export type AcquisitionLiveGroupRow = { key: string; name: string; current: Record<string, AcquisitionGroupMetric>; previous?: Record<string, AcquisitionGroupMetric> };
 
+function acquisitionPointStateLabel(point: Parameters<typeof livePointStateLabel>[0]) {
+  return point.sourceStatus === "SOURCE_INCOMPLETE" ? "来源不完整" : livePointStateLabel(point);
+}
 function requestState(request: DailyAcquisitionRequestStatus | undefined) {
   return !request ? "分组待接入" : request.state === "source_failure" ? "读取失败" : request.state === "invalid_response" ? "数据异常" : request.state === "empty" ? "本期未返回分组记录" : undefined;
 }
 function requestScopeStates(request: DailyAcquisitionRequestStatus | undefined, label: string) {
-  return request?.scopeStatuses.map(status => `${label}${status.businessDate ? ` ${status.businessDate}` : ""} · ${acquisitionMetric(status.metricId).name}：${livePointStateLabel({ date: status.businessDate ?? "", state: "no_value", sourceStatus: status.sourceStatus, value: null, inputs: [] })}`) ?? [];
+  return request?.scopeStatuses.map(status => `${label}${status.businessDate ? ` ${status.businessDate}` : ""} · ${acquisitionMetric(status.metricId).name}：${acquisitionPointStateLabel({ date: status.businessDate ?? "", state: "no_value", sourceStatus: status.sourceStatus, value: null, inputs: [] })}`) ?? [];
 }
 function fallbackMetric(id: string): DailyReadingMetric {
   const metric = acquisitionMetric(id);
@@ -60,10 +63,10 @@ function groupMetric(period: GroupPeriod, key: string, id: string): AcquisitionG
       ?? requestState(request) ?? (!group ? "本期未返回该分组" : !selected ? "指标未返回" : undefined);
     const valid = !failure && point?.state === "available" && (!status || status === "READY") && point.value !== null && Number.isFinite(point.value) && point.value >= 0 && !invalidInputs;
     const readableInputs = !failure && (!status || status === "READY") && !invalidInputs && (valid || point?.state === "zero_denominator");
-    const state = failure ?? (status && status !== "READY" ? livePointStateLabel({ date, value: null, inputs: [], state: "no_value", sourceStatus: status })
+    const state = failure ?? (status && status !== "READY" ? acquisitionPointStateLabel({ date, value: null, inputs: [], state: "no_value", sourceStatus: status })
       : !point ? date.includes(" 至 ") ? "区间汇总未返回" : "当日未返回"
         : point.state === "unsupported" ? "区间汇总待支持"
-          : point.state === "available" && !valid ? "数据异常" : livePointStateLabel({ ...point, date, state: point.state }));
+          : point.state === "available" && !valid ? "数据异常" : acquisitionPointStateLabel({ ...point, date, state: point.state }));
     return { date, value: valid ? point!.value : null, state, sourceStatus: status, ruleVersion: point?.ruleVersion ?? null,
       inputs: metric.inputs.map(input => ({ ...input, value: readableInputs ? point!.inputs.find(value => value.key === input.key)?.value ?? null : null })),
       fetchedAt: request?.generatedAt ?? period.fetchedAt, watermark: request?.watermark ?? null, freshness: period.freshness };

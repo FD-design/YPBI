@@ -7,6 +7,13 @@ import { UpstreamError, type UpstreamClient } from "./client";
 export const ACQUISITION_GROUP_METRICS = DAILY_ACQUISITION_METRIC_IDS;
 export type AcquisitionGroupDimension = keyof typeof ACQUISITION_GROUP_METRICS;
 export type AcquisitionGroupMetric = typeof ACQUISITION_GROUP_METRICS[AcquisitionGroupDimension][number];
+// Display slots and upstream grouping capabilities are independent.
+export const ACQUISITION_GROUP_REQUEST_METRICS = {
+  channel: ["M001", "M003", "M005", "M099"], downloadPlatform: ["M003"]
+} as const satisfies Record<AcquisitionGroupDimension, readonly AcquisitionGroupMetric[]>;
+export function supportsAcquisitionGroupMetric(dimension: AcquisitionGroupDimension, id: AcquisitionGroupMetric) {
+  return (ACQUISITION_GROUP_REQUEST_METRICS[dimension] as readonly AcquisitionGroupMetric[]).includes(id);
+}
 type Granularity = "day" | "summary";
 type Query = Pick<DailyDashboardQuery, "pid" | "dateRange">;
 type Reading = DailyAcquisitionSummary;
@@ -149,6 +156,13 @@ function selectReading(result: RequestResult, key: string, id: AcquisitionGroupM
   return rows?.get(rowKey(id, date)) ?? unavailable(metric, "no_record");
 }
 
+function displayScope(result: RequestResult, dimension: AcquisitionGroupDimension): RequestResult {
+  if (result.status.state !== "returned") return result;
+  const unsupported = ACQUISITION_GROUP_METRICS[dimension].filter(id => !supportsAcquisitionGroupMetric(dimension, id));
+  return { ...result, status: { ...result.status, scopeStatuses: [...result.status.scopeStatuses,
+    ...unsupported.map(metricId => ({ metricId, sourceStatus: "SOURCE_INCOMPLETE" as const }))] } };
+}
+
 function dimensionResult(query: Query, dimension: AcquisitionGroupDimension, day: RequestResult, summary: RequestResult,
   metricFor: (id: AcquisitionGroupMetric) => DailyReadingMetric): DailyAcquisitionGroupResult {
   const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
@@ -163,9 +177,12 @@ function dimensionResult(query: Query, dimension: AcquisitionGroupDimension, day
       return { metric, points: Array.from({ length: days }, (_, i) => {
         const date = new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10);
         // Day requests never produce the summary-only unsupported state.
-        const point = selectReading(day, key, id, metric, date);
+        const point = day.status.state === "returned" && !supportsAcquisitionGroupMetric(dimension, id)
+          ? unavailable(metric, "no_value") : selectReading(day, key, id, metric, date);
         return { ...point, state: point.state as Exclude<Reading["state"], "unsupported">, date };
-      }), summary: id === "M099" && days > 1 ? unavailable(metric, "unsupported") : selectReading(summary, key, id, metric) };
+      }), summary: id === "M099" && days > 1 ? unavailable(metric, "unsupported")
+        : summary.status.state === "returned" && !supportsAcquisitionGroupMetric(dimension, id)
+          ? unavailable(metric, "no_value") : selectReading(summary, key, id, metric) };
     })
   })) };
 }
@@ -173,14 +190,14 @@ function dimensionResult(query: Query, dimension: AcquisitionGroupDimension, day
 /** Independent queries preserve raw group keys and direct day/summary results. */
 export async function readBiV1AcquisitionGroups(client: Pick<UpstreamClient, "get">, query: Query,
   metricFor: (id: AcquisitionGroupMetric) => DailyReadingMetric): Promise<DailyAcquisitionGroups> {
-  const channelSummary = query.dateRange[0] === query.dateRange[1] ? ACQUISITION_GROUP_METRICS.channel : ACQUISITION_GROUP_METRICS.channel.filter(id => id !== "M099");
+  const channelSummary = query.dateRange[0] === query.dateRange[1] ? ACQUISITION_GROUP_REQUEST_METRICS.channel : ACQUISITION_GROUP_REQUEST_METRICS.channel.filter(id => id !== "M099");
   const [channelDay, channelPeriod, downloadDay, downloadPeriod] = await Promise.all([
-    requestGroups(client, query, "channel", "day", ACQUISITION_GROUP_METRICS.channel, metricFor),
+    requestGroups(client, query, "channel", "day", ACQUISITION_GROUP_REQUEST_METRICS.channel, metricFor),
     requestGroups(client, query, "channel", "summary", channelSummary, metricFor),
-    requestGroups(client, query, "downloadPlatform", "day", ACQUISITION_GROUP_METRICS.downloadPlatform, metricFor),
-    requestGroups(client, query, "downloadPlatform", "summary", ACQUISITION_GROUP_METRICS.downloadPlatform, metricFor)
+    requestGroups(client, query, "downloadPlatform", "day", ACQUISITION_GROUP_REQUEST_METRICS.downloadPlatform, metricFor),
+    requestGroups(client, query, "downloadPlatform", "summary", ACQUISITION_GROUP_REQUEST_METRICS.downloadPlatform, metricFor)
   ]);
-  const result = { channel: dimensionResult(query, "channel", channelDay, channelPeriod, metricFor),
+  const result = { channel: dimensionResult(query, "channel", displayScope(channelDay, "channel"), displayScope(channelPeriod, "channel"), metricFor),
     downloadPlatform: dimensionResult(query, "downloadPlatform", downloadDay, downloadPeriod, metricFor) };
   const outputCount = Object.values(result).reduce((total, dimension) => total + dimension.groups.reduce((sum, group) => sum + group.series.reduce((count, series) => count + series.points.length + 1, 0), 0), 0);
   if (outputCount > DAILY_ACQUISITION_MAX_POINTS) for (const dimension of Object.values(result)) {

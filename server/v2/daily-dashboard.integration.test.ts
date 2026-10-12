@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DAILY_ACQUISITION_METRIC_IDS, type DailyDashboardV2Success } from "../../contracts/daily-dashboard";
+import { type DailyDashboardV2Success } from "../../contracts/daily-dashboard";
+import { ACQUISITION_GROUP_REQUEST_METRICS } from "../upstream/bi-v1.acquisition-adapter";
 import { BI_V1_METRICS_API, type BiV1MetricDataStatus, type BiV1MetricUnit } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamError } from "../upstream/client";
 import { DailyDashboardService, dailyDashboardMatchesMapping } from "./daily-dashboard.service";
@@ -135,7 +136,7 @@ function expectRequestScopes(calls: Request[]) {
     if (params.dimensions === "channel" || params.dimensions === "downloadPlatform") {
       expect(params.dimensionFilters).toBeUndefined();
       expect(["day", "summary"]).toContain(params.granularity);
-      expect(params.metricCodes.split(",")).toEqual([...DAILY_ACQUISITION_METRIC_IDS[params.dimensions]]);
+      expect(params.metricCodes.split(",")).toEqual([...ACQUISITION_GROUP_REQUEST_METRICS[params.dimensions]]);
       expect(params.endDate).toBe("2020-01-02");
       continue;
     }

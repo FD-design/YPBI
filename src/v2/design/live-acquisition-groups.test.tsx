@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DailyAcquisitionGroupResult, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
-import { ACQUISITION_GROUP_IDS, acquisitionGroupBoardSheets, acquisitionGroupModel, acquisitionGroupWorkbook } from "./live-acquisition-groups";
+import { ACQUISITION_GROUP_IDS, acquisitionGroupBoardSheets, acquisitionGroupComparison, acquisitionGroupModel, acquisitionGroupWorkbook } from "./live-acquisition-groups";
 import { acquisitionDownloadModel, acquisitionDownloadPoints, acquisitionDownloadWorkbook } from "./acquisition-download-source";
 import { acquisitionDetailSource } from "./acquisition-detail-source";
 import { DEFAULT_ACQUISITION_FILTERS, acquisitionMetric } from "./acquisition-preview-model";
@@ -29,6 +29,83 @@ function reading(dateRange: [string, string] = ["2020-01-01", "2020-01-02"]): Li
 function payload(live: LiveDashboardReading) { if (live.state.status !== "success" || live.state.data.data.schemaVersion !== "day-dashboard/v2") throw Error("Expected v2 success"); return live.state.data.data; }
 function groups(live: LiveDashboardReading, dimension: "channel" | "downloadPlatform" = "channel") { return payload(live).acquisitionGroups![dimension]; }
 function model(live: LiveDashboardReading) { return acquisitionGroupModel(live, "channel"); }
+
+function supportedChannelReading(date = "2020-01-01"): LiveDashboardReading {
+  const live = reading([date, date]), channel = groups(live);
+  channel.groups = channel.groups.slice(0, 1);
+  for (const lane of [channel.day, channel.summary]) lane.scopeStatuses = [
+    { metricId: "M006", sourceStatus: "SOURCE_INCOMPLETE" }, { metricId: "M007", sourceStatus: "SOURCE_INCOMPLETE" }
+  ];
+  for (const series of channel.groups[0].series) {
+    const unavailable = ["M006", "M007"].includes(series.metric.id), ratio = series.metric.unit === "%";
+    const value = series.metric.id === "M001" ? 4 : series.metric.id === "M003" ? 3 : .75;
+    const point = { state: unavailable ? "no_value" as const : "available" as const,
+      value: unavailable ? null : value, ruleVersion: unavailable ? null : "actual/v3",
+      ...(unavailable ? {} : { sourceStatus: "READY" as const }),
+      inputs: series.metric.inputs.map((input, i) => ({ key: input.key, value: unavailable ? null : ratio ? i ? 4 : 3 : value })) };
+    series.points = [{ date, ...point }]; series.summary = point;
+  }
+  const data = payload(live), base = data.series[0];
+  for (const [id, value, numerator] of [["M006", .9, 99423], ["M007", .8, 88768]] as const) {
+    const metric = channel.groups[0].series.find(series => series.metric.id === id)!.metric;
+    data.series.push({ ...structuredClone(base), metric: structuredClone(metric),
+      points: [{ date, state: "available", sourceStatus: "READY", value, inputs: metric.inputs.map((input, i) => ({ key: input.key, value: i ? numerator / value : numerator })) }],
+      periodStatistics: { ...base.periodStatistics, state: "unsupported", values: [], reason: "区间注册去重待支持" } });
+  }
+  live.metricIds = data.series.map(series => series.metric.id);
+  return live;
+}
+
+test("实际渠道四项健康读数和两项来源不完整共存，详情与比较不复制总体输入", () => {
+  const live = supportedChannelReading(), before = supportedChannelReading("2019-12-31");
+  live.comparison = { label: "上一等长周期", query: before.query, state: before.state };
+  const result = model(live), row = result.rows[0];
+  expect(result.unavailableReason).toBeUndefined();
+  expect(result.ids).toEqual(["M001", "M003", "M005", "M006", "M007", "M099"]);
+  expect(["M001", "M003", "M005", "M099"].map(id => row.current[id].summary.value)).toEqual([4, 3, .75, .75]);
+  const html = renderToStaticMarkup(<ChannelQuality filters={DEFAULT_ACQUISITION_FILTERS} mixed detail={{ ...DEFAULT_ACQUISITION_VIEW.detail.sections.channel, showChange: "previous" }} pending={false} update={() => {}} open={() => {}} liveModel={result} />);
+  expect(html).toContain("4 次"); expect(html).toContain("3 次"); expect(html.match(/75\.00%/g)).toHaveLength(2);
+  expect(html.match(/channel-quality__status">来源不完整/g)).toHaveLength(2);
+  expect(html).not.toContain("读取失败");
+  expect(acquisitionGroupComparison(row.current.M005, row.previous!.M005)).toMatchObject({ difference: 0, change: 0, reason: "可比" });
+  for (const id of ["M006", "M007"]) {
+    for (const period of [row.current[id], row.previous![id]]) for (const point of [...period.points, period.summary]) {
+      expect(point).toMatchObject({ value: null, state: "来源不完整", sourceStatus: "SOURCE_INCOMPLETE", ruleVersion: null });
+      expect(point.inputs.every(input => input.value === null)).toBe(true);
+    }
+    const details = renderToStaticMarkup(<LiveAcquisitionMetricDetails row={row} id={id} />);
+    expect(details).toContain("来源不完整"); expect(details).toContain("同渠道分子：— IP"); expect(details).toContain("同渠道分母：— IP");
+    expect(details).not.toContain("99423"); expect(details).not.toContain("88768");
+    expect(acquisitionGroupComparison(row.current[id], row.previous![id])).toMatchObject({ difference: null, change: null, reason: "本期或基准无可比较的 READY 结果" });
+  }
+});
+
+test("实际渠道两项空值及来源状态贯穿区域和整板导出，总体结果独立保留", async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location: new URL("http://localhost/dashboards/public?board=5.7") } });
+  let connectedBoardExportSheets: typeof import("./ConnectedBoard")["connectedBoardExportSheets"];
+  try { ({ connectedBoardExportSheets } = await import("./ConnectedBoard")); }
+  finally { if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window"); }
+  const live = supportedChannelReading(), before = supportedChannelReading("2019-12-31");
+  live.comparison = { label: "上一等长周期", query: before.query, state: before.state };
+  const region = acquisitionGroupWorkbook(live, "channel"), board = connectedBoardExportSheets(live);
+  for (const sheet of region.slice(1)) expect(board.find(candidate => candidate.name === sheet.name)).toEqual(sheet);
+  for (const sheet of region.slice(1, 3)) for (const id of ["M006", "M007"]) {
+    const rows = sheet.rows.slice(1).filter(row => row[4] === acquisitionMetric(id).name);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row[5]).toBeNull(); expect(row[7]).toBe("同渠道分子：— IP；同渠道分母：— IP");
+      expect(row[8]).toBe("来源不完整"); expect(row[9]).toBeNull(); expect(row[13]).toBe("SOURCE_INCOMPLETE");
+    }
+  }
+  for (const id of ["M006", "M007"]) expect(comparisonRow(live, "channel", id)).toMatchObject({
+    "当前值": null, "基准值": null, "差值（原始值）": null, "变化率（%）或百分点": null,
+    "当前来源状态": "SOURCE_INCOMPLETE", "基准来源状态": "SOURCE_INCOMPLETE",
+    "当前实际输入": "同渠道分子：— IP；同渠道分母：— IP", "基准实际输入": "同渠道分子：— IP；同渠道分母：— IP"
+  });
+  expect(payload(live).series.find(series => series.metric.id === "M006")!.points[0].value).toBe(.9);
+  expect(payload(live).series.find(series => series.metric.id === "M007")!.points[0].value).toBe(.8);
+});
 
 test("动态渠道保留原键，不映射名称或合并大小写，区间只用服务端汇总", () => {
   const live = reading(), result = model(live);
@@ -108,7 +185,7 @@ test("全范围非READY即使未返回分组也保留来源状态与业务日期
   const live = reading(), group = groups(live); group.groups = [];
   group.day.scopeStatuses = [{ metricId: "M003", sourceStatus: "PROCESSING", businessDate: "2020-01-01" }];
   group.summary.scopeStatuses = [{ metricId: "M001", sourceStatus: "SOURCE_INCOMPLETE" }, { metricId: "M005", sourceStatus: "NOT_MATURE" }];
-  for (const status of ["2020-01-01", "计算中", "数据接入中", "待成熟"]) expect(model(live).emptyReason).toContain(status);
+  for (const status of ["2020-01-01", "计算中", "来源不完整", "待成熟"]) expect(model(live).emptyReason).toContain(status);
   expect(model(live).emptyReason).not.toContain("未返回分组结果");
   const zero = reading(), series = groups(zero).groups[0].series.find(series => series.metric.id === "M005")!;
   series.summary = { ...series.summary, state: "zero_denominator", value: null, inputs: series.summary.inputs.map(input => ({ ...input, value: 0 })) };

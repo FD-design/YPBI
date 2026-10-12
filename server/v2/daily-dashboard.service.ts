@@ -12,7 +12,7 @@ import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-dai
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API, aggregateBiV1Playback, projectBiV1PlaybackGroups, queryBiV1Playback, unavailableBiV1PlaybackGroups, type BiV1PlaybackDay, type BiV1PlaybackMetricCode } from "../upstream/bi-v1.adapter";
 import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension } from "../upstream/bi-v1.metrics-adapter";
 import { readBiV1MonthlyMetricDays } from "../upstream/bi-v1.monthly-adapter";
-import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
+import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, supportsAcquisitionGroupMetric, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
 export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRechargeSucRate";
 export const CHECKIN_OVERVIEW_API = "/api/admin/dataDashboard/overview";
@@ -373,7 +373,9 @@ function metric(id: CandidateId): DailyReadingMetric {
   };
 }
 function acquisitionMetric(id: AcquisitionGroupMetric): DailyReadingMetric {
-  return { ...metric(id), sourceNote: "来自 bi-v1 同平台、同维度、同日期范围的独立分组结果；日值与区间汇总分别直读，分组键保留原值。仅使用 READY 数值，不从分组推算总体或占比；分组全量完整性未知。" };
+  return { ...metric(id), sourceNote: supportsAcquisitionGroupMetric("channel", id)
+    ? "来自 bi-v1 同平台、同维度、同日期范围的独立分组结果；日值与区间汇总分别直读，分组键保留原值。仅使用 READY 数值，不从分组推算总体或占比；分组全量完整性未知。"
+    : "当前接口没有同渠道注册归因结果，渠道来源不完整；总体独立查询保留，不将总体数值、分子或分母用于渠道分组。" };
 }
 function playbackGroupMetric(id: BiV1PlaybackMetricCode): DailyReadingMetric {
   const reading = metric(id);

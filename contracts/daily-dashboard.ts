@@ -42,6 +42,7 @@ export type DailyPoint = z.infer<typeof dailyPointSchema>;
 
 export const DAILY_ACQUISITION_MAX_GROUPS = 1000;
 export const DAILY_ACQUISITION_MAX_POINTS = 100_000;
+// Stable display slots; unsupported grouping slots retain explicit source limits.
 export const DAILY_ACQUISITION_METRIC_IDS = {
   channel: ["M001", "M003", "M005", "M006", "M007", "M099"], downloadPlatform: ["M003"]
 } as const;
@@ -111,7 +112,7 @@ const dailyAcquisitionGroupResultSchema = z.object({
     (point.state === (request.state === "empty" ? "no_record" : request.state === "source_failure" ? "source_failure" : "invalid_value") && !point.sourceStatus && point.value === null && point.inputs.every(input => input.value === null) && point.ruleVersion === null);
   for (const group of result.groups) {
     if (new Set(group.series.map(series => series.metric.id)).size !== group.series.length) ctx.addIssue({ code: "custom", message: "分组指标不能重复" });
-    if (group.series.length !== metricIds.length || group.series.some((series, index) => series.metric.id !== metricIds[index])) ctx.addIssue({ code: "custom", message: "分组指标必须符合对应维度支持集合" });
+    if (group.series.length !== metricIds.length || group.series.some((series, index) => series.metric.id !== metricIds[index])) ctx.addIssue({ code: "custom", message: "分组指标必须符合对应维度展示集合" });
     if (group.series.some(series => series.points.some(point => !requestMatches(result.day, point)) || !requestMatches(result.summary, series.summary))) ctx.addIssue({ code: "custom", message: "分组值与请求状态不一致" });
     pointCount += group.series.reduce((total, series) => total + series.points.length + 1, 0);
   }
