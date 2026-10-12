@@ -6,6 +6,7 @@ import { coreDailyCards, corePeriodMetric } from "./core-period-preview";
 import { parseExtendedView, extendedBoardHref } from "./extended-board-view";
 import { previewFavorites, setPreviewFavorite } from "./preview-favorites";
 import { downloadPreviewWorkbook, type WorkbookSheet } from "./preview-workbook";
+import { liveExportEnvironmentRows } from "../features/dashboards/LiveDashboardContext";
 import { metricRows } from "./topic-preview-export";
 import { DETAIL_COLUMNS, DETAIL_ROWS, detailColumnKey, operatingDetailRows, operatingSummaryModels, operatingDetailExportRows, operatingValueLabel, selectOperatingRows, operatingDetailBreakdown, type DetailRow, type DetailColumn } from "./operating-detail-snapshot";
 import { retentionTargetDate } from "./operating-detail-snapshot";
@@ -519,7 +520,7 @@ function CoreOverviewDesignFixture() {
 
   const exportSheets = (detailOnly = false): WorkbookSheet[] => {
     if (live && detailOnly) return [
-      { name: "00_导出说明", rows: [["数据日", detailDate], ["平台", detailScopeLabel], ["来源", "逐字段区分待验数与待接口支持；不含演示数值"], ["完整性", "未知"], ["数据水位", "未返回"], ["金额", "真实金额采用服务端返回单位，保留接口数值；各列单独标明单位，不跨PID汇总"], ["大盘摘要", detailPlatform === "all" ? "上游未提供独立去重结果，数值留空" : "同一平台日值"]] },
+      { name: "00_导出说明", rows: [...liveExportEnvironmentRows(live), ["数据日", detailDate], ["平台", detailScopeLabel], ["来源", "逐字段区分待验数与待接口支持；不含演示数值"], ["完整性", "未知"], ["数据水位", "未返回"], ["金额", "真实金额采用服务端返回单位，保留接口数值；各列单独标明单位，不跨PID汇总"], ["大盘摘要", detailPlatform === "all" ? "上游未提供独立去重结果，数值留空" : "同一平台日值"]] },
       { name: "01_经营明细", rows: operatingLiveExportRows(sortedRows, detailColumns, detailDate) },
       { name: "02_数值摘要", rows: metricRows(detailModels, id => detailColumns.find(c => c.metric.id === id && !c.slice)?.unit ?? "人") },
       { name: "03_字段说明", rows: [["指标", "单位", "数据来源", "定义"], ...detailColumns.map(column => [column.metric.name, column.unit, live.metricIds.includes(OPERATING_LIVE_IDS[detailColumnKey(column)]) ? "待验数" : "待接口支持", column.metric.definition])] },

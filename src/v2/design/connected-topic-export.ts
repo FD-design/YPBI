@@ -1,5 +1,6 @@
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
-import { liveDailyReferenceRows, livePeriodStatus, livePointStateLabel, type LiveDashboardReading as LiveDashboardValue, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
+import { liveDailyReferenceRows, liveExportEnvironmentRows, liveDataEnvironment, livePeriodStatus, livePointStateLabel, type LiveDashboardReading as LiveDashboardValue, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
+import { dataEnvironmentLabel } from "../api/daily-dashboard-environment";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
 import { REGISTRATION_RETENTION_WINDOWS, registrationCohortMetricId, registrationCohortScopeLabel, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
 import { connectedCohortExportRows } from "./ConnectedCohorts";
@@ -27,6 +28,8 @@ export function connectedTopicExportSheets(live: LiveDashboardValue, cohortLive:
     ...(cohortLive.comparison ? [{ name: "对比注册留存", query: cohortLive.comparison.query, state: cohortLive.comparison.state }] : [])];
   return [
     { name: "读取说明", rows: [
+      ...liveExportEnvironmentRows(live), ["注册留存数据环境", dataEnvironmentLabel(liveDataEnvironment(cohortLive))],
+      ["注册留存对比数据环境", cohortLive.comparison ? dataEnvironmentLabel(liveDataEnvironment(cohortLive.comparison)) : "未启用对比"],
       ["数据性质", "真实后台候选结果，待验数"], ["平台", live.query.pid], ["范围", live.query.dateRange.join(" 至 ")],
       ["主值", "普通日指标为所选结束日；注册留存卡按成熟已返回批次加权；本文件逐日列出原始值"], ["完整性", "未知"], ["数据水位", "未返回"],
       ["对比状态", !live.comparison ? "不对比" : live.comparison.state.status !== "success" || !live.comparison.state.data ? "对比查询未成功，不以演示结果补齐" : "独立读取上一等长周期"],

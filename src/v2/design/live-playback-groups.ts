@@ -1,6 +1,7 @@
 import type { DailyDashboardSuccess, DailyPlaybackGroupSeries, DailyPlaybackSummary, DailyReadingMetric } from "../../../contracts/daily-dashboard";
 import { livePointStateLabel, type LiveDashboardReading, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import type { WorkbookSheet } from "./preview-workbook";
+import { liveExportEnvironmentRows } from "../features/dashboards/LiveDashboardContext";
 
 export const PLAYBACK_VIDEO_TYPE_IDS = ["M097", "M036"] as const;
 export type PlaybackScope = Pick<LiveDashboardReading, "query" | "state" | "comparison">;
@@ -94,7 +95,7 @@ export function playbackGroupReading(live: LiveDashboardReading, seriesId: strin
 
 /** Both the region and whole-board export use the same complete, unfiltered group facts. */
 export function playbackVideoTypeSheet(live: PlaybackScope, ids: readonly string[] = PLAYBACK_VIDEO_TYPE_IDS, onlyKey?: string): WorkbookSheet {
-  const rows: WorkbookSheet["rows"] = [["数据性质", "真实后台候选结果，待验数；分组完整性未知，仅展示已返回标识"],
+  const rows: WorkbookSheet["rows"] = [["数据性质", "真实后台候选结果，待验数；分组完整性未知，仅展示已返回标识", ...liveExportEnvironmentRows(live).flat()],
     ...ids.map(id => [id, playbackGroupNotice(live, id) ?? "已返回"]),
     ["周期", "平台", "视频类型", "指标", "日期", "结果（原始值）", "单位", "计算输入", "状态", "规则版本", "查询时间", "数据至", "刷新状态", "指标版本"]];
   for (const key of playbackGroupKeys(live).filter(key => onlyKey === undefined || key === onlyKey)) for (const id of ids) for (const before of live.comparison ? [false, true] : [false]) {

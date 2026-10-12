@@ -1,6 +1,8 @@
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import type { V2ResourceState } from "../api/useV2Resource";
-import { liveMetricModel, liveMetricUnit, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveMetricModel, liveMetricUnit, livePointStateLabel, liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
+import type { DataEnvironmentMode } from "../api/dataEnvironmentPreference";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, type DetailColumn } from "./operating-detail-columns";
 import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
@@ -35,8 +37,9 @@ export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M087:overall":"M087", "M088:overall":"M088", "M067:overall":"M067", "M067:新用户":"M067.new", "M001:overall":"M001"
 };
 export type OperatingResources = Record<string, V2ResourceState<DailyDashboardSuccess>>;
-export function operatingResource(resource: OperatingResources[string] | undefined, pid: string, date: string) {
-  return resource?.status === "success" && (resource.data.data.query.pid !== pid || resource.data.data.query.dateRange[1] !== date || resource.data.data.query.dateRange[0] > shiftDate(date, -7)) ? undefined : resource;
+export function operatingResource(resource: OperatingResources[string] | undefined, pid: string, date: string, environment?: DataEnvironmentMode) {
+  return resource?.status === "success" && (resource.data.data.query.pid !== pid || resource.data.data.query.dateRange[1] !== date || resource.data.data.query.dateRange[0] > shiftDate(date, -7)
+    || environment !== undefined && dailyDashboardEnvironment(resource.data) !== environment) ? undefined : resource;
 }
 export interface DetailEvidence {
   state: string; label: string; date: string; fetchedAt: string | null; stale: boolean; unit?: string; sourceNote?: string | null;
@@ -56,7 +59,7 @@ export function operatingLiveColumns(live: LiveDashboardReading | null): DetailC
 export function operatingLiveRows(live: LiveDashboardReading, resources: OperatingResources): DetailRow[] {
   const date = live.query.dateRange[1];
   return (live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]).map(platform => {
-    const resource = operatingResource(resources[platform.pid], platform.pid, date);
+    const resource = operatingResource(resources[platform.pid], platform.pid, date, liveDataEnvironment(live));
     const values = DETAIL_COLUMNS.map((column): DetailValue => {
       const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
       if (!id || !live.metricIds.includes(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };

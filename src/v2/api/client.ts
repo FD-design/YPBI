@@ -17,6 +17,7 @@ import {
 import { notifyAuthenticationRequired } from "./authEvents";
 import { dailyDashboardCatalogSchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery, type DailyDashboardQuery } from "../../../contracts/daily-dashboard";
 import { dataEnvironmentHeaders } from "./dataEnvironmentPreference";
+import { recordDailyDashboardEnvironment } from "./daily-dashboard-environment";
 
 export type V2FailureKind = "identity_unavailable" | "unauthenticated" | "forbidden" | "error";
 
@@ -117,11 +118,13 @@ export async function fetchReadableDashboards(signal?: AbortSignal) {
 }
 
 export async function fetchDailyDashboard(query: DailyDashboardQuery, metricIds: readonly string[], signal?: AbortSignal) {
+  const headers = dataEnvironmentHeaders({ "content-type": "application/json", accept: "application/json" });
+  const environment = headers.get("x-ypbi-data-environment") === "test" ? "test" : "production";
   const response = await fetch("/api/bi/v2/queries/dashboards/daily-reading", { method: "POST", signal, cache: "no-store", credentials: "same-origin",
-    headers: dataEnvironmentHeaders({ "content-type": "application/json", accept: "application/json" }), body: JSON.stringify(query) });
+    headers, body: JSON.stringify(query) });
   const result = await parseResponse(response, dailyDashboardSuccessSchema);
   if (!dailyDashboardMatchesQuery(result, query, metricIds)) throw invalidResponse(response.status);
-  return result;
+  return recordDailyDashboardEnvironment(result, environment);
 }
 
 export async function fetchMetricDefinitions(signal?: AbortSignal) {

@@ -5,7 +5,9 @@ import { Button } from "../../../components/ui/Button";
 import { PaginatedTable } from "../../../components/ui/PaginatedTable";
 import { DataOriginProvider } from "../../components/DataOrigin";
 import type { DashboardMetricCardProps } from "./DashboardMetricCard";
-import { liveCalculation, liveMetricModel, liveDailyReferenceRows, livePeriodStatus, livePointStateLabel, liveValue, type LiveDashboardReading, type LiveSeries } from "./LiveDashboardContext";
+import { liveCalculation, liveMetricModel, liveDailyReferenceRows, liveDataEnvironment, livePeriodStatus, livePointStateLabel, liveValue, type LiveDashboardReading, type LiveSeries } from "./LiveDashboardContext";
+import { dailyDashboardEnvironment, dataEnvironmentLabel } from "../../api/daily-dashboard-environment";
+import type { DataEnvironmentMode } from "../../api/dataEnvironmentPreference";
 import { MetricReadingDialog } from "./MetricReadingDialog";
 import { CalculationEvidence } from "./CalculationEvidence";
 import { ComparisonDetails } from "./ComparisonDetails";
@@ -30,7 +32,7 @@ export function LiveSeriesDetails({ series, result }: { series: LiveSeries; resu
       rows={points.map(point => { const reference = retentionReferenceRatio(series.metric, point); return <tr key={point.date}><td>{dateLabel(point.date)}</td>{point.inputs.map((input, index) => <td key={input.key}>{liveValue(input.value, series.metric.inputs[index].unit)}</td>)}<td>{liveValue(point.value, series.metric.unit)}</td><td>{monthly && point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(point, series.metric)}</td>{hasReference && <><td>{reference ? `${liveValue(reference.value, "%")}%` : "—"}</td><td>{reference?.label ?? "—"}</td></>}</tr>; })} />
     <details><summary>数据来源与状态</summary><p>{monthly ? "主值为所选结束日所属自然月的独立去重人数；历史月查询整月，当前月查询至执行快照中已结束的北京时间业务日。" : isRegistrationRetentionMetric(series.metric.id)?"按注册日展示；摘要按已结束观察且已返回批次的分子、分母汇总计算。":"主值为所选结束日期，不累计跨日人数。"}完整性未知，数据水位未返回。</p>{series.metric.sourceNote && <p>{series.metric.sourceNote}</p>}<p>查询时间：{new Date(result.data.fetchedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}（北京时间）</p><p>指标版本：{series.metric.authorityVersion}</p></details></>;
 }
-export function LiveSeriesExport({ series, result, stale = false, comparison, comparisonStatus = "未启用对比", dayReferences = [] }: { series: LiveSeries; result: DailyDashboardSuccess; stale?: boolean; comparison?: DailyDashboardSuccess | null; comparisonStatus?: string; dayReferences?: ReturnType<typeof liveDailyReferenceRows> }) {
+export function LiveSeriesExport({ series, result, stale = false, comparison, comparisonStatus = "未启用对比", dayReferences = [], dataEnvironment, comparisonEnvironment }: { series: LiveSeries; result: DailyDashboardSuccess; stale?: boolean; comparison?: DailyDashboardSuccess | null; comparisonStatus?: string; dayReferences?: ReturnType<typeof liveDailyReferenceRows>; dataEnvironment?: DataEnvironmentMode; comparisonEnvironment?: DataEnvironmentMode }) {
   return <Button onClick={() => {
     const monthly = isMonthlyMetric(series.metric.id);
     const periods = [{ label: "当前期", series:readableSeries(series), result }, ...(comparison ? comparison.data.series.filter(item => item.metric.id === series.metric.id).map(series => ({ label: "对比期", series:readableSeries(series), result: comparison })) : [])];
@@ -47,7 +49,11 @@ export function LiveSeriesExport({ series, result, stale = false, comparison, co
       }),
       ...periods.flatMap(period => (availablePeriodStatistics(period.series, period.result)?.values ?? []).map(item => [period.label + "·" + periodStatisticLabel(item.kind), period.result.data.query.pid, period.result.data.query.dateRange.join(" 至 "), ...series.metric.inputs.map(() => ""), item.value, "已返回", "待验数", "未知", period.result.data.fetchedAt, stale ? "包含上次结果" : "本次结果", comparisonStatus, period.series.metric.formula ?? "", period.series.metric.sourceNote ?? "", ...(hasReference ? ["", ""] : [])])),
       ...dayReferences.map(point => [point.label + "基准", result.data.query.pid, point.date, ...series.metric.inputs.map(input => point.inputs.find(item => item.key === input.key)?.value ?? ""), point.value ?? "", point.reason ?? "该日未返回", "待验数", "未知", point.fetchedAt, point.freshness ?? "本次结果", comparisonStatus, series.metric.formula ?? "", series.metric.sourceNote ?? "", ...(hasReference ? ["", ""] : [])])];
-    const csv = cells.map(row => row.map(value => { let text = String(value); if (/^[=+@\-\t\r]/.test(text)) text = "'" + text; return `"${text.replaceAll('"', '""')}"`; }).join(",")).join("\r\n");
+    const withEnvironment = cells.map((row, index) => { const position = row.length - (hasReference ? 2 : 0); return [...row.slice(0, position), index === 0 ? "数据环境" : dataEnvironmentLabel(
+      String(row[0]).startsWith("对比期") ? dailyDashboardEnvironment(comparison) ?? comparisonEnvironment
+        : String(row[0]).endsWith("基准") ? dayReferences.find(point => `${point.label}基准` === row[0])?.dataEnvironment
+          : dailyDashboardEnvironment(result) ?? dataEnvironment), ...row.slice(position)]; });
+    const csv = withEnvironment.map(row => row.map(value => { let text = String(value); if (/^[=+@\-\t\r]/.test(text)) text = "'" + text; return `"${text.replaceAll('"', '""')}"`; }).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${series.metric.name}-${result.data.query.pid}-${result.data.query.dateRange.join("_")}.csv`;
     (document.querySelector("dialog[open]") ?? document.body).appendChild(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
@@ -68,7 +74,7 @@ export function ConnectedMetricCard({ live, original, render }: { live: LiveDash
   const selectedSeries = reading?.period === "comparison" ? previousSeries : series;
   const selectedPoint = selectedSeries?.points.find(point => point.date === selected?.key);
   const selectedCalculation = selectedSeries && selectedPoint ? liveCalculation(selectedSeries, selectedPoint) : selected?.calculation;
-  const exportAction = series && result && live.canExport && !live.controls.dirty ? <LiveSeriesExport series={series} result={result} comparison={previous} comparisonStatus={livePeriodStatus(live, true)} dayReferences={dayReferences} stale={Boolean((live.state.status === "success" && live.state.refreshError) || (live.comparison?.state.status === "success" && live.comparison.state.refreshError))} /> : <></>;
+  const exportAction = series && result && live.canExport && !live.controls.dirty ? <LiveSeriesExport series={series} result={result} comparison={previous} dataEnvironment={liveDataEnvironment(live)} comparisonEnvironment={live.comparison ? liveDataEnvironment(live.comparison) : undefined} comparisonStatus={livePeriodStatus(live, true)} dayReferences={dayReferences} stale={Boolean((live.state.status === "success" && live.state.refreshError) || (live.comparison?.state.status === "success" && live.comparison.state.refreshError))} /> : <></>;
   const details = series && result ? <><div className="ui-chart-data-dialog__actions">{exportAction}</div>
     {reading?.kind === "point" && selected && <><h3>{reading.period === "comparison" ? "对比期" : "当前期"} · {selected.actualDate}</h3><p>{selected.value?.display ?? "—"} {series.metric.unit} · {selected.stateLabel}</p>{selected.counterpart && <p>对应日期 {selected.counterpart.actualDate}：{selected.counterpart.display} {series.metric.unit}</p>}{selected.differenceDisplay && <p>差值：{selected.differenceDisplay}</p>}{selectedCalculation && <CalculationEvidence basis={selectedCalculation}/>}</>}
     {reading?.kind === "comparison" && (available?.reading ? available.reading.comparisons.map((comparison, index) => <ComparisonDetails key={index} comparison={comparison}/>) : available?.comparison && <ComparisonDetails comparison={available.comparison}/>)}<LiveSeriesDetails series={series} result={result}/>

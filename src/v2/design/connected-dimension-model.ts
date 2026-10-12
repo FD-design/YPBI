@@ -1,4 +1,5 @@
 import type { CalculationBasis } from "../features/dashboards/CalculationEvidence";
+import { liveExportEnvironmentRows } from "../features/dashboards/LiveDashboardContext";
 import { liveCalculation, livePointStateLabel, type LiveDashboardReading, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import type { WorkbookSheet } from "./preview-workbook";
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
@@ -78,7 +79,7 @@ export function connectedDimensionRows(live: LiveDashboardReading, groups: reado
 
 export function connectedDimensionSheet(live: LiveDashboardReading, id: string, group: string, title: string, rows: ConnectedDimensionRow[], supported: boolean): WorkbookSheet {
   const hasReference = rows.some(row => [row.series, ...(live.comparison ? [row.baselineSeries] : [])].some(series => series?.points.some(point => retentionReferenceRatio(series.metric, point))));
-  return { name: title, rows: [["比较维度", group], ["状态", supported ? "真实后台结果，待验数" : "当前指标与维度待接入"],
+  return { name: title, rows: [["比较维度", group, ...liveExportEnvironmentRows(live).flat()], ["状态", supported ? "真实后台结果，待验数" : "当前指标与维度待接入"],
     ["周期", "平台", "指标", group, "日期", "结果（原始值）", "单位", "计算输入", "状态", "刷新状态", ...(hasReference ? ["参考比率（%）", "参考说明"] : [])],
     ...rows.flatMap(row => [
       { label: "当前期", series: row.series, state: row.state, period: live },

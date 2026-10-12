@@ -1,20 +1,22 @@
 import { useEffect, useState } from "react";
 import { fetchDailyDashboard, V2RequestError } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
-import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { operatingLiveRows, operatingLiveColumns, operatingResource, type OperatingResources } from "./operating-live-model";
 
 /** Independent per-PID snapshots; failed or missing results never become fixtures. */
 export function useOperatingLive(live: LiveDashboardReading | null) {
   const [resources, setResources] = useState<OperatingResources>({});
   const platforms = live?.platforms ?? [], date = live?.query.dateRange[1] ?? "";
+  const environment = live ? liveDataEnvironment(live) : undefined;
+  // The route's dataScopeKey remounts on environment changes; provenance arrival is not a new query.
   const key = JSON.stringify([date, platforms, live?.metricIds]);
   const revision = live?.refreshRevision ?? 0;
   useEffect(() => {
     if (!live) return;
     const controller = new AbortController();
     setResources(current => Object.fromEntries(platforms.map(platform => {
-      const prior = operatingResource(current[platform.pid], platform.pid, date);
+      const prior = operatingResource(current[platform.pid], platform.pid, date, environment);
       return [platform.pid, prior?.status === "success" ? { ...prior, refreshing:true } : {status:"loading"}];
     })));
     let next = 0;
@@ -28,7 +30,7 @@ export function useOperatingLive(live: LiveDashboardReading | null) {
           if (controller.signal.aborted) return;
           const failure = error instanceof V2RequestError ? error : new V2RequestError("经营明细读取失败", { kind: "error", code: "OPERATING_READ_FAILED", status: 0 });
           setResources(current => {
-            const prior = operatingResource(current[platform.pid], platform.pid, date);
+            const prior = operatingResource(current[platform.pid], platform.pid, date, environment);
             return { ...current, [platform.pid]: prior?.status === "success" && failure.kind === "error"
               ? { ...prior, refreshing: false, refreshError: { message: failure.message, code: failure.code } }
               : { status: "failure", kind: failure.kind, code: failure.code, message: failure.message } };

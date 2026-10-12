@@ -42,7 +42,7 @@ import { contentDiscoverySheet, orderBoardRows, searchDemandSheet, videoClickSou
 import { HORIZONTAL_BAR_GRID, horizontalBarEndLabel } from "./horizontal-bar-reading";
 import { CompactMetricReading } from "../features/dashboards/CompactMetricReading";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
-import { liveDailyReferenceRows, liveExportMetadata, liveMetricModel, livePeriodStatus, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
+import { liveDailyReferenceRows, liveExportMetadata, liveDataEnvironment, liveMetricModel, livePeriodStatus, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { LiveSeriesDetails, LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
 import { ConnectedPlaybackDiagnosis } from "./ConnectedPlaybackDiagnosis";
 import { ConnectedCategoryDimension } from "./ConnectedCategoryDimension";
@@ -186,7 +186,7 @@ function PlaybackStageRelations({ view, pending, open, models }: { view: Extende
   return <DataOriginProvider value={hasLive ? null : "demo"}><DashboardPanel title="播放阶段关系" note="播放尝试与成功起播次数分别统计；起播率按已成熟样本计算，不以人数相减推算失败。">
     <div className="board-preview__relations">{readings.map(({ model, connected }) => {
       const series = connected ? result?.data.series.find(series => series.metric.id === model.metric.id) : undefined;
-      const metricExport = connected ? series && result && live!.canExport && !live!.controls.dirty ? <LiveSeriesExport series={series} result={result} comparison={previous}
+      const metricExport = connected ? series && result && live!.canExport && !live!.controls.dirty ? <LiveSeriesExport series={series} result={result} comparison={previous} dataEnvironment={liveDataEnvironment(live!)} comparisonEnvironment={live!.comparison ? liveDataEnvironment(live!.comparison) : undefined}
         comparisonStatus={livePeriodStatus(live!, true)} dayReferences={liveDailyReferenceRows(live!, [model.metric.id])}
         stale={Boolean(live!.state.status === "success" && live!.state.refreshError || live!.comparison?.state.status === "success" && live!.comparison.state.refreshError)} /> : <Button disabled>导出未就绪</Button>
         : <BoardExport title={`${model.metric.name}同口径数据表`} view={view} sheets={[{ name: "01_同口径数据表", rows: metricRows([model]) }]} pending={pending || model.result.status !== "available"} />;
@@ -248,7 +248,7 @@ export default function ExtendedBoardPreview({ board }: { board: string }) {
     const previous = livePayment && live?.comparison?.state.status === "success" ? live.comparison.state.data : null;
     const exportAction = livePayment
       ? series && result && live!.canExport && !live!.controls.dirty
-        ? <LiveSeriesExport series={series} result={result} comparison={previous} comparisonStatus={livePeriodStatus(live!, true)} dayReferences={liveDailyReferenceRows(live!, [id])}
+        ? <LiveSeriesExport series={series} result={result} comparison={previous} dataEnvironment={liveDataEnvironment(live!)} comparisonEnvironment={live!.comparison ? liveDataEnvironment(live!.comparison) : undefined} comparisonStatus={livePeriodStatus(live!, true)} dayReferences={liveDailyReferenceRows(live!, [id])}
           stale={Boolean(live!.state.status === "success" && (live!.state.refreshError || live!.state.refreshing) || live!.comparison?.state.status === "success" && (live!.comparison.state.refreshError || live!.comparison.state.refreshing))} />
         : <Button disabled>导出未就绪</Button>
       : <BoardExport title={`${model.metric.name}同口径数据表`} view={view} sheets={[{ name: "01_同口径数据表", rows: metricRows([model]) }]} pending={pending || model.result.status !== "available"} />;

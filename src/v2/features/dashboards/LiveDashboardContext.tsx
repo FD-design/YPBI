@@ -10,17 +10,21 @@ import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, reada
 import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
 import { metricNumberFormatOptions } from "../../../components/metric-number-format";
 import { isMonthlyMetric, liveMonthlySeriesRows, monthlyComparisonReason } from "./live-monthly-reading";
+import { dailyDashboardEnvironment, dataEnvironmentLabel } from "../../api/daily-dashboard-environment";
+import type { DataEnvironmentMode } from "../../api/dataEnvironmentPreference";
 
 export type LiveSeries = DailyDashboardSuccess["data"]["series"][number];
 export interface LiveDashboardReading {
   query: DailyDashboardQuery;
   metricIds: readonly string[];
   state: V2ResourceState<DailyDashboardSuccess>;
+  /** Snapshot carried through private projections, never an export-time preference. */
+  dataEnvironment?: DataEnvironmentMode;
   platformName: string;
   platforms?: readonly { pid: string; name: string }[];
   controls: { date: ReactNode; scope: ReactNode; comparison: ReactNode; dirty: boolean; acceptsSharedRange: (range: DateRangeValue) => boolean; apply: () => void; export: () => void };
-  comparison?: { label: string; query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null> };
-  dayReference?: { query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null> };
+  comparison?: { label: string; query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null>; dataEnvironment?: DataEnvironmentMode };
+  dayReference?: { query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null>; dataEnvironment?: DataEnvironmentMode };
   retry: () => void;
   /** Page refresh intent, independent of any request's success or result ID. */
   refreshRevision?: number;
@@ -38,8 +42,16 @@ export function livePeriodStatus(live: LiveDashboardReading, before = false) {
   const state = before ? live.comparison?.state : live.state;
   return !state || state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : state.refreshError ? "刷新失败，保留上次查询结果" : state.refreshing ? "刷新中，保留上次查询结果" : "本次查询结果";
 }
+export function liveDataEnvironment(period: { state: V2ResourceState<DailyDashboardSuccess | null>; dataEnvironment?: DataEnvironmentMode }) {
+  return period.state.status === "success" ? dailyDashboardEnvironment(period.state.data) ?? period.dataEnvironment : undefined;
+}
+export function liveExportEnvironmentRows(live: Pick<LiveDashboardReading, "state" | "dataEnvironment" | "comparison" | "dayReference">) {
+  return [["数据环境", dataEnvironmentLabel(liveDataEnvironment(live))],
+    ["对比数据环境", live.comparison ? dataEnvironmentLabel(liveDataEnvironment(live.comparison)) : "未启用对比"],
+    ["日值基准数据环境", live.dayReference ? dataEnvironmentLabel(liveDataEnvironment(live.dayReference)) : "未启用日值基准"]];
+}
 export function liveExportMetadata(live: LiveDashboardReading) {
-  return [["平台", live.query.pid], ["当前日期", live.query.dateRange.join(" 至 ")], ["当前状态", livePeriodStatus(live)],
+  return [...liveExportEnvironmentRows(live), ["平台", live.query.pid], ["当前日期", live.query.dateRange.join(" 至 ")], ["当前状态", livePeriodStatus(live)],
     ["对比日期", live.comparison?.query.dateRange.join(" 至 ") ?? "未启用对比"], ["对比状态", livePeriodStatus(live, true)],
     ["数据性质", "真实接口候选结果，待验数；完整性未知，数据水位未返回"]];
 }
@@ -71,9 +83,9 @@ function cohortSummary(series: LiveSeries, dates?: readonly string[]) {
   const inputs = series.metric.inputs.map((input, index) => ({ key: input.key, value: points.reduce((sum, point) => sum + (point.inputs[index].value ?? 0), 0) }));
   return { ...points.at(-1)!, inputs, value: inputs[1].value > 0 ? inputs[0].value / inputs[1].value : null };
 }
-type DailySources = Pick<LiveDashboardReading, "query" | "state" | "comparison" | "dayReference">;
-export function liveDailyPoint(live: DailySources, metricId: string, date: string): DailyReadingPoint & { inputs: LiveSeries["points"][number]["inputs"]; fetchedAt: string; unit: string } {
-    const periods = [{ query: live.query, state: live.state }, ...(live.comparison ? [live.comparison] : []), ...(live.dayReference ? [live.dayReference] : [])];
+type DailySources = Pick<LiveDashboardReading, "query" | "state" | "dataEnvironment" | "comparison" | "dayReference">;
+export function liveDailyPoint(live: DailySources, metricId: string, date: string): DailyReadingPoint & { inputs: LiveSeries["points"][number]["inputs"]; fetchedAt: string; unit: string; dataEnvironment?: DataEnvironmentMode } {
+    const periods = [{ query: live.query, state: live.state, dataEnvironment: live.dataEnvironment }, ...(live.comparison ? [live.comparison] : []), ...(live.dayReference ? [live.dayReference] : [])];
     const period = periods.find(period => date >= period.query.dateRange[0] && date <= period.query.dateRange[1]);
     const data = period?.state.status === "success" ? period.state.data : null;
     const valid = data && data.data.query.pid === live.query.pid && data.data.query.boardId === live.query.boardId
@@ -83,9 +95,10 @@ export function liveDailyPoint(live: DailySources, metricId: string, date: strin
     const point = series?.points.find(item => item.date === date);
     const reason = period?.state.status === "failure" ? "该日查询失败" : period?.state.status === "loading" ? "该日读取中" : point ? series && diagnosticRatioInputs(series.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point) : "该日未返回";
     const freshness = period?.state.status === "success" && period.state.refreshError ? `${date} 刷新失败，保留上次查询结果` : period?.state.status === "success" && period.state.refreshing ? `${date} 刷新中，保留上次查询结果` : undefined;
+    const environment = valid ? dailyDashboardEnvironment(data) ?? period?.dataEnvironment : undefined;
     return { date, value: point?.value ?? null, state: period?.state.status === "failure" ? "source_failure" : point?.state ?? "no_value", display: series ? liveValue(point?.value ?? null, series.metric.unit) : "—", reason, freshness,
       inputs: point?.inputs ?? [], fetchedAt: valid ? data.data.fetchedAt : "", unit: series?.metric.unit ?? "",
-      calculation: series && point ? liveCalculation(series, point) : undefined };
+      calculation: series && point ? liveCalculation(series, point) : undefined, ...(environment ? { dataEnvironment: environment } : {}) };
 }
 export function liveDailyReferenceRows(live: DailySources, metricIds: readonly string[]) {
   if (!live.comparison) return [];

@@ -7,7 +7,8 @@ import { useAuthentication } from "../app/AuthProvider";
 import { navigate, useBrowserLocation } from "../app/router";
 import { RefreshNotice } from "../components/StatePanel";
 import { DemoDataProvider } from "../components/DataOrigin";
-import { LiveDashboardContext, liveDailyReferenceRows, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { LiveDashboardContext, liveDailyReferenceRows, liveExportEnvironmentRows, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import { DateRangePicker } from "../../components/ui/DateRangePicker";
 import { MenuSelect } from "../../components/ui/MenuSelect";
 import Core from "./CoreOverviewDesignFixture";
@@ -51,7 +52,7 @@ export function connectedBoardExportSheets(live: LiveDashboardReading): Workbook
     ...(comparison?.state.status === "success" && comparison.state.data ? [{ name: "对比期", result: comparison.state.data, stale: Boolean(comparison.state.refreshError) }] : [])];
   const dayReferences = liveDailyReferenceRows(live, live.metricIds);
   return [
-    { name: "读取说明", rows: [["数据性质", "真实后台候选结果，待验数"], ["平台", query.pid], ["范围", query.dateRange.join(" 至 ")], ["主值", "普通日指标为所选结束日；注册留存卡按成熟已返回批次加权；本文件逐日列出原始值"], ["完整性", "未知"], ["数据水位", "未返回"], ["对比状态", !comparison ? "不对比" : comparison.state.status !== "success" || !comparison.state.data ? "对比查询未成功，不以演示结果补齐" : "独立读取上一等长周期"]] },
+    { name: "读取说明", rows: [...liveExportEnvironmentRows(live), ["数据性质", "真实后台候选结果，待验数"], ["平台", query.pid], ["范围", query.dateRange.join(" 至 ")], ["主值", "普通日指标为所选结束日；注册留存卡按成熟已返回批次加权；本文件逐日列出原始值"], ["完整性", "未知"], ["数据水位", "未返回"], ["对比状态", !comparison ? "不对比" : comparison.state.status !== "success" || !comparison.state.data ? "对比查询未成功，不以演示结果补齐" : "独立读取上一等长周期"]] },
     { name: "指标口径", rows: [["指标", "单位", "计算口径", "来源口径"], ...result.data.series.map(series => [series.metric.name, series.metric.unit, series.metric.formula, series.metric.sourceNote])] },
     { name: "周期统计", rows: [["周期", "平台", "指标", "开始日期", "结束日期", "统计类型", "值", "单位", "验数", "完整性", "查询时间", "刷新状态", "计算版本"],
       ...periods.flatMap(period => period.result.data.series.flatMap(series => {
@@ -93,14 +94,14 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
   };
   const readingState: V2ResourceState<DailyDashboardSuccess> = state.status === "success"
     ? state.data ? { ...state, data: state.data } : { status: "loading" } : state;
-  const reading: LiveDashboardReading = { query, metricIds: board.metricIds, state: readingState, platformName: platforms.find(item => item.pid === query.pid)!.name,
+  const reading: LiveDashboardReading = { query, metricIds: board.metricIds, state: readingState, dataEnvironment: readingState.status === "success" ? dailyDashboardEnvironment(readingState.data) : undefined, platformName: platforms.find(item => item.pid === query.pid)!.name,
     platforms, controls: {
       date: <DateRangePicker value={range} onChange={setRange} today={today} maxDate={today} maxDays={366} boundaryLabel="可选择日期截至" />,
       scope: <MenuSelect className="dashboard-query__live-scope" label="平台" ariaLabel="选择平台" value={pid} density="compact" searchable groups={[{ label: "授权平台", options: platforms.map(item => ({ value: item.pid, label: item.name })) }]} onChange={setPid} />,
       comparison: <MenuSelect className="dashboard-query__live-comparison" label="对比周期" ariaLabel="对比周期" value={comparison} density="compact" groups={[{ label: "同口径对比", options: [{ value: "previous", label: "上一等长周期" }, { value: "none", label: "不对比" }] }]} onChange={setComparison} />,
       dirty, acceptsSharedRange: board.id === "5.8" || board.id === "5.9" ? validTopicRange : validDemoRange, apply, export: exportData
-    }, comparison: compared ? { label: "上一等长周期", query: previousQuery, state: previous.state } : undefined,
-    dayReference: referenceQuery ? { query: referenceQuery, state: reference.state } : undefined, retry: refresh, refreshRevision, canExport };
+    }, comparison: compared ? { label: "上一等长周期", query: previousQuery, state: previous.state, dataEnvironment: previous.state.status === "success" ? dailyDashboardEnvironment(previous.state.data) : undefined } : undefined,
+    dayReference: referenceQuery ? { query: referenceQuery, state: reference.state, dataEnvironment: reference.state.status === "success" ? dailyDashboardEnvironment(reference.state.data) : undefined } : undefined, retry: refresh, refreshRevision, canExport };
   return <LiveDashboardContext.Provider value={reading}>
     <PreviewBoardPresentation board={board.id}><DemoDataProvider>
       {dirty && <p className="topic-preview__pending" role="status">筛选已修改，点击应用后更新真实结果。</p>}
