@@ -60,3 +60,47 @@ test("请求合并表清空后，旧失败请求不移除新同key请求，后�
   expect(readCount).toBe(2);
   expect(inFlight.size).toBe(0);
 });
+
+function invalidateReads(client: UpstreamClient) {
+  (Reflect.get(client, "responseCache") as Map<string, unknown>).clear();
+  (Reflect.get(client, "inFlight") as Map<string, Promise<unknown>>).clear();
+}
+
+test("缓存失效后，旧成功请求不回填正在等待新结果的缓存", async () => {
+  const { client, requests } = fixture();
+  const earlier = client.get("/api/in-memory", { pid: "PH" });
+  invalidateReads(client);
+  const current = client.get("/api/in-memory", { pid: "PH" });
+  requests[0].resolve(response(5));
+  expect(await earlier).toEqual({ code: 200, msg: { value: 5 } });
+  const joined = client.get("/api/in-memory", { pid: "PH" });
+  requests[1].resolve(response(11));
+  expect(await current).toEqual({ code: 200, msg: { value: 11 } });
+  expect(await joined).toEqual({ code: 200, msg: { value: 11 } });
+  expect(requests).toHaveLength(2);
+});
+
+test("新结果已缓存后，失效前的迟到成功请求不覆盖新结果", async () => {
+  const { client, requests } = fixture();
+  const earlier = client.get("/api/in-memory", { pid: "PH" });
+  invalidateReads(client);
+  const current = client.get("/api/in-memory", { pid: "PH" });
+  requests[1].resolve(response(11));
+  expect(await current).toEqual({ code: 200, msg: { value: 11 } });
+  requests[0].resolve(response(5));
+  expect(await earlier).toEqual({ code: 200, msg: { value: 5 } });
+  expect(await client.get("/api/in-memory", { pid: "PH" })).toEqual({ code: 200, msg: { value: 11 } });
+  expect(requests).toHaveLength(2);
+});
+
+test("缓存失效后没有替代请求时，旧成功结果不重新建立缓存", async () => {
+  const { client, requests } = fixture();
+  const earlier = client.get("/api/in-memory", { pid: "PH" });
+  invalidateReads(client);
+  requests[0].resolve(response(5));
+  expect(await earlier).toEqual({ code: 200, msg: { value: 5 } });
+  const next = client.get("/api/in-memory", { pid: "PH" });
+  requests[1]?.resolve(response(11));
+  expect(await next).toEqual({ code: 200, msg: { value: 11 } });
+  expect(requests).toHaveLength(2);
+});

@@ -77,14 +77,17 @@ async function metricDefinitionsContentHashIsValid(payload: z.infer<typeof v2Met
   return await sha256(JSON.stringify(canonicalize(hashInput))) === contentSha256;
 }
 
-async function parseResponse<T>(response: Response, successSchema: z.ZodType<T>): Promise<T> {
+async function parseResponse<T>(response: Response, successSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
   if (response.status === 401) notifyAuthenticationRequired();
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
+    signal?.throwIfAborted();
     throw invalidResponse(response.status);
   }
+  signal?.throwIfAborted();
   if (response.ok) {
     const parsedSuccess = successSchema.safeParse(payload);
     if (!parsedSuccess.success) throw invalidResponse(response.status);
@@ -104,7 +107,7 @@ async function parseResponse<T>(response: Response, successSchema: z.ZodType<T>)
 
 async function getCatalog<T>(path: string, schema: z.ZodType<{ success: true; data: { items: T[] } }>, signal?: AbortSignal) {
   const response = await fetch(path, { signal, cache: "no-store", credentials: "same-origin", headers: dataEnvironmentHeaders({ accept: "application/json" }) });
-  const payload = await parseResponse(response, schema);
+  const payload = await parseResponse(response, schema, signal);
   return payload.data.items;
 }
 
@@ -114,7 +117,7 @@ export function fetchMetricCatalog(signal?: AbortSignal) {
 
 export async function fetchReadableDashboards(signal?: AbortSignal) {
   const response = await fetch("/api/bi/v2/catalog/readable-dashboards", { signal, cache: "no-store", credentials: "same-origin", headers: dataEnvironmentHeaders() });
-  return (await parseResponse(response, dailyDashboardCatalogSchema)).data;
+  return (await parseResponse(response, dailyDashboardCatalogSchema, signal)).data;
 }
 
 export async function fetchDailyDashboard(query: DailyDashboardQuery, metricIds: readonly string[], signal?: AbortSignal) {
@@ -122,7 +125,7 @@ export async function fetchDailyDashboard(query: DailyDashboardQuery, metricIds:
   const environment = headers.get("x-ypbi-data-environment") === "test" ? "test" : "production";
   const response = await fetch("/api/bi/v2/queries/dashboards/daily-reading", { method: "POST", signal, cache: "no-store", credentials: "same-origin",
     headers, body: JSON.stringify(query) });
-  const result = await parseResponse(response, dailyDashboardSuccessSchema);
+  const result = await parseResponse(response, dailyDashboardSuccessSchema, signal);
   if (!dailyDashboardMatchesQuery(result, query, metricIds)) throw invalidResponse(response.status);
   return recordDailyDashboardEnvironment(result, environment);
 }
@@ -134,7 +137,7 @@ export async function fetchMetricDefinitions(signal?: AbortSignal) {
     credentials: "same-origin",
     headers: dataEnvironmentHeaders({ accept: "application/json" })
   });
-  const payload = await parseResponse(response, v2MetricDefinitionsSuccessSchema);
+  const payload = await parseResponse(response, v2MetricDefinitionsSuccessSchema, signal);
   if (!await metricDefinitionsContentHashIsValid(payload)) throw invalidResponse(response.status);
   return payload.data;
 }
@@ -152,7 +155,7 @@ export async function queryMetric(request: V2MetricQuery, signal?: AbortSignal) 
     headers: dataEnvironmentHeaders({ accept: "application/json", "content-type": "application/json" }),
     body: JSON.stringify(request)
   });
-  const payload = await parseResponse(response, v2MetricQuerySuccessSchema);
+  const payload = await parseResponse(response, v2MetricQuerySuccessSchema, signal);
   const responseRange = payload.data.dateRange;
   if (
     payload.data.metric.id !== request.metricId
@@ -183,7 +186,7 @@ export async function queryCoreOverview(request: CoreOverviewQueryInput, signal?
     headers: dataEnvironmentHeaders({ accept: "application/json", "content-type": "application/json" }),
     body: JSON.stringify(parsedRequest.data)
   });
-  const payload = await parseResponse(response, coreOverviewQuerySuccessSchema);
+  const payload = await parseResponse(response, coreOverviewQuerySuccessSchema, signal);
   if (!coreOverviewResponseMatchesQuery(payload, parsedRequest.data)) {
     throw new V2RequestError("核心经营总览查询回显与请求不一致", {
       kind: "error",
@@ -201,6 +204,6 @@ export async function fetchDataEnvironment(signal?: AbortSignal) {
     credentials: "same-origin",
     headers: dataEnvironmentHeaders({ accept: "application/json" })
   });
-  const payload = await parseResponse(response, v2DataEnvironmentSuccessSchema);
+  const payload = await parseResponse(response, v2DataEnvironmentSuccessSchema, signal);
   return payload.data;
 }

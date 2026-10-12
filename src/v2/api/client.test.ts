@@ -12,6 +12,7 @@ import {
 } from "../../../contracts/bi-v2";
 import { fetchDataEnvironment, queryCoreOverview, queryMetric, V2RequestError } from "./client";
 import { initializeDataEnvironmentPreference, setDataEnvironmentPreference } from "./dataEnvironmentPreference";
+import { V2_AUTHENTICATION_REQUIRED_EVENT } from "./authEvents";
 
 const request: V2MetricQuery = {
   metricId: M016_METRIC_ID,
@@ -98,9 +99,97 @@ function validFormalResponse(): V2MetricQuerySuccess {
 }
 
 const originalFetch = globalThis.fetch;
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+  else Reflect.deleteProperty(globalThis, "window");
   setDataEnvironmentPreference("production");
+});
+
+function authenticationNotifications() {
+  const target = new EventTarget();
+  let count = 0;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: target });
+  target.addEventListener(V2_AUTHENTICATION_REQUIRED_EVENT, () => count++);
+  return () => count;
+}
+const authenticationProblem = { success: false, error: { code: "AUTHENTICATION_REQUIRED", message: "需要登录", requestId: "in-memory-auth" } };
+const productionEnvironment = { success: true, data: { mode: "production", testAvailable: true, expiresAt: null, userName: null } };
+
+describe("V2读取取消边界", () => {
+  test("响应刚兑现后取消不发送全局认证失效事件", async () => {
+    const notifications = authenticationNotifications();
+    globalThis.fetch = async () => Response.json(authenticationProblem, { status: 401 });
+    const controller = new AbortController();
+    const pending = fetchDataEnvironment(controller.signal);
+    controller.abort();
+    const failure = await pending.catch(error => error);
+    expect(notifications()).toBe(0);
+    expect(failure.name).toBe("AbortError");
+  });
+
+  for (const status of [200, 401]) test(`HTTP${status}的JSON读取过程中取消保留取消结果`, async () => {
+    const notifications = authenticationNotifications();
+    let finish!: (value: unknown) => void;
+    let reading = false;
+    const response = new Response("", { status });
+    response.json = () => { reading = true; return new Promise(resolve => { finish = resolve; }); };
+    globalThis.fetch = async () => response;
+    const controller = new AbortController();
+    const pending = fetchDataEnvironment(controller.signal);
+    await Promise.resolve();
+    expect(reading).toBe(true);
+    controller.abort();
+    finish(status === 401 ? authenticationProblem : productionEnvironment);
+    const failure = await pending.catch(error => error);
+    expect(notifications()).toBe(status === 401 ? 1 : 0);
+    expect(failure.name).toBe("AbortError");
+  });
+
+  test("未取消401的JSON仍在等待时立即通知，完成后保持失败关闭", async () => {
+    const notifications = authenticationNotifications();
+    let finish!: (value: unknown) => void;
+    const response = new Response("", { status: 401 });
+    response.json = () => new Promise(resolve => { finish = resolve; });
+    globalThis.fetch = async () => response;
+    const pending = fetchDataEnvironment();
+    await Promise.resolve();
+    const notificationsWhilePending = notifications();
+    finish(authenticationProblem);
+    await expect(pending).rejects.toMatchObject({ status: 401, code: "AUTHENTICATION_REQUIRED" });
+    expect(notificationsWhilePending).toBe(1);
+    expect(notifications()).toBe(1);
+  });
+
+  test("JSON读取拒绝时已取消的请求不归为响应结构错误", async () => {
+    let fail!: (error: unknown) => void;
+    const response = new Response("", { status: 200 });
+    response.json = () => new Promise((_resolve, reject) => { fail = reject; });
+    globalThis.fetch = async () => response;
+    const controller = new AbortController();
+    const pending = fetchDataEnvironment(controller.signal);
+    await Promise.resolve();
+    controller.abort();
+    fail(new SyntaxError("in-memory invalid JSON"));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  for (const validBody of [true, false]) test(`未取消的401${validBody ? "合法" : "异常"}响应继续通知并失败关闭`, async () => {
+    const notifications = authenticationNotifications();
+    globalThis.fetch = async () => validBody ? Response.json(authenticationProblem, { status: 401 }) : new Response("{", { status: 401 });
+    await expect(fetchDataEnvironment()).rejects.toMatchObject({ status: 401, code: validBody ? "AUTHENTICATION_REQUIRED" : "INVALID_V2_RESPONSE" });
+    expect(notifications()).toBe(1);
+  });
+
+  test("正常403与结构错误保持原分类且不发送认证失效事件", async () => {
+    const notifications = authenticationNotifications();
+    globalThis.fetch = async () => Response.json({ success: false, error: { code: "BI_READ_ACCESS_DENIED", message: "无读取权限", requestId: "in-memory-denied" } }, { status: 403 });
+    await expect(fetchDataEnvironment()).rejects.toMatchObject({ status: 403, code: "BI_READ_ACCESS_DENIED", kind: "forbidden", requestId: "in-memory-denied" });
+    globalThis.fetch = async () => Response.json({ success: true, data: { mode: "unexpected" } });
+    await expect(fetchDataEnvironment()).rejects.toMatchObject({ status: 200, code: "INVALID_V2_RESPONSE" });
+    expect(notifications()).toBe(0);
+  });
 });
 
 describe("V2 运行时响应契约", () => {

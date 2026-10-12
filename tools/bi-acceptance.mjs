@@ -51,23 +51,44 @@ function assertSanitized(value) {
   }
 }
 
-function pageColumns(page, registry) {
-  if (!page) return null;
-  if (Array.isArray(page.columns)) return page.columns;
-  if (!Array.isArray(page.headers) || !Array.isArray(page.rows)) return null;
-  const rows = page.rows.filter(row => Array.isArray(row) && (!page.pid || normalize(row[1]).endsWith(`PID${page.pid}`)));
-  if (rows.length !== 1) return null;
-  const length = Math.max(page.headers.length, rows[0].length) - 2;
-  return Array.from({ length }, (_, i) => {
+function pageSnapshot(page, registry) {
+  const unavailable = reason => ({ columns: null, identity: check("unverified", reason) });
+  if (!page) return unavailable("页面快照缺失");
+  const declared = [page.query?.pid, page.pid].filter(pid => pid !== undefined);
+  const pids = declared.filter(pid => typeof pid === "string" && pid.trim().length > 0);
+  if (new Set(pids).size > 1) return { columns: null, identity: check("mismatch", "页面query.pid与顶层pid声明冲突") };
+  if (!pids.length || pids.length !== declared.length) return unavailable("页面PID声明缺失或无法识别");
+  const pid = pids[0];
+  if (Array.isArray(page.columns) && !Array.isArray(page.rows)) {
+    return { columns: page.columns, identity: check("passed", "columns快照使用已记录的页面PID声明", { pid }) };
+  }
+  if (!Array.isArray(page.headers) || !Array.isArray(page.rows)) return unavailable("页面快照形状未支持");
+  if (page.rows.some(row => !Array.isArray(row))) return unavailable("表格行形状无法识别");
+  const rows = page.rows.map(row => {
+    const cell = typeof row[1] === "string" ? row[1].trim() : "";
+    const matches = [...cell.matchAll(/(?:^|\s)PID(?:\s*[:：]\s*|\s+)([^\s]+)/g)];
+    const unique = new Set(matches.map(match => match[1]));
+    return { row, conflict: unique.size > 1, pid: unique.size === 1 && cell.endsWith(matches.at(-1)[0]) ? matches[0][1] : null };
+  });
+  if (rows.some(row => row.conflict)) return { columns: null, identity: check("mismatch", "实际表格行包含冲突的PID标识") };
+  const target = rows.filter(row => row.pid === pid);
+  if (!target.length && rows.length && rows.every(row => row.pid !== null)) {
+    return { columns: null, identity: check("mismatch", "实际表格PID与页面声明不一致", { pid }) };
+  }
+  if (target.length !== 1 || rows.some(row => row.pid === null)) return unavailable("无法唯一确认目标表格行的PID身份");
+  const selected = target[0].row;
+  const length = Math.max(page.headers.length, selected.length) - 2;
+  const columns = Array.from({ length }, (_, i) => {
     const header = normalize(page.headers[i + 2]);
     const afterStatus = header.split(/待验数|演示数据|真实数据/)[1];
     return {
       key: registry[i]?.key ?? `unknown:${i + 1}`,
       name: header.split(/待验数|演示数据|真实数据/)[0],
-      text: rows[0][i + 2],
+      text: selected[i + 2],
       printedUnit: afterStatus?.match(/^（(.+)）$/)?.[1] ?? null
     };
   });
+  return { columns, identity: check("passed", "页面声明与唯一目标表格行的PID一致", { pid }) };
 }
 
 function structure(items, registry, kind) {
@@ -126,7 +147,7 @@ export async function verifyBIAcceptance({ page = null, proxy = null, checklist 
   const h = await helpers(), registry = await acceptanceRegistry();
   const registryIntegrity = check(registry.length === 93 && new Set(registry.map(column => column.key)).size === 93
     && registry.every(column => column.bffMetricId) ? "passed" : "mismatch", "权威经营注册须包含93个唯一列键与映射", { actualCount: registry.length });
-  const captured = pageColumns(page, registry);
+  const snapshot = pageSnapshot(page, registry), captured = snapshot.columns, pageIdentity = snapshot.identity;
   const pageStructure = structure(captured, registry, "页面");
   const checklistStructure = structure(checklist?.columns ?? null, registry, "派生清单");
   if (checklistStructure.status === "passed") {
@@ -155,7 +176,7 @@ export async function verifyBIAcceptance({ page = null, proxy = null, checklist 
     const unavailable = check("unverified", "需要完整且同范围的页面／BI代理原响应证据");
     const base = { ...registered, status: "unverified", display: unavailable, unit: unavailable, sourceState: unavailable,
       pageState: check("unverified", "当前页面未独立记录状态"), formalReady: false, upstreamAcceptance: "unverified" };
-    if (registryIntegrity.status !== "passed" || pageStructure.status !== "passed" || scope.status !== "passed" || proxyContract.status !== "passed"
+    if (registryIntegrity.status !== "passed" || pageIdentity.status !== "passed" || pageStructure.status !== "passed" || scope.status !== "passed" || proxyContract.status !== "passed"
       || proxyUniqueness.status !== "passed" || proxyQueryMatch.status !== "passed") return base;
     const series = response.data.series.find(series => series.metric.id === registered.bffMetricId);
     const points = series && h.safeDiagnosticSeries(series);
@@ -187,7 +208,7 @@ export async function verifyBIAcceptance({ page = null, proxy = null, checklist 
       formalValue: value.current, diagnosticInputs: h.diagnosticRatioInputs(series.metric, point), referenceRatio: reference?.value ?? null };
   });
   const counts = Object.fromEntries(["passed", "mismatch", "known_limit", "unverified"].map(status => [status, columns.filter(column => column.status === status).length]));
-  const checks = { registryIntegrity, pageStructure, checklistStructure, proxyContract, proxyUniqueness, proxyQueryMatch, scope };
+  const checks = { registryIntegrity, pageIdentity, pageStructure, checklistStructure, proxyContract, proxyUniqueness, proxyQueryMatch, scope };
   const hasMismatch = counts.mismatch > 0 || Object.values(checks).some(result => result.status === "mismatch");
   return {
     schemaVersion: "ypbi-offline-bi-consistency/v1", checks, columns,
@@ -207,6 +228,7 @@ const help = `用法：node tools/bi-acceptance.mjs --page <脱敏页面.json> [
 --page 支持已存headers/rows经营快照，或 {environment, query:{boardId,pid,dateRange}, columns:[{key,name,text,printedUnit,...}]}。
 --proxy 为 {environment:"test"|"production", http:200, response:<完整BI代理日看板成功JSON>}；必须记录请求时环境。
 页面可用{pid,date}代表经营单日查询；dateRange若存在须与BI响应完整范围一致。release/captureId若两侧提供须一致。
+query.pid与顶层pid须一致；headers/rows须能识别唯一目标行的PID，冲突记mismatch、身份不足记unverified。多PID表仅选择已明确声明的目标行。
 structured columns可记录state/sourceStatus/formalValue；未记录的状态核验为unverified。printedUnit:null代表已观察到省略单位，缺字段代表未观察。
 93列与映射从src/v2注册派生；旧清单的testBaseline、matches和READY汇总不作为原始代理响应。
 上游原始验数和生产历史验数恒为unverified；本工具不支持专题DOM文本提取或运行线上验数。

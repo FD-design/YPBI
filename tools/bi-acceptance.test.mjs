@@ -38,6 +38,12 @@ function change(input, key, values) {
   Object.assign(input.page.columns[index], values.page);
 }
 
+function tablePage(page, platform = "内存测试平台\nPID fixture") {
+  return { environment: page.environment, query: structuredClone(page.query),
+    headers: ["状态", "业务平台", ...page.columns.map(column => `${column.name}\n待验数${column.printedUnit ? `\n（${column.printedUnit}）` : ""}`)],
+    rows: [["部分", platform, ...page.columns.map(column => column.text)]] };
+}
+
 test("经营权威注册为93列且映射、键唯一", () => {
   assert.equal(registry.length, 93);
   assert.equal(new Set(registry.map(column => column.key)).size, 93);
@@ -257,6 +263,89 @@ test("headers/rows既有快照形状可复查结构，不自动配对清单旧�
   assert.equal(report.summary.unverified, 93);
   assert.equal(report.summary.hasMismatch, false);
   assert.equal((await verifyBIAcceptance({ page, proxy: input.proxy })).summary.passed, 93);
+});
+
+test("query.pid与实际表格PID冲突不能得到93项通过", async () => {
+  const input = evidence(); input.page = tablePage(input.page, "另一内存平台\nPID other");
+  const report = await verifyBIAcceptance(input);
+  assert.equal(report.summary.hasMismatch, true);
+  assert.equal(report.checks.pageIdentity.status, "mismatch");
+  assert.equal(report.summary.passed, 0);
+  assert.equal(report.summary.unverified, 93);
+});
+
+test("顶层pid与query.pid声明矛盾始终阻断，columns形状及缺代理证据也不绕过", async () => {
+  const input = evidence(); input.page.pid = "other";
+  for (const proxy of [input.proxy, null]) {
+    const report = await verifyBIAcceptance({ page: input.page, proxy });
+    assert.equal(report.summary.hasMismatch, true);
+    assert.equal(report.checks.pageIdentity.status, "mismatch");
+    assert.equal(report.summary.passed, 0);
+  }
+  input.page = tablePage(input.page); input.page.pid = "other";
+  const table = await verifyBIAcceptance(input);
+  assert.equal(table.checks.pageIdentity.status, "mismatch");
+});
+
+test("无法确认目标行身份不通过，其他可识别PID行不能代替目标行", async () => {
+  for (const platform of ["内存测试平台", "内存测试平台 PID"]) {
+    const input = evidence(); input.page = tablePage(input.page, platform);
+    const report = await verifyBIAcceptance(input);
+    assert.equal(report.summary.unverified, 93);
+    assert.equal(report.checks.pageIdentity.status, "unverified");
+    assert.equal(report.summary.passed, 0);
+  }
+  const input = evidence(); input.page = tablePage(input.page);
+  input.page.rows.push(["部分", "身份未采集", ...input.page.rows[0].slice(2)]);
+  input.page.pid = "fixture";
+  const report = await verifyBIAcceptance(input);
+  assert.equal(report.checks.pageIdentity.status, "unverified");
+  assert.equal(report.summary.passed, 0);
+});
+
+test("实际行内PID声明矛盾和坏行形状不被跳过", async () => {
+  const input = evidence(); input.page = tablePage(input.page, "内存平台 PID fixture\nPID other");
+  const conflict = await verifyBIAcceptance(input);
+  assert.equal(conflict.checks.pageIdentity.status, "mismatch");
+  assert.equal(conflict.summary.passed, 0);
+  input.page = tablePage(evidence().page);
+  input.page.rows.push("坏行");
+  const malformed = await verifyBIAcceptance(input);
+  assert.equal(malformed.checks.pageIdentity.status, "unverified");
+  assert.equal(malformed.summary.passed, 0);
+});
+
+test("PID标记须独立出现，APID和SPID或尾部附文不能确认行身份", async () => {
+  for (const platform of ["内存平台 APID fixture", "内存平台 SPID fixture", "内存平台 PID fixture 其他文字"]) {
+    const input = evidence(); input.page = tablePage(input.page, platform);
+    const report = await verifyBIAcceptance(input);
+    assert.equal(report.checks.pageIdentity.status, "unverified", platform);
+    assert.equal(report.summary.passed, 0, platform);
+  }
+});
+
+test("PID三种标准写法支持独立标记和唯一目标行", async () => {
+  for (const marker of ["PID fixture", "PID:fixture", "PID：fixture"]) {
+    for (const prefix of ["", "内存平台\n"]) {
+      const input = evidence(); input.page = tablePage(input.page, prefix + marker);
+      const report = await verifyBIAcceptance(input);
+      assert.equal(report.checks.pageIdentity.status, "passed", prefix + marker);
+      assert.equal(report.summary.passed, 93, prefix + marker);
+    }
+  }
+});
+
+test("多PID表只核验可唯一确认的目标行，重复目标行不按首行推断", async () => {
+  const input = evidence(); input.page = tablePage(input.page);
+  const other = ["部分", "另一个内存平台 PID other", ...registry.map(() => "999")];
+  input.page.rows.unshift(other);
+  const report = await verifyBIAcceptance(input);
+  assert.equal(report.checks.pageIdentity.status, "passed");
+  assert.equal(report.summary.passed, 93);
+  input.page.rows.push(structuredClone(input.page.rows[1]));
+  const ambiguous = await verifyBIAcceptance(input);
+  assert.equal(ambiguous.checks.pageIdentity.status, "unverified");
+  assert.equal(ambiguous.summary.passed, 0);
 });
 
 test("脱敏输入不接受凭据且错误不回显秘密", async () => {

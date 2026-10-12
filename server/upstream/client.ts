@@ -128,6 +128,7 @@ export class UpstreamClient {
     if (pending) return pending;
 
     const request = this.fetchJson(url, token, profile.userName).then((value) => {
+      if (this.inFlight.get(cacheKey) !== request) return value;
       this.pruneResponseCache();
       this.responseCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
       return value;
