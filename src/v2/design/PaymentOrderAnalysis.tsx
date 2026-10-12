@@ -1,4 +1,4 @@
-import { liveDailyReferenceRows, liveExportMetadata, livePeriodStatus, livePointStateLabel, liveValue, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
+import { liveDailyReferenceRows, liveExportMetadata, liveDataEnvironment, livePeriodStatus, livePointStateLabel, liveValue, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
 import { safeDiagnosticSeries } from "../features/dashboards/diagnostic-inputs";
@@ -66,7 +66,7 @@ export function PaymentOrderAnalysis({range,compared=false,pending=false,onOpen}
       ? <LiveSeriesExport series={series} result={result} comparison={previousResult} comparisonStatus={livePeriodStatus(live, true)} dayReferences={liveDailyReferenceRows(live, [model.metric.id])} stale={Boolean((live.state.status === "success" && live.state.refreshError) || (live.comparison?.state.status === "success" && live.comparison.state.refreshError))} />
       : <Button disabled>导出未就绪</Button>;
   };
-  const exportAction=<PreviewExportControl name="拉单与充值" scope={`${ways.map(item => item.label).join("、")}；全部指标、逐日值和计算输入`} context={scope} dataOrigin={live ? "live" : "demo"} pending={pending || Boolean(live && (!live.canExport || live.controls.dirty || live.state.status !== "success"))} onDownloadPreview={()=>{
+  const exportAction=<PreviewExportControl name="拉单与充值" scope={`${ways.map(item => item.label).join("、")}；全部指标、逐日值和计算输入`} context={scope} dataOrigin={live ? "live" : "demo"} dataEnvironment={live ? liveDataEnvironment(live) : undefined} pending={pending || Boolean(live && (!live.canExport || live.controls.dirty || live.state.status !== "success"))} onDownloadPreview={()=>{
     if(live && (!live.canExport || live.controls.dirty || live.state.status !== "success"))return;
     const demoSheets=paymentOrderSheets(range,false,compared);
     if(!live){downloadPreviewWorkbook("拉单与充值",demoSheets);return;}

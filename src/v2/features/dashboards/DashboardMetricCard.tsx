@@ -19,6 +19,7 @@ import { DataOriginBadge, useDataOrigin } from "../../components/DataOrigin";
 import { useLiveDashboard } from "./LiveDashboardContext";
 import { ConnectedMetricCard } from "./ConnectedMetricCard";
 import { MetricPeriodStatistics, MetricReadingContext, MetricSummary } from "./MetricSummary";
+import { RequestFailureDetails } from "../../components/StatePanel";
 import {
   dashboardMetricStatusPresentation,
   dashboardTrendDomain,
@@ -38,6 +39,7 @@ export type DashboardMetricCardProps = ({ variant?: "compact" | "value"; tableEx
   onOpenComparison: (model: DashboardMetricCardModel) => void;
   onOpenTrendPoint: (model: DashboardMetricCardModel, point: DashboardMetricTrendPoint, series: "current" | "comparison") => void;
   onRetry?: (model: DashboardMetricCardModel) => void;
+  retryLabel?: string;
   onOpenBreakdown?: (model: DashboardMetricCardModel) => void;
   breakdownDimensions?: string;
 }
@@ -163,7 +165,7 @@ export function DashboardMetricCard(props: DashboardMetricCardProps) {
     : <DashboardMetricCardView {...props} />;
 }
 
-function DashboardMetricCardView({ model, analysisHref, onOpenAnalysis, onOpenDefinition, onOpenComparison, onOpenTrendPoint, onRetry, onOpenBreakdown, breakdownDimensions, variant: requestedVariant, note, tableExport, compactDetails = false }: DashboardMetricCardProps) {
+function DashboardMetricCardView({ model, analysisHref, onOpenAnalysis, onOpenDefinition, onOpenComparison, onOpenTrendPoint, onRetry, retryLabel = "重试此卡", onOpenBreakdown, breakdownDimensions, variant: requestedVariant, note, tableExport, compactDetails = false }: DashboardMetricCardProps) {
   const origin = useDataOrigin();
   const mode = useDashboardCardMode(requestedVariant !== "value");
   const modeValue = mode === "value";
@@ -216,8 +218,8 @@ function DashboardMetricCardView({ model, analysisHref, onOpenAnalysis, onOpenDe
     </header>
     {unavailable ? <div className="dashboard-metric-card__unavailable">
       <span>{model.result.status === "failed" ? <CircleAlert aria-hidden="true" /> : model.result.status === "loading" ? <LoadingIndicator /> : <Info aria-hidden="true" />}</span>
-      <div><b>{presentation.label}</b><p>{presentation.description}</p></div>
-      {model.result.status === "failed" && model.result.retryable && onRetry && <button type="button" onClick={() => onRetry(model)}>重试此卡</button>}
+      <div><b>{presentation.label}</b><p>{presentation.description}</p>{model.result.status === "failed" && <RequestFailureDetails code={model.result.code} requestId={model.result.requestId} />}</div>
+      {model.result.status === "failed" && model.result.retryable && onRetry && <button type="button" onClick={() => onRetry(model)}>{retryLabel}</button>}
     </div> : availableResult ? <>
       {reading ? <MetricSummary horizontal context={<MetricReadingContext reading={reading} />} value={availableResult.value.display} unit={availableResult.value.unit}
         numberClassName="dashboard-metric-card__value" comparisonClassName="dashboard-metric-card__comparison" comparisons={reading.comparisons}
@@ -246,8 +248,9 @@ function DashboardMetricCardView({ model, analysisHref, onOpenAnalysis, onOpenDe
     {showFooter && <footer>
       <span className={`ui-status ui-status--${presentation.tone}`}>{presentation.label}</span>
       <div className="dashboard-metric-card__footer-meta">
-        {cardRetryAvailable && <button type="button" onClick={() => onRetry?.(model)}>重试此卡</button>}
+        {cardRetryAvailable && <button type="button" onClick={() => onRetry?.(model)}>{retryLabel}</button>}
         <span>{presentation.description}</span>
+        {availableResult?.refresh.status === "failed" && <RequestFailureDetails code={availableResult.refresh.code} requestId={availableResult.refresh.requestId} />}
       </div>
     </footer>}
   </article>;

@@ -10,7 +10,7 @@ import { FloatingHint } from "../../components/ui/FloatingHint";
 import { normalizeDirectoryNavigation, type DirectoryItem, type DirectoryNavigationState } from "../features/dashboards/dashboard-directory-model";
 import { previewBoardHref, previewBoardId, resolveDevelopmentPreview } from "./development-preview-route";
 import { StatePanel } from "../components/StatePanel";
-import plan from "./generated/dashboard-directory-preview.json";
+import plan from "./dashboard-directory-plan";
 import { previewFavorites } from "./preview-favorites";
 import { readPreviewQuery, savePreviewQuery, type PreviewQuery } from "./preview-query";
 import { DateRangePicker } from "../../components/ui/DateRangePicker";

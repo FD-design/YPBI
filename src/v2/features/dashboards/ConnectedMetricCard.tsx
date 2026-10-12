@@ -82,7 +82,7 @@ export function ConnectedMetricCard({ live, original, render }: { live: LiveDash
     {previousSeries && previous && <details><summary>对比期完整数据</summary><LiveSeriesDetails series={previousSeries} result={previous}/></details>}
   </> : <p>当前真实查询尚无可用结果；请重试读取。</p>;
   return <DataOriginProvider value="pending">{render({ ...original, model, tableExport: exportAction, note: undefined,
-    onOpenAnalysis: () => setReading({ kind: "all" }), onOpenDefinition: () => setReading({ kind: "all" }), onOpenComparison: () => setReading({ kind: "comparison" }), onOpenTrendPoint: (_, point, period) => setReading({ kind: "point", date: point.actualDate, period }), onRetry: live.retry,
+    onOpenAnalysis: () => setReading({ kind: "all" }), onOpenDefinition: () => setReading({ kind: "all" }), onOpenComparison: () => setReading({ kind: "comparison" }), onOpenTrendPoint: (_, point, period) => setReading({ kind: "point", date: point.actualDate, period }), onRetry: live.retry, retryLabel: "重试查询",
     onOpenBreakdown: undefined, breakdownDimensions: undefined })}
     {reading && <MetricReadingDialog title={model.metric.name} content={details} onClose={() => setReading(null)} />}
   </DataOriginProvider>;

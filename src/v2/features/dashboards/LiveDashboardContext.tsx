@@ -180,7 +180,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
   const metric = { ...original.metric, aggregationLabel: `${live.query.dateRange[0]} 至 ${live.query.dateRange[1]} · ${live.platformName} · 业务日`,
     definitionLabel: series?.metric.definition ?? original.metric.definitionLabel };
   if (live.state.status === "loading") return { metric, result: { status: "loading", contextLabel: "真实后台查询", label: "正在读取真实数据", message: "", retryable: false } };
-  if (live.state.status === "failure") return { metric, result: { status: "failed", contextLabel: "真实后台查询", label: "暂时无法读取", message: live.state.message, retryable: true } };
+  if (live.state.status === "failure") return { metric, result: { status: "failed", contextLabel: "真实后台查询", label: "暂时无法读取", message: live.state.message, retryable: true, code: live.state.code, requestId: live.state.requestId } };
   if (!series?.points.length) return { metric, result: { status: "no_values", label: "指标未返回", contextLabel: "真实后台查询", retryable: false } };
   const unit = series.metric.unit;
   const baselineSource = live.comparison?.state.status === "success" && live.comparison.state.data && sameQuery(live.comparison.state.data, live.comparison.query) ? live.comparison.state.data.data.series.find(item => item.metric.id === original.metric.id) : undefined;
@@ -218,7 +218,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
   const result: import("./dashboard-metric-card-model").DashboardMetricAvailableResult = {
     status: "available", completeness: "unknown",
     value: { raw: (last.value ?? observed?.value ?? priorObserved?.value)!, display: liveValue(last.value, unit), unit }, comparison,
-    refresh: live.state.refreshing ? { status: "refreshing", source: "page" } : live.state.refreshError ? { status: "failed", source: "page", message: "当前期刷新失败，保留上次查询结果。", retryable: true } : live.comparison?.state.status === "success" && live.comparison.state.refreshError ? { status: "failed", source: "page", message: "对比期刷新失败，保留上次查询基准。", retryable: true } : { status: "idle" },
+    refresh: live.state.refreshing ? { status: "refreshing", source: "page" } : live.state.refreshError ? { status: "failed", source: "page", message: "当前期刷新失败，保留上次查询结果。", retryable: true, code: live.state.refreshError.code, requestId: live.state.refreshError.requestId } : live.comparison?.state.status === "success" && live.comparison.state.refreshError ? { status: "failed", source: "page", message: "对比期刷新失败，保留上次查询基准。", retryable: true, code: live.comparison.state.refreshError.code, requestId: live.comparison.state.refreshError.requestId } : { status: "idle" },
     validationLabel: "", watermarkLabel: "", calculation: liveCalculation(series, last),
     trendKind: original.result.status === "available" ? original.result.trendKind : "line",
     trend: { current: toPoints(series, baseline), comparison: baseline ? toPoints(baseline, series, true) : null }

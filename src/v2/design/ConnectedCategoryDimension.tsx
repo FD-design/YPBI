@@ -61,7 +61,7 @@ export function ConnectedCategoryDimension({ spec, live, pending, open, onSelect
   const status = (row: ConnectedDimensionRow) => `${row.state}${row.freshness ? ` · ${row.freshness}` : ""}`;
   const select = (props: SelectProps) => renderSelect ? renderSelect(props) : <MenuSelect label={props.label} ariaLabel={props.label} value={props.value} density="compact" onChange={props.onChange} groups={[{ label: props.label, options: props.values }]} />;
   const notify = (next: { id?: string; group?: string; order?: BoardSortOrder }) => onSelectionChange?.({ id, group, order, ...next });
-  const exported = <PreviewExportControl name={spec.title} dataOrigin="live" scope="当前指标与分组的完整逐日结果、计算输入及状态。" context={`${live.platformName} · ${live.query.dateRange.join(" 至 ")}`} pending={pending || live.controls.dirty || !live.canExport || live.state.status !== "success"} onDownloadPreview={() => downloadPreviewWorkbook(spec.title, [
+  const exported = <PreviewExportControl name={spec.title} dataOrigin="live" dataEnvironment={liveDataEnvironment(live)} scope="当前指标与分组的完整逐日结果、计算输入及状态。" context={`${live.platformName} · ${live.query.dateRange.join(" 至 ")}`} pending={pending || live.controls.dirty || !live.canExport || live.state.status !== "success"} onDownloadPreview={() => downloadPreviewWorkbook(spec.title, [
     { name: "00_导出说明", rows: liveExportMetadata(live) }, source.sheet(live, id, group)
   ], "pending")} />;
   const point = (row: ConnectedDimensionRow) => {

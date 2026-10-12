@@ -6,7 +6,7 @@ import { coreDailyCards, corePeriodMetric } from "./core-period-preview";
 import { parseExtendedView, extendedBoardHref } from "./extended-board-view";
 import { previewFavorites, setPreviewFavorite } from "./preview-favorites";
 import { downloadPreviewWorkbook, type WorkbookSheet } from "./preview-workbook";
-import { liveExportEnvironmentRows } from "../features/dashboards/LiveDashboardContext";
+import { liveExportEnvironmentRows, liveDataEnvironment } from "../features/dashboards/LiveDashboardContext";
 import { metricRows } from "./topic-preview-export";
 import { DETAIL_COLUMNS, DETAIL_ROWS, detailColumnKey, operatingDetailRows, operatingSummaryModels, operatingDetailExportRows, operatingValueLabel, selectOperatingRows, operatingDetailBreakdown, type DetailRow, type DetailColumn } from "./operating-detail-snapshot";
 import { retentionTargetDate } from "./operating-detail-snapshot";
@@ -670,7 +670,7 @@ function CoreOverviewDesignFixture() {
           <MenuSelect label="变化参考" ariaLabel="经营明细变化参考" density="compact" value={detailComparison}
             groups={[{ label: "变化参考", options: [{ value: "none", label: "不显示" }, { value: "previousDay", label: "较昨日" }, { value: "previousWeek", label: "较上周同日" }] }]}
             onChange={(value) => setDetailComparison(value as DetailComparisonMode)} />
-          <PreviewExportControl name="经营明细" dataOrigin={live ? "live" : "demo"} scope="当前局部平台范围的全部明细列，以单张宽表导出；保留数值精度、逐列数据状态与计算输入。" context={`数据日 ${detailDate} · ${detailScopeLabel}`} pending={hasPendingFilters || Boolean(live && (!live.canExport || live.controls.dirty))} onDownloadPreview={() => { if (live && (!live.canExport || live.controls.dirty)) return; downloadPreviewWorkbook("经营明细", exportSheets(true), live ? "pending" : "demo"); }} />
+          <PreviewExportControl name="经营明细" dataOrigin={live ? "live" : "demo"} dataEnvironment={live ? liveDataEnvironment(live) : undefined} scope="当前局部平台范围的全部明细列，以单张宽表导出；保留数值精度、逐列数据状态与计算输入。" context={`数据日 ${detailDate} · ${detailScopeLabel}`} pending={hasPendingFilters || Boolean(live && (!live.canExport || live.controls.dirty))} onDownloadPreview={() => { if (live && (!live.canExport || live.controls.dirty)) return; downloadPreviewWorkbook("经营明细", exportSheets(true), live ? "pending" : "demo"); }} />
         </div>
       </header>
       <div id="operating-summary-cards" className="core-review__detail-summary" role="group" aria-label="经营明细纯数值卡">

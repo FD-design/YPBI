@@ -67,7 +67,7 @@ export interface DashboardMetricReading {
 export type DashboardMetricRefresh =
   | { status: "idle" }
   | { status: "refreshing"; source: "page" | "card" }
-  | { status: "failed"; source: "page" | "card"; message: string; retryable: boolean };
+  | { status: "failed"; source: "page" | "card"; message: string; retryable: boolean; code?: string; requestId?: string };
 
 export interface DashboardMetricAvailableResult {
   reading?: DashboardMetricReading;
@@ -110,6 +110,8 @@ export interface DashboardMetricUnavailableResult {
   validationLabel?: string;
   watermarkLabel?: string;
   watermarkDateTime?: string;
+  code?: string;
+  requestId?: string;
 }
 
 export interface DashboardMetricCardModel {

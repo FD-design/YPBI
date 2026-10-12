@@ -26,7 +26,7 @@ import type { DashboardMetricCardModel } from "../features/dashboards/dashboard-
 import { downloadPreviewWorkbook, type WorkbookSheet } from "./preview-workbook";
 import { CHART_PALETTE } from "../../theme/tokens";
 import { ProductLink } from "../app/router";
-import plan from "./generated/dashboard-directory-preview.json";
+import plan from "./dashboard-directory-plan";
 import { DEMO_END, DEMO_RANGE, EXTENDED_BOARDS, EXTENDED_BOARD_MARKER, demoCalculationBasis, demoCategories, demoMetric, demoPrevious, demoRangeLabel, demoResult, demoUnit, demoValue, extendedMetricModel, extendedDailyMetricModel, type ExtendedBoard } from "./extended-board-model";
 import { extendedBoardHref as hrefFor, parseExtendedView, type ExtendedView } from "./extended-board-view";
 import "./topic-previews.css";
@@ -179,7 +179,7 @@ function PlaybackStageRelations({ view, pending, open, models }: { view: Extende
     })
   ] };
   const unavailableExport = pending || Boolean(hasLive && (!live!.canExport || live!.controls.dirty || live!.state.status !== "success"));
-  const exportStages = hasLive ? <PreviewExportControl name="播放阶段" dataOrigin="mixed" pending={unavailableExport}
+  const exportStages = hasLive ? <PreviewExportControl name="播放阶段" dataOrigin="mixed" dataEnvironment={liveDataEnvironment(live!)} pending={unavailableExport}
     scope="各阶段摘要与完整逐日结果，分别保留真实候选和演示来源、单位、计算输入及对比日期。" context={live!.query.dateRange.join(" 至 ") + " · " + live!.platformName}
     onDownloadPreview={() => downloadPreviewWorkbook("播放阶段", [{ name: "00_导出说明", rows: liveExportMetadata(live!) }, sheet, sourceSheet], "mixed")} />
     : <BoardExport title="播放阶段" view={view} sheets={[sheet]} pending={pending} />;

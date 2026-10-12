@@ -147,6 +147,23 @@ test("真实0、分母为0、首次失败和未返回指标不补演示", async 
   expect(failed.status).toBe("failed"); expect("value" in failed).toBe(false);
 });
 
+test("真实卡片保留实际请求错误代码及编号，刷新错误使用对应期证据", async () => {
+  const live = reading(await data([100, 200]));
+  live.state = { status: "failure", kind: "error", code: "UPSTREAM_TIMEOUT", message: "超时", requestId: "current-failure" };
+  expect(liveMetricModel(original(), live).result).toMatchObject({ status: "failed", code: "UPSTREAM_TIMEOUT", requestId: "current-failure" });
+  live.state = { status: "failure", kind: "error", code: "NETWORK_ERROR", message: "连接失败" };
+  expect(liveMetricModel(original(), live).result.requestId).toBeUndefined();
+  live.state = { status: "success", data: await data([100, 200]), refreshing: false, refreshError: { code: "UPSTREAM_TIMEOUT", message: "超时", requestId: "current-refresh" } };
+  const current = liveMetricModel(original(), live).result;
+  expect(current.status === "available" && current.refresh).toMatchObject({ status: "failed", code: "UPSTREAM_TIMEOUT", requestId: "current-refresh" });
+  live.state.refreshError = null;
+  const before: [string, string] = ["2026-09-03", "2026-09-04"];
+  live.comparison = { label: "上一等长周期", query: { ...query, dateRange: before }, state: { status: "success", data: await data([50, 60], before), refreshing: false, refreshError: { code: "UPSTREAM_TIMEOUT", message: "超时", requestId: "previous-refresh" } } };
+  const previous = liveMetricModel(original(), live).result;
+  expect(previous.status === "available" && previous.refresh).toMatchObject({ status: "failed", requestId: "previous-refresh" });
+  expect(previous.status === "available" && previous.value.raw).toBe(200);
+});
+
 test("所选日期从准确日点读取，不能把序列最后一天标成其他日期",async()=>{
   const live=reading(await data([100,200]));live.query={...query,dateRange:["2026-09-05","2026-09-05"]};
   const model=liveMetricModel(original(),live);expect(model.result.status==="available"&&model.result.value.raw).toBe(100);

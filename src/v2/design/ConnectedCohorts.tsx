@@ -4,7 +4,7 @@ import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
 import { RetentionMatrix, retentionCellCalculationInputs, type RetentionMatrixRow } from "../features/dashboards/RetentionMatrix";
 import { useV2Resource, type V2ResourceState } from "../api/useV2Resource";
 import { fetchDailyDashboard } from "../api/client";
-import { livePointStateLabel, liveExportMetadata, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { livePointStateLabel, liveExportMetadata, liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { topicMetric } from "./topic-preview-fixtures";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
@@ -70,7 +70,7 @@ export function connectedCohortExportRows(query: DailyDashboardQuery, state: V2R
 }
 export function ConnectedCohorts({ title, live, pending, open, scope = "overall", onScopeChange }: { title: string; live: LiveDashboardReading; range: {start:string;end:string}; pending:boolean; open:(title:string,content:ReactNode)=>void; scope?:RegistrationCohortScope; onScopeChange?:(scope:RegistrationCohortScope)=>void }) {
   const query = live.query, state = live.state, rows = connectedCohortRows(query, state, scope), scopeLabel = registrationCohortScopeLabel(scope);
-  const tools = <PreviewExportControl name={title} dataOrigin="live" context={query.dateRange.join(" 至 ") + " · 注册日 · " + scopeLabel + " · 待验数"} pending={pending || live.controls.dirty || !live.canExport || state.status !== "success"} scope="当前期及已启用对比期的所选注册日分组、人数与状态；矩阵展示当前期" onDownloadPreview={() => {
+  const tools = <PreviewExportControl name={title} dataOrigin="live" dataEnvironment={liveDataEnvironment({ state })} context={query.dateRange.join(" 至 ") + " · 注册日 · " + scopeLabel + " · 待验数"} pending={pending || live.controls.dirty || !live.canExport || state.status !== "success"} scope="当前期及已启用对比期的所选注册日分组、人数与状态；矩阵展示当前期" onDownloadPreview={() => {
     if (!live.canExport || pending || live.controls.dirty || state.status !== "success") return;
     const periods=[{name:"当前注册留存",query,state},...(live.comparison?[{name:"对比注册留存",query:live.comparison.query,state:live.comparison.state}]:[])];
     downloadPreviewWorkbook(title, [{name:"数据说明",rows:[...liveExportMetadata(live),["注册日分组",scopeLabel]]},...periods.map(period=>({name:period.name,rows:connectedCohortExportRows(period.query,period.state,scope)}))], "pending");

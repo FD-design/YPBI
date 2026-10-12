@@ -1,4 +1,4 @@
-import plan from "./generated/dashboard-directory-preview.json" with { type: "json" };
+import plan from "./dashboard-directory-plan.ts";
 import { parseAcquisitionView } from "./acquisition-view-state.ts";
 import { parseTopicView } from "./topic-preview-view.ts";
 import { parseExtendedView } from "./extended-board-view.ts";

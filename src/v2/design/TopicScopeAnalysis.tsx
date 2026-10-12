@@ -8,7 +8,7 @@ import { dashboardMetricStatusPresentation, type DashboardMetricCardModel } from
 import { CalculationEvidence } from "../features/dashboards/CalculationEvidence";
 import { DetailedMetricTrend } from "../features/dashboards/DetailedMetricTrend";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
-import { liveExportMetadata, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
+import { liveExportMetadata, liveDataEnvironment, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { StatePanel, RefreshNotice } from "../components/StatePanel";
 import { DataOriginProvider } from "../components/DataOrigin";
 import { DEFAULT_TOPIC_SCOPE, type TopicScope, type TopicView } from "./topic-preview-view";
@@ -72,7 +72,7 @@ export function TopicScopeAnalysis({ title, id, view, scope, onChange, pending, 
     };
   });
   const selectedGroups = visibility.groups;
-  const exportControl = <PreviewExportControl name={title + "二维分析"} dataOrigin={connected ? "live" : "demo"} pending={pending || (connected && (!live!.canExport || live!.controls.dirty || live!.state.status !== "success"))}
+  const exportControl = <PreviewExportControl name={title + "二维分析"} dataOrigin={connected ? "live" : "demo"} dataEnvironment={connected ? liveDataEnvironment(live!) : undefined} pending={pending || (connected && (!live!.canExport || live!.controls.dirty || live!.state.status !== "success"))}
     context={connected ? "真实接口候选结果 · 待验数" : "合成演示数据"} scope="全部客户端 × 人群的摘要和逐日结果，保留空值、计算输入与对比日期；不随单元格点选裁剪。"
     onDownloadPreview={() => downloadPreviewWorkbook(title, [connected ? {name:"00_导出说明",rows:[...liveExportMetadata(live!), ["当前分析范围", topicScopeLabel(scope)]]} : topicMetadata({...view,reading:{...view.reading!,scope}},id === "M016"), {name:"02_二维结构",rows:topicScopeExport(id,view,live)}, ...(connected ? [] : [topicLimits()])], connected ? "pending" : "demo")} />;
   return <DataOriginProvider value={connected ? "pending" : "demo"}><div className="topic-scope-analysis" data-testid="topic-scope-analysis">

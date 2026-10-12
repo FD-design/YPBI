@@ -1,5 +1,5 @@
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
-import { liveCalculation, liveExportMetadata, liveMetricUnit, livePeriodStatus, livePointStateLabel } from "../features/dashboards/LiveDashboardContext";
+import { liveCalculation, liveExportMetadata, liveDataEnvironment, liveMetricUnit, livePeriodStatus, livePointStateLabel } from "../features/dashboards/LiveDashboardContext";
 import type { GroupedTrendPoint } from "../features/dashboards/GroupedTrend";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
 import { paymentGroups, type PaymentDimension } from "./payment-observations";
@@ -30,7 +30,7 @@ export function connectedPaymentPoints(live:LiveDashboardReading, dimension:Paym
   return (data?.data.series[0].points??[]).map((point,i)=>{const before=baseline?.data.series[0].points[i]?.date;return{date:point.date,...snapshot(point.date),comparison:before?{date:before,...snapshot(before,true)}:undefined};});
 }
 export function ConnectedPaymentExport({live,title,pending=false}:{live:LiveDashboardReading;title:string;pending?:boolean}) {
-  return <PreviewExportControl name={title} dataOrigin="live" scope="真实分组逐日金额、人数、ARPPU及计算输入；未接入字段不补值" context={connectedPaymentUnit(live)+" · 待验数"} pending={pending||!live.canExport||live.controls.dirty||live.state.status!=="success"} onDownloadPreview={()=>{
+  return <PreviewExportControl name={title} dataOrigin="live" dataEnvironment={liveDataEnvironment(live)} scope="真实分组逐日金额、人数、ARPPU及计算输入；未接入字段不补值" context={connectedPaymentUnit(live)+" · 待验数"} pending={pending||!live.canExport||live.controls.dirty||live.state.status!=="success"} onDownloadPreview={()=>{
     if(pending||!live.canExport||live.controls.dirty||live.state.status!=="success")return;
     const periods=[{name:"当前",result:live.state.data},...(live.comparison?.state.status==="success"&&live.comparison.state.data?[{name:"对比",result:live.comparison.state.data}]:[])];
     downloadPreviewWorkbook(title,[{name:"数据说明",rows:liveExportMetadata(live)},{name:"真实明细",rows:[["周期","日期","指标","值","单位","计算输入","状态","平台","查询时间","刷新状态"],...periods.flatMap(period=>period.result.data.series.filter(series=>["M058","M059","M067","M065","M066"].some(id=>series.metric.id===id||series.metric.id.startsWith(id+"."))).flatMap(series=>series.points.map(point=>[period.name,point.date,series.metric.name,point.value,series.metric.unit,series.metric.inputs.map((input,i)=>input.name+": "+(point.inputs[i].value??"—")+" "+input.unit).join(" / "),livePointStateLabel(point)+" · 待验数",period.result.data.query.pid,period.result.data.fetchedAt,livePeriodStatus(live,period.name==="对比")])))]}], "pending");

@@ -21,7 +21,7 @@ const boards = catalog.data.items;
 const url = (id = "5.2", extra = "") => `${base}/dashboards/public?board=${id}&pid=PH&start=2026-09-02&end=2026-09-08${extra}`;
 const card = (page: Page, name: string) => page.locator(".dashboard-metric-card").filter({ has: page.getByRole("link", { name, exact: true }) }).first();
 
-async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean; emptyCurrent?: boolean; zero?: boolean; zeroTypes?: boolean; statistics?: boolean; scopedDimensions?: boolean } = {}) {
+async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean; emptyCurrent?: boolean; zero?: boolean; zeroTypes?: boolean; statistics?: boolean; scopedDimensions?: boolean; typeStatistics?: boolean } = {}) {
   const control = { fail: false, failPrevious: false, calls: [] as DailyDashboardQuery[] };
   await page.route("**/api/bi/v2/**", async route => {
     const path = new URL(route.request().url()).pathname;
@@ -33,7 +33,7 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
       const query = route.request().postDataJSON() as DailyDashboardQuery;
       control.calls.push(query);
       if (opts.statistics) return route.fulfill({ status: 200, json: generated.periodResult });
-      if (control.fail || control.failPrevious && query.dateRange[1] < "2026-09-02") return route.fulfill({ status: 504, json: { success: false, error: { code: "UPSTREAM_TIMEOUT", message: "上游超时，请重试", requestId: "qa-timeout" } } });
+      if (control.fail || control.failPrevious && query.dateRange[1] < "2026-09-02") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "上游超时，请重试", requestId: "qa-timeout" } } });
       const count = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
       const rows = Array.from({ length: count }, (_, index) => {
         const date = new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10), n = Number(date.slice(-2)), factor = query.pid === "FBI" ? 10 : 1;
@@ -52,10 +52,12 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
           } : {}),
           registerCount:100,"afterFirstData1.loginCnt":40,"afterFirstData3.loginCnt":30,"afterFirstData7.loginCnt":20,"afterFirstData30.loginCnt":10,
           "signInRate.raw.signed":20,adsClickedNewCount:6,adsClickedNewPerson:2,navClickedNewCount:1,navClickedNewPerson:1,newUserTotalClickedCount:7,newUserTotalClickedPerson:3,
-          pid: query.pid, sumDate: date, loginUserCount: opts.zero ? 0 : (100 + n) * factor, registerUserCount: 20 + n, watchUserCount: 80 + n, totalChargeUserCount: 4, newUserChargeUserCount: 2, diamondChargeAmt: 40.5, adsCount: 20, navCount: 5, totalClickedCount: 26, adsClickedPerson: 10, navClickedPerson: 3, totalClickedPerson: 11 };
+          pid: query.pid, sumDate: date, loginUserCount: opts.zero ? 0 : (100 + n) * factor, activeUserCount: opts.zero ? 0 : (100 + n) * factor, activePayingUserCount: opts.zero ? 0 : 4, registerUserCount: 20 + n, watchUserCount: 80 + n, totalChargeUserCount: 4, newUserChargeUserCount: 2, payingUserCount: 4, newPayingUserCount: 2, diamondChargeAmt: 40.5, adsCount: 20, navCount: 5, totalClickedCount: 26, adsClickedPerson: 10, navClickedPerson: 3, totalClickedPerson: 11 };
       }).filter(row => (!opts.emptyEnd || row.sumDate !== query.dateRange[1]) && (!opts.emptyCurrent || query.dateRange[1] < "2026-09-02"));
       const template = generated.results[query.boardId] as DailyDashboardSuccess;
-      body = { ...template, data: { ...template.data, schemaVersion: "day-dashboard/v1", query, series: template.data.series.map(series => ({
+      const { acquisitionGroups: _acquisitionGroups, playbackGroups: _playbackGroups, ...legacyData } = template.data as DailyDashboardSuccess["data"] & { acquisitionGroups?: unknown; playbackGroups?: unknown };
+      const typeStatistics = opts.typeStatistics ? registrationTypeStatistics(query, rows) : null;
+      body = { ...template, data: { ...legacyData, schemaVersion: typeStatistics ? "day-dashboard/v2" : "day-dashboard/v1", query, series: template.data.series.map(series => ({
         metric: series.metric, points: Array.from({ length: count }, (_, index) => {
           const date = new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10);
           const row = rows.find(item => item.sumDate === date) as Record<string, unknown> | undefined;
@@ -63,12 +65,28 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
           const numerator = inputs[0].value, denominator = inputs[1]?.value;
           const state = !row ? "no_record" : inputs.some(input=>input.value===null) ? "no_value" : denominator === 0 ? "zero_denominator" : "available";
           return { date, inputs, state, value: state !== "available" ? null : denominator == null ? numerator : numerator! / denominator };
-        })
+        }),
+        ...(typeStatistics ? { periodStatistics: typeStatistics[series.metric.id] ?? { aggregationVersion: "daily-statistics/v1", dateRange: query.dateRange, dayCount: count, state: "unsupported", values: [], reason: "该隔离样例仅提供获客类型周期统计" } } : {})
       })) } };
     } else return route.fulfill({ status: 404, json: { success: false, error: { code: "NOT_FOUND", message: "测试中未配置接口", requestId: "qa" } } });
     return route.fulfill({ status: 200, json: body });
   });
   return control;
+}
+
+function registrationTypeStatistics(query: DailyDashboardQuery, rows: Record<string, unknown>[]) {
+  return JSON.parse(execFileSync("bun", ["--no-env-file", "-e", `
+    import { DailyDashboardService } from './server/v2/daily-dashboard.service';
+    const {query, rows} = JSON.parse(process.argv.at(-1));
+    const service = new DailyDashboardService({ get: async (path, params) => {
+      if (path !== '/api/admin/bi/v1/metrics') return {code:200,msg:{pageData:[],totalCount:0,totalData:[]}};
+      const filters = JSON.parse(params.dimensionFilters ?? '{}');
+      const field = filters.sourceType === 'natural' ? 'natureRegisterCount' : filters.sourceType === 'internal_channel' ? 'channelInternalRegisterCount' : null;
+      return {code:200,msg:{metricVersion:'bi-v1',generatedAt:'2026-09-20T00:00:00Z',watermark:null,rows:field && params.metricCodes.split(',').includes('M008') ? rows.map(row => ({metricCode:'M008',businessDate:row.sumDate,dimensions:{pid:query.pid,sourceType:filters.sourceType},value:row[field],numerator:row[field],denominator:0,unit:'count',dataStatus:'READY',metricVersion:'bi-v1',ruleVersion:'qa-registration-type-v1'})) : []}};
+    }}, () => new Date('2026-09-20T00:00:00Z'));
+    const result = await service.execute(query);
+    process.stdout.write(JSON.stringify(Object.fromEntries(result.data.series.filter(series => ['M008.nature','M008.internal'].includes(series.metric.id)).map(series => [series.metric.id, series.periodStatistics]))));
+  `, JSON.stringify({ query, rows })], { encoding: "utf8" }));
 }
 
 test("真实v2周期合计均值、简短日期、详情和导出同源，旧v1兼容", async ({ page }) => {
@@ -103,9 +121,9 @@ test("真实活跃二维只使用独立总体与单维结果，缺失交叉不�
   const panel=page.getByRole("article",{name:"活跃结构",exact:true}), scope=panel.getByLabel("分析范围",{exact:true});
   const grouped=panel.locator(".topic-preview__group-summary");
   await expect(grouped.locator("section")).toHaveCount(4);
-  await expect(grouped).toContainText("该范围待接入");
+  await expect(grouped).toContainText("字段未返回");
   const matrix=panel.getByRole("table",{name:"活跃结构二维交叉表",exact:true});
-  expect(await matrix.getByText("该范围待接入",{exact:true}).count()).toBeGreaterThanOrEqual(4);
+  expect(await matrix.getByText("字段未返回",{exact:true}).count()).toBeGreaterThanOrEqual(4);
   await expect(matrix.getByRole("button",{name:/^Android · 新用户 · /})).toHaveCount(0);
   await scope.getByRole("radiogroup",{name:"展示方式",exact:true}).getByRole("radio",{name:"总体",exact:true}).click();
   await expect(panel.locator(".metric-summary__number strong")).toHaveText("108");
@@ -214,7 +232,7 @@ test("当前值、计算输入、逐日点和真实导出共用查询", async ({
   await expect(row).toContainText("88"); await expect(row).toContainText("108"); await expect(row).toContainText("81.48");
   const download = page.waitForEvent("download"); await page.getByRole("dialog").getByRole("button", { name: "导出", exact: true }).click();
   expect(readFileSync((await (await download).path())!, "utf8")).toContain('"2026-09-08","88","108"');
-  expect(control.calls[0]).toEqual({ boardId: "5.2", pid: "PH", dateRange: ["2026-09-02", "2026-09-08"] });
+  expect(control.calls[0]).toEqual({ boardId: "5.2", pid: "PH", dateRange: ["2026-09-01", "2026-09-08"] });
 });
 
 test("真实周期对比、切平台、纯数值、历史返回不进入设计身份", async ({ page }) => {
@@ -281,12 +299,63 @@ test("结束日缺失保留历史趋势与明细，真实0保持0", async ({ pag
 test("失败不退回演示；刷新失败保留旧真值，重试恢复", async ({ page }) => {
   const control = await fixtures(page); control.fail = true; await page.goto(url());
   await expect(card(page, "日活跃用户数")).toContainText("暂时无法读取");
+  await expect(card(page, "日活跃用户数")).toContainText("错误代码：V2_UPSTREAM_TIMEOUT");
+  await expect(card(page, "日活跃用户数")).toContainText("请求编号：qa-timeout");
   await expect(card(page, "日活跃用户数").locator(".dashboard-metric-card__value")).toHaveCount(0);
-  control.fail = false; await card(page, "日活跃用户数").getByRole("button", { name: "重试此卡" }).click();
+  for (const width of [1280, 1024, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(card(page, "日活跃用户数").getByRole("button", { name: "重试查询", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await card(page, "日活跃用户数").screenshot({ path: `/private/tmp/ypbi-query-diagnostics-${width}.png` });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  control.fail = false; await card(page, "日活跃用户数").getByRole("button", { name: "重试查询" }).click();
   await expect(card(page, "日活跃用户数").locator(".dashboard-metric-card__value")).toContainText("108");
   control.fail = true; await page.getByRole("button", { name: "刷新看板", exact: true }).click();
-  await expect(page.getByText("刷新失败，真实区域保留上次结果。")).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "刷新失败，真实区域保留上次结果。" })).toContainText("请求编号：qa-timeout");
   await expect(card(page, "日活跃用户数").locator(".dashboard-metric-card__value")).toContainText("108");
+});
+
+for (const [environment, label] of [["test", "测试数据"], ["production", "正式数据"]] as const) {
+  test(`真实导出弹窗按查询快照标记${label}，演示下载保持独立`, async ({ page }) => {
+    if (environment === "test") await page.addInitScript(() => sessionStorage.setItem("ypbi.data-environment.v1:00000000-0000-4000-8000-000000000001", "test"));
+    const control = await fixtures(page, { export: true });
+    await page.goto(url("5.8"));
+    await expect(card(page, "日活跃用户数").locator(".dashboard-metric-card__value")).toContainText("108");
+    await page.getByRole("button", { name: "导出活跃与留存", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "导出活跃与留存", exact: true });
+    await expect(dialog).toContainText(`${label} · Pornhub`);
+    await expect(dialog).not.toContainText("正式查询未接入");
+    await expect(dialog).toContainText("演示样例为固定合成数据");
+    await expect(dialog.getByRole("button", { name: "下载真实 XLSX", exact: true })).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "下载演示 XLSX", exact: true })).toBeEnabled();
+    expect(control.calls.some(call => call.boardId === "5.8")).toBe(true);
+    for (const width of [1280, 1024, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(await dialog.evaluate(el => { const rect = el.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth; })).toBe(true);
+      await dialog.screenshot({ path: `/private/tmp/ypbi-export-${environment}-${width}.png` });
+    }
+    const download = page.waitForEvent("download");
+    await dialog.getByRole("button", { name: "下载真实 XLSX", exact: true }).click();
+    const file = await download;
+    const workbook = readFileSync((await file.path())!, "utf8");
+    expect(workbook).toContain(label);
+    expect(workbook).not.toContain("演示数据");
+  });
+}
+
+test("阅读者导出提示保留真实查询来源，不把权限不足写成接口未接入", async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem("ypbi.data-environment.v1:00000000-0000-4000-8000-000000000001", "test"));
+  await fixtures(page);
+  await page.goto(url("5.8"));
+  await expect(card(page, "日活跃用户数").locator(".dashboard-metric-card__value")).toContainText("108");
+  await page.getByRole("button", { name: "导出活跃与留存", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导出活跃与留存", exact: true });
+  await expect(dialog).toContainText("测试数据 · Pornhub");
+  await expect(dialog).toContainText("当前账号没有真实结果导出权限");
+  await expect(dialog).not.toContainText("正式查询未接入");
+  await expect(dialog.getByRole("button", { name: "下载真实 XLSX", exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "下载演示 XLSX", exact: true })).toBeEnabled();
 });
 
 test("支付总体真分母、支付方式真实计数隔离及阅读者导出限制", async ({ page }) => {
@@ -482,7 +551,7 @@ test("真实落地诊断沿用结束日与独立参考日，详情导出不回�
 });
 
 test("获客来源、支付结构、签到和留存使用真实切片，混合模块标明来源",async({page})=>{
-  await fixtures(page,{export:true});
+  await fixtures(page,{export:true,typeStatistics:true});
   await page.goto(url("5.7"));
   await expect(card(page,"新增用户数").locator(".dashboard-metric-card__value")).toContainText("28");
   const sources=page.locator(".dashboard-panel").filter({has:page.getByRole("heading",{name:"新增来源比较",exact:true})});
@@ -490,8 +559,12 @@ test("获客来源、支付结构、签到和留存使用真实切片，混合�
   const typeDetail=page.locator('[data-acquisition-section="type"]');
   await expect(typeDetail).toContainText("待验数");
   await expect(typeDetail.locator("tbody")).toContainText("84");
-  await expect(page.locator('[data-acquisition-section="channel"]')).toContainText("演示数据");
-  await expect(page.locator('[data-acquisition-section="target"]')).toContainText("演示数据");
+  for (const key of ["channel", "target"]) {
+    const unreturned = page.locator(`[data-acquisition-section="${key}"]`);
+    await expect(unreturned).toHaveAttribute("data-data-origin", "unavailable");
+    await expect(unreturned).toContainText("维度待接入");
+    await expect(unreturned.locator(".data-origin-badge--demo")).toHaveCount(0);
+  }
   await page.goto(url("5.10","&compare=previous"));
   const product=page.locator(".dashboard-panel").filter({has:page.getByRole("heading",{name:"商品与分端收入",exact:true})});
   await expect(product).toContainText("元");
@@ -509,7 +582,7 @@ test("获客来源、支付结构、签到和留存使用真实切片，混合�
 });
 
 test("增长三块同屏时真实获客类型的详情与局部导出保持来源隔离", async ({page}) => {
-  await fixtures(page, {export:true});
+  await fixtures(page, {export:true,typeStatistics:true});
   await page.goto(url("5.7", "&compare=previous"));
   const types = page.locator('[data-acquisition-section="type"]');
   await expect(types.locator(".data-origin-badge--pending")).toHaveText("待验数");
@@ -533,16 +606,21 @@ test("增长三块同屏时真实获客类型的详情与局部导出保持来�
   const path = "/private/tmp/ypbi-acquisition-type-live.xlsx"; await download.saveAs(path);
   const raw = readFileSync(path).toString();
   expect(raw).toContain("2026-09-02"); expect(raw).toContain("2026-08-26"); expect(raw).toContain("待验数"); expect(raw).toContain("PH"); expect(raw).not.toContain("演示数据"); expect(raw).not.toContain("来源渠道"); expect(raw).not.toContain("下载目标");
-  for (const key of ["channel", "target"]) await expect(page.locator(`[data-acquisition-section="${key}"] .data-origin-badge--demo`)).toHaveText("演示数据");
+  for (const key of ["channel", "target"]) {
+    const unreturned = page.locator(`[data-acquisition-section="${key}"]`);
+    await expect(unreturned).toHaveAttribute("data-data-origin", "unavailable");
+    await expect(unreturned).toContainText("维度待接入");
+    await expect(unreturned.locator(".data-origin-badge--demo")).toHaveCount(0);
+  }
 });
 
 for (const missing of [false, true]) test(`增长同屏真实类型${missing ? "缺失不补演示值" : "零值保留0"}`, async ({page}) => {
-  await fixtures(page, {zeroTypes:!missing,emptyEnd:missing});
+  await fixtures(page, {zeroTypes:!missing,emptyEnd:missing,typeStatistics:true});
   await page.goto(url("5.7"));
   const types = page.locator('[data-acquisition-section="type"]');
   await expect(types.getByRole("button", {name:"自然新增 · 新增用户数详情",exact:true})).toHaveText(missing ? "—" : "0");
   await expect(types.getByRole("button", {name:"内部导量 · 新增用户数详情",exact:true})).toHaveText(missing ? "—" : "0");
-  await expect(types).toContainText(missing ? "本期部分日期未返回" : "待验数");
+  await expect(types).toContainText(missing ? "当日未返回记录" : "待验数");
   await types.getByRole("button", {name:"导出获客类型",exact:true}).click();
   await expect(page.getByRole("dialog", {name:"导出获客类型",exact:true}).getByRole("button", {name:"下载 XLSX",exact:true})).toBeDisabled();
 });
@@ -588,6 +666,8 @@ test("真实经营明细不混入演示来源，下载保留全部计算输入",
   expect(xml).not.toContain("演示数据");
   expect(xml).not.toContain("小红书");
   await page.getByRole("button",{name:"导出核心经营总览",exact:true}).click();
+  await expect(page.getByRole("dialog")).toContainText("正式数据 · Pornhub");
+  await expect(page.getByRole("dialog")).not.toContainText("正式查询未接入");
   const realEvent=page.waitForEvent("download");
   await page.getByRole("dialog").getByRole("button",{name:"下载真实 XLSX",exact:true}).click();
   expect((await realEvent).suggestedFilename()).toBe("核心经营总览-待验数.xlsx");

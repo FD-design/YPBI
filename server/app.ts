@@ -609,7 +609,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     identityProvider,
     metricQueryService: v2MetricQueryService,
     dailyDashboardService: (env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1") || previewEnabled
-      ? new DailyDashboardService(upstream)
+      ? new DailyDashboardService(upstream, undefined, app.log)
       : undefined,
     productionDailyDashboardEnabled: env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1",
     dataEnvironmentResolver: {

@@ -4,7 +4,7 @@ import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
 import { GroupedTrend } from "../features/dashboards/GroupedTrend";
 import { DataOriginProvider, DataOriginBadge } from "../components/DataOrigin";
 import { LiveSeriesDetails } from "../features/dashboards/ConnectedMetricCard";
-import { liveCalculation, liveExportMetadata, livePointStateLabel, liveValue, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveCalculation, liveExportMetadata, liveDataEnvironment, livePointStateLabel, liveValue, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
 import { CHART_PALETTE } from "../../theme/tokens";
@@ -23,7 +23,7 @@ export function ConnectedAdvertising({ live, audience, onAudience, onOpen, id, s
   const previous = live.comparison?.state.status === "success" ? live.comparison.state.data : null;
   const previousSeries = previous?.data.series.find(series => series.metric.id === projections[id]);
   const detail = (metric: string) => { const value = row(metric); onOpen(value.series?.metric.name ?? topicMetric(metric).name, value.series && value.result ? <LiveSeriesDetails series={value.series} result={value.result} /> : <p>{value.state}</p>); };
-  const exported = <PreviewExportControl name="广告点击表现" scope="广告、导航广告与总点击的逐日结果及计算输入" context={`${range.start} 至 ${range.end} · ${live.platformName} · 待验数`} dataOrigin="live" pending={live.state.status !== "success" || !live.canExport || live.controls.dirty} onDownloadPreview={() => {
+  const exported = <PreviewExportControl name="广告点击表现" scope="广告、导航广告与总点击的逐日结果及计算输入" context={`${range.start} 至 ${range.end} · ${live.platformName} · 待验数`} dataOrigin="live" dataEnvironment={liveDataEnvironment(live)} pending={live.state.status !== "success" || !live.canExport || live.controls.dirty} onDownloadPreview={() => {
     if (live.state.status !== "success" || !live.canExport || live.controls.dirty) return;
     const ids = [...Object.values(projections), ...navigation];
     downloadPreviewWorkbook("广告点击表现", [{ name: "数据说明", rows: [...liveExportMetadata(live), ["数据性质", "真实后台结果，待验数"], ["完整性", "未知"], ["水位", "未返回"], ["平台", live.query.pid], ["查询时间", live.state.data.data.fetchedAt]] },

@@ -131,7 +131,9 @@ export class UpstreamClient {
       this.pruneResponseCache();
       this.responseCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
       return value;
-    }).finally(() => this.inFlight.delete(cacheKey));
+    }).finally(() => {
+      if (this.inFlight.get(cacheKey) === request) this.inFlight.delete(cacheKey);
+    });
     this.inFlight.set(cacheKey, request);
     return request;
   }

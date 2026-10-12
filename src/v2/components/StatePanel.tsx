@@ -6,6 +6,11 @@ import { hideInternalReferenceCodes } from "../features/metrics/metric-presentat
 
 type StateKind = "loading" | "identity_unavailable" | "unauthenticated" | "forbidden" | "error" | "empty";
 
+export function RequestFailureDetails({ code, requestId }: { code?: string; requestId?: string }) {
+  const details = [code ? `错误代码：${code}` : null, requestId ? `请求编号：${requestId}` : null].filter(Boolean).join(" · ");
+  return details ? <small>{details}</small> : null;
+}
+
 const ICONS = {
   identity_unavailable: DatabaseZap,
   unauthenticated: CircleUserRound,
@@ -37,8 +42,7 @@ export function StatePanel({
     <div>
       <h2>{hideInternalReferenceCodes(title)}</h2>
       <p>{hideInternalReferenceCodes(description)}</p>
-      {code && <small>错误代码：{code}</small>}
-      {requestId && <small>请求 ID：{requestId}</small>}
+      <RequestFailureDetails code={code} requestId={requestId} />
     </div>
     {action && <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={action.onClick}><RefreshCw aria-hidden="true" />{action.label}</button>}
   </section>;

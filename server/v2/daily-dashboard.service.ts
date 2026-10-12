@@ -407,19 +407,49 @@ const rowSchema = z.object({ pid: z.string(), sumDate: z.string() }).loose();
 const envelopeSchema = z.object({ msg: z.object({ pageData: z.array(rowSchema) }).loose() }).loose();
 const failedPlaybackGroups = (error: unknown) => unavailableBiV1PlaybackGroups(error instanceof UpstreamError
   && ["BI_V1_RESPONSE_INVALID", "BI_V1_SCOPE_CONFLICT", "BI_V1_VALUE_CONFLICT"].includes(error.code) ? "invalid_response" : "source_failure");
+type SourceReadDiagnostics = {
+  sourceId: "daily" | "cohort" | "payment" | "channel" | "checkin" | "watch" | "playback" | "metrics" | "monthly" | "acquisition";
+  durationMs: number;
+  readCallCount: number;
+  successfulReadCallCount: number;
+  failedReadCallCount: number;
+};
+type DailyDashboardLogger = { info(fields: { queryId: string; boardId: string; sources: SourceReadDiagnostics[] }, message: string): void };
 export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery): Promise<DailyDashboardSuccess> }
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
-  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date()) {}
+  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger) {}
   async execute(query: DailyDashboardQuery): Promise<DailyDashboardV2Success> {
     const fetchedAt = this.now().toISOString();
     const ids = boardMetrics[query.boardId] ?? [];
     if (!ids.length) throw new UpstreamError("DAILY_BOARD_NOT_READY", "该看板尚无可读取的日数据", 422);
+    const sourceDiagnostics: SourceReadDiagnostics[] = [];
+    const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: Pick<UpstreamClient, "get">) => Promise<T>): Promise<T> => {
+      if (!this.logger) return read(this.client);
+      const startedAt = performance.now();
+      const source = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0 };
+      sourceDiagnostics.push(source);
+      try {
+        return await read({ get: async (...args) => {
+          source.readCallCount++;
+          try {
+            const result = await this.client.get(...args);
+            source.successfulReadCallCount++;
+            return result;
+          } catch (error) {
+            source.failedReadCallCount++;
+            throw error;
+          }
+        } });
+      } finally {
+        source.durationMs = Math.max(0, performance.now() - startedAt);
+      }
+    };
     const sourceIds = sourceMetricIds(ids);
     const byDate = new Map<string, z.infer<typeof rowSchema>>();
     let dailyFailure = false;
-    const dailyTask = (async () => { if (!sourceApis(ids).includes(P_DAY_SUM_API)) return; try {
-    const payload = await this.client.get(P_DAY_SUM_API, { page: "1", count: "500", pid: query.pid,
+    const dailyTask = readSource("daily", async (client) => { if (!sourceApis(ids).includes(P_DAY_SUM_API)) return; try {
+    const payload = await client.get(P_DAY_SUM_API, { page: "1", count: "500", pid: query.pid,
       sumDateStart: query.dateRange[0] + " 00:00:00", sumDateEnd: query.dateRange[1] + " 23:59:59" });
     const parsed = envelopeSchema.safeParse(payload);
     if (!parsed.success) throw badSource();
@@ -436,13 +466,13 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       if (!z.iso.date().safeParse(date).success || row.pid !== query.pid || date < query.dateRange[0] || date > query.dateRange[1] || byDate.has(date)) throw badSource();
       byDate.set(date, row);
     }
-    } catch { dailyFailure = true; byDate.clear(); } })();
+    } catch { dailyFailure = true; byDate.clear(); } });
     const cohorts = new Map<string, z.infer<typeof rowSchema>>();
     const needsCohorts = sourceIds.some(id => mappings[id].cohortDays);
     let cohortFailure = false;
-    const cohortTask = (async () => { if (needsCohorts) {
+    const cohortTask = readSource("cohort", async (client) => { if (needsCohorts) {
       try {
-        const payload = await this.client.get(RETENTION_PLUS_API, { pid: query.pid, registerDate: query.dateRange[0] + " 00:00:00", registerEdDate: query.dateRange[1] + " 23:59:59" });
+        const payload = await client.get(RETENTION_PLUS_API, { pid: query.pid, registerDate: query.dateRange[0] + " 00:00:00", registerEdDate: query.dateRange[1] + " 23:59:59" });
         const result = z.object({ data: z.array(rowSchema) }).loose().parse(payload);
         for (const row of result.data) {
           const date = toBeijingDate(row.sumDate);
@@ -450,7 +480,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           cohorts.set(date, row);
         }
       } catch { cohortFailure = true; cohorts.clear(); }
-    } })();
+    } });
     const today = toBeijingDate(fetchedAt);
     const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
     const channelDays = new Map<string, Record<string, unknown>>();
@@ -458,13 +488,13 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const needsChannel = sourceIds.some(id => mappings[id].channel);
     const needsPayment = sourceIds.some(id => mappings[id].payment);
     const paymentDays = new Map<string, Record<string, unknown>>(), paymentFailures = new Set<string>();
-    const paymentTask = (async () => { if (needsPayment) {
+    const paymentTask = readSource("payment", async (client) => { if (needsPayment) {
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, days) }, async () => {
         while (next < days) {
           const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0,10);
           try {
-            const result = z.object({ msg: z.object({ pageData:z.array(z.object({sumDate:z.string()}).loose()) }).loose() }).loose().parse(await this.client.get(PAYMENT_RATE_API,{pid:query.pid,startTime:date+" 00:00:00",endTime:date+" 23:59:59",page:"1",count:"100"}));
+            const result = z.object({ msg: z.object({ pageData:z.array(z.object({sumDate:z.string()}).loose()) }).loose() }).loose().parse(await client.get(PAYMENT_RATE_API,{pid:query.pid,startTime:date+" 00:00:00",endTime:date+" 23:59:59",page:"1",count:"100"}));
             assertScopeEcho(result.msg, query.pid, date);
             result.msg.pageData.forEach(row => assertScopeEcho(row, query.pid, date));
             if(result.msg.pageData.some(row=>toBeijingDate(row.sumDate)!==date))throw badSource();
@@ -472,14 +502,14 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           } catch { paymentFailures.add(date); }
         }
       }));
-    } })();
-    const channelTask = (async () => { if (needsChannel) {
+    } });
+    const channelTask = readSource("channel", async (client) => { if (needsChannel) {
       let next = 0;
       const worker = async () => {
         while (next < days) {
           const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0, 10);
           try {
-            const result = z.object({ msg: z.object({ pageData: z.array(rowSchema), totalData: z.array(z.record(z.string(), z.unknown())).max(1) }).loose() }).loose().parse(await this.client.get(CHANNEL_V2_API, {
+            const result = z.object({ msg: z.object({ pageData: z.array(rowSchema), totalData: z.array(z.record(z.string(), z.unknown())).max(1) }).loose() }).loose().parse(await client.get(CHANNEL_V2_API, {
               pid: query.pid, page: "1", count: "1", sumDateBegin: date + " 00:00:00", sumDateEnd: date + " 23:59:59"
             }));
             if (result.msg.pageData.some(row => row.pid !== query.pid || toBeijingDate(row.sumDate) !== date)) throw badSource();
@@ -492,16 +522,16 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         }
       };
       await Promise.all(Array.from({ length: Math.min(3, days) }, worker));
-    } })();
+    } });
     const checkinDays = new Map<string, Record<string, unknown>>(), checkinFailures = new Set<string>();
-    const checkinTask = (async () => {
+    const checkinTask = readSource("checkin", async (client) => {
       if (!sourceIds.some(id => mappings[id].checkin)) return;
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, days) }, async () => {
         while (next < days) {
           const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0, 10);
           try {
-            const payload = await this.client.get(CHECKIN_OVERVIEW_API, { pid: query.pid, date });
+            const payload = await client.get(CHECKIN_OVERVIEW_API, { pid: query.pid, date });
             const result = z.object({ msg: z.object({ date: z.string() }).loose() }).loose().parse(payload);
             if (result.msg.date !== date) throw badSource();
             assertScopeEcho(result.msg, query.pid, date);
@@ -509,28 +539,28 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           } catch { checkinFailures.add(date); }
         }
       }));
-    })();
+    });
     const watchDays = new Map<string, WatchAttemptDay>(), watchFailures = new Set<string>();
-    const watchTask = (async () => {
+    const watchTask = readSource("watch", async (client) => {
       if (!sourceIds.some(id => mappings[id].realtime)) return;
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, days) }, async () => {
         while (next < days) {
           const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0, 10);
           if (date >= today) { watchDays.set(date, { state: "no_value", value: null }); continue; }
-          try { watchDays.set(date, await readWatchAttemptDay(this.client, query.pid, date)); }
+          try { watchDays.set(date, await readWatchAttemptDay(client, query.pid, date)); }
           catch { watchFailures.add(date); }
         }
       }));
-    })();
+    });
     const playbackDays = new Map<string, BiV1PlaybackDay>();
     let playbackFailure = false;
     let playbackGroups: DailyPlaybackGroups | undefined;
-    const playbackTask = (async () => {
+    const playbackTask = readSource("playback", async (client) => {
       if (!sourceIds.some(id => mappings[id].biV1Playback)) return;
       try {
         const scope = { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] };
-        const message = await queryBiV1Playback(this.client, scope);
+        const message = await queryBiV1Playback(client, scope);
         if (query.boardId === "5.12") {
           try { playbackGroups = this.projectPlaybackGroups(message, scope, today, playbackGroupMetric); }
           catch (error) { playbackGroups = failedPlaybackGroups(error); }
@@ -542,9 +572,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         playbackDays.clear();
         if (query.boardId === "5.12") playbackGroups = failedPlaybackGroups(error);
       }
-    })();
+    });
     const biV1MetricDays = new Map<string, BiV1MetricDay>();
-    const biV1MetricTask = (async () => {
+    const biV1MetricTask = readSource("metrics", async (client) => {
       const groups = new Map<string, { filters: BiV1MetricDimensionFilters; codes: Set<BiV1MetricCode> }>();
       for (const id of sourceIds) {
         const mapping = mappings[id];
@@ -561,7 +591,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         while (next < requests.length) {
           const group = requests[next++];
           try {
-            const result = await readBiV1MetricDays(this.client, {
+            const result = await readBiV1MetricDays(client, {
               pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1],
               metricCodes: [...group.codes],
               expectedRuleVersions: VALUE_RULE_VERSIONS,
@@ -587,12 +617,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           }
         }
       }));
-    })();
+    });
     const monthlyDays = new Map<string, BiV1MetricDay>();
-    const monthlyTask = (async () => {
+    const monthlyTask = readSource("monthly", async (client) => {
       if (!sourceIds.includes("M018")) return;
       try {
-        const result = await readBiV1MonthlyMetricDays(this.client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] }, today);
+        const result = await readBiV1MonthlyMetricDays(client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] }, today);
         result.days.forEach(day => monthlyDays.set(day.date, day));
       } catch {
         for (let i = 0; i < days; i++) {
@@ -600,8 +630,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           monthlyDays.set(date, { date, metrics: { M018: { state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null } } });
         }
       }
-    })();
-    const acquisitionTask = query.boardId === "5.7" ? readBiV1AcquisitionGroups(this.client, query, acquisitionMetric) : Promise.resolve(undefined);
+    });
+    const acquisitionTask = readSource("acquisition", async (client) => query.boardId === "5.7" ? readBiV1AcquisitionGroups(client, query, acquisitionMetric) : undefined);
     const [acquisitionGroups] = await Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, channelTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
     const pointCache = new Map<string, DailyPoint>();
     const pointFor = (id: CandidateId, date: string): DailyPoint => {
@@ -708,7 +738,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         if (mapping.unit === "%" && !mapping.allowAboveOne && denominator !== undefined && denominator !== null && numerator > denominator) return { date, value: null, state: "invalid_value", inputs };
         return { date, value: (denominator == null ? numerator : numerator / denominator) / (mapping.resultDivisor ?? 1), state: "available", inputs };
     };
-    return dailyDashboardV2SuccessSchema.parse({ success: true, data: {
+    const result = dailyDashboardV2SuccessSchema.parse({ success: true, data: {
       schemaVersion: DAILY_DASHBOARD_VERSION, query, queryId: randomUUID(), fetchedAt,
       timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: sourceApis(ids),
       ...(acquisitionGroups ? { acquisitionGroups } : {}),
@@ -718,5 +748,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         return { metric: metric(id), points, periodStatistics: periodStatistics(id, points, query, today) };
       })
     } });
+    try {
+      this.logger?.info({ queryId: result.data.queryId, boardId: query.boardId, sources: sourceDiagnostics.filter(source => source.readCallCount > 0) }, "daily dashboard source reads completed");
+    } catch { /* Query results remain available when diagnostic logging fails. */ }
+    return result;
   }
 }
