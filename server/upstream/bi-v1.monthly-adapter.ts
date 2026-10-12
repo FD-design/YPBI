@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { UpstreamError, type UpstreamClient } from "./client";
+import { monthlyQueryScopes } from "../../contracts/monthly-query-scope";
 import {
   queryBiV1Metrics,
   type BiV1MetricDataStatus,
@@ -19,12 +20,6 @@ export interface BiV1MonthlyMetricDay extends BiV1MetricDay {
 
 function shiftedDate(date: string, days: number) {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
-}
-
-function nextMonth(monthStart: string) {
-  const date = new Date(`${monthStart}T00:00:00Z`);
-  date.setUTCMonth(date.getUTCMonth() + 1);
-  return date.toISOString().slice(0, 10);
 }
 
 function emptyPoint(state: BiV1MetricPoint["state"], dataStatus: BiV1MetricDataStatus | null = null): BiV1MetricPoint {
@@ -70,13 +65,10 @@ export async function readBiV1MonthlyMetricDays(
     daysByDate.set(date, day);
   }
 
-  const yesterday = shiftedDate(today, -1);
-  for (let queryStart = `${query.startDate.slice(0, 7)}-01`; queryStart <= query.endDate; queryStart = nextMonth(queryStart)) {
-    const monthEnd = shiftedDate(nextMonth(queryStart), -1);
-    const anchor = daysByDate.get(query.endDate < monthEnd ? query.endDate : monthEnd)!;
-    const queryEnd = monthEnd < yesterday ? monthEnd : yesterday;
-    const selectedStart = query.startDate > queryStart ? query.startDate : queryStart;
-    if (queryEnd < selectedStart) {
+  for (const scope of monthlyQueryScopes(query.startDate, query.endDate, today)) {
+    const { queryStart, queryEnd } = scope;
+    const anchor = daysByDate.get(scope.anchor)!;
+    if (!queryStart || !queryEnd) {
       anchor.metrics.M018 = emptyPoint("no_value");
       continue;
     }

@@ -8,6 +8,8 @@ export interface DetailedTrendData {
   kind: "line" | "bar";
   unit: string;
   dates: string[];
+  /** Short axis labels; tooltips retain the exact dates or query ranges. */
+  dateLabels?: string[];
   values: (number | null)[];
   comparison?: { dates: string[]; values: (number | null)[]; unavailableReasons?: (string | undefined)[] } | null;
 }
@@ -38,7 +40,7 @@ export function detailedTrendOption(data: DetailedTrendData): ChartOption {
       return singleSeriesTooltip(date, current[index], ratio ? "%" : data.unit);
     } },
     legend: { bottom: 0, right: 8, selectedMode: false, itemWidth: 14, itemHeight: 8, textStyle: { fontSize: 11 }, data: compare ? ["当前期", "对比期"] : ["当前期"] },
-    xAxis: { type: "category", data: data.dates.map(date => date.slice(5)), boundaryGap: isBar || data.dates.length === 1, axisTick: { show: false }, axisLine: { show: false }, axisLabel: { fontSize: 11, interval: data.dates.length <= 7 ? 0 : "auto", hideOverlap: true, showMinLabel: true, showMaxLabel: true } },
+    xAxis: { type: "category", data: data.dateLabels ?? data.dates.map(date => date.slice(5)), boundaryGap: isBar || data.dates.length === 1, axisTick: { show: false }, axisLine: { show: false }, axisLabel: { fontSize: 11, interval: data.dates.length <= 7 ? 0 : "auto", hideOverlap: true, showMinLabel: true, showMaxLabel: true } },
     yAxis: { type: "value", scale: !isBar, min: extent?.min, max: extent?.max, interval: extent?.interval, minInterval: integerCount ? 1 : undefined, splitNumber: 3, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 11, formatter: ratio || integerCount ? (value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 6 }) + (ratio ? "%" : "") : undefined }, splitLine: { lineStyle: { color: "#edf0f4" } } },
     series: [...(compare ? [series("对比期", compare, true)] : []), series("当前期", current, false)]
   };

@@ -72,7 +72,7 @@ function DashboardMiniTrend({ model, onOpenTrendPoint }: Pick<DashboardMetricCar
   const axisLabels = chartAxisLabels(axisValues, isRatio ? 100 : 1, isRatio ? "%" : "");
   const axisWidth = Math.max(42, ...axisLabels.map(label => label.length * 6.5));
   const axisDates = (result.trend.current.length ? result.trend.current : result.trend.comparison ?? [])
-    .map((point) => point.actualDate);
+    .map((point) => model.metric.id === "M018" ? point.label : point.actualDate);
   const axisLabelStep = Math.max(1, Math.ceil((axisDates.length - 1) * 52 / Math.max(stageWidth * 224 / 240, 1)));
   const axisIndices = axisDates.flatMap((_, i) => i === 0 || i === axisDates.length - 1 || (i % axisLabelStep === 0 && axisDates.length - 1 - i >= axisLabelStep) ? [i] : []);
   const renderBars = (points: DashboardMetricTrendPoint[], series: "current" | "comparison") => points.flatMap((point, index) => {
@@ -148,7 +148,7 @@ function DashboardMiniTrend({ model, onOpenTrendPoint }: Pick<DashboardMetricCar
       /></FloatingHint>;
           })}
         </div>
-        <div className="dashboard-mini-trend__x-axis" aria-hidden="true">{axisIndices.map(index => <span key={`${axisDates[index]}-${index}`} style={{ left: `${axisDates.length === 1 ? 50 : index === 0 ? 0 : index === axisDates.length - 1 ? 100 : (8 + index * 224 / (axisDates.length - 1)) / 240 * 100}%`, translate: axisDates.length === 1 ? "-50% 0" : index === 0 ? "0 0" : index === axisDates.length - 1 ? "-100% 0" : "-50% 0" }}>{shortDate(axisDates[index])}</span>)}</div>
+        <div className="dashboard-mini-trend__x-axis" aria-hidden="true">{axisIndices.map(index => <span key={`${axisDates[index]}-${index}`} style={{ left: `${axisDates.length === 1 ? 50 : index === 0 ? 0 : index === axisDates.length - 1 ? 100 : (8 + index * 224 / (axisDates.length - 1)) / 240 * 100}%`, translate: axisDates.length === 1 ? "-50% 0" : index === 0 ? "0 0" : index === axisDates.length - 1 ? "-100% 0" : "-50% 0" }}>{model.metric.id === "M018" ? axisDates[index] : shortDate(axisDates[index])}</span>)}</div>
       </div>
     </div>
     <div className="dashboard-mini-trend__legend" aria-hidden="true"><span>当前期</span>{comparisonVisible && <span>对比期</span>}</div>

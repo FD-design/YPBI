@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DailyAcquisitionGroupResult, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
-import { ACQUISITION_GROUP_IDS, acquisitionGroupModel, acquisitionGroupWorkbook } from "./live-acquisition-groups";
+import { ACQUISITION_GROUP_IDS, acquisitionGroupBoardSheets, acquisitionGroupModel, acquisitionGroupWorkbook } from "./live-acquisition-groups";
 import { acquisitionDownloadModel, acquisitionDownloadPoints, acquisitionDownloadWorkbook } from "./acquisition-download-source";
 import { acquisitionDetailSource } from "./acquisition-detail-source";
 import { DEFAULT_ACQUISITION_FILTERS, acquisitionMetric } from "./acquisition-preview-model";
@@ -192,7 +192,7 @@ test("渠道与下载目标两期汇总和逐日导出保留原始比值，次�
   const live = reading(), before = reading(["2019-12-30", "2019-12-31"]);
   live.comparison = { label: "上一等长周期", query: before.query, state: before.state };
   for (const dimension of ["channel", "downloadPlatform"] as const) {
-    const sheets = acquisitionGroupWorkbook(live, dimension).slice(1);
+    const sheets = acquisitionGroupWorkbook(live, dimension).slice(1, 3);
     for (const sheet of sheets) {
       const rows = sheet.rows.slice(1);
       expect(new Set(rows.map(row => row[0]))).toEqual(new Set(["当前期", "对比期"]));
@@ -209,6 +209,146 @@ test("渠道与下载目标两期汇总和逐日导出保留原始比值，次�
       expect(sheets[1].rows[1][5]).toBe(0);
     }
   }
+});
+
+function withComparison() {
+  const live = reading(), before = reading(["2019-12-30", "2019-12-31"]);
+  for (const dimension of ["channel", "downloadPlatform"] as const) {
+    groups(before, dimension).groups.reverse();
+    for (const group of groups(before, dimension).groups) for (const series of group.series) {
+      series.summary.value = ["M001", "M003"].includes(series.metric.id) ? 20 : .2;
+      series.points.forEach(point => { point.value = ["M001", "M003"].includes(series.metric.id) ? 1 : .1; });
+    }
+  }
+  live.comparison = { label: "上一等长周期", query: before.query, state: before.state };
+  return { live, before };
+}
+function comparisonRow(live: LiveDashboardReading, dimension: "channel" | "downloadPlatform", id: string, granularity = "汇总", key = "RAW-X") {
+  const sheet = acquisitionGroupWorkbook(live, dimension).find(sheet => sheet.name.endsWith("比较"))!;
+  const values = sheet.rows.find((row, index) => index > 0 && row[0] === granularity && row[2] === key && row[3] === acquisitionMetric(id).name)!;
+  return Object.fromEntries(sheet.rows[0].map((header, index) => [String(header), values[index]]));
+}
+
+test("动态分组比较导出按原键和周期位置匹配，原始差值、百分比及百分点独立保留", () => {
+  const { live } = withComparison();
+  for (const dimension of ["channel", "downloadPlatform"] as const) {
+    expect(comparisonRow(live, dimension, "M003")).toMatchObject({ "当前值": 80, "基准值": 20, "差值（原始值）": 60, "变化率（%）或百分点": 300,
+      "单位": "次", "变化单位": "%", "当前来源状态": "READY", "基准来源状态": "READY", "当前规则版本": "actual/v3", "基准规则版本": "actual/v3" });
+    expect(comparisonRow(live, dimension, "M003", "逐日")).toMatchObject({ "当前日期区间": "2020-01-01", "基准日期区间": "2019-12-30", "当前值": 0, "基准值": 1, "差值（原始值）": -1, "变化率（%）或百分点": -100 });
+  }
+  expect(comparisonRow(live, "channel", "M005")).toMatchObject({ "当前值": .4, "基准值": .2, "差值（原始值）": .2, "变化率（%）或百分点": 20, "单位": "原始比值", "变化单位": "百分点" });
+  expect(comparisonRow(live, "channel", "M099")).toMatchObject({ "当前值": null, "差值（原始值）": null, "变化率（%）或百分点": null, "当前状态": "区间汇总待支持" });
+});
+
+test("计数零基准仍导出合法差值，比率零基准可计算百分点", () => {
+  const { live, before } = withComparison();
+  for (const id of ["M001", "M005"]) groups(before).groups.find(group => group.key === "RAW-X")!.series.find(series => series.metric.id === id)!.summary.value = 0;
+  expect(comparisonRow(live, "channel", "M001")).toMatchObject({ "基准值": 0, "差值（原始值）": 80, "变化率（%）或百分点": null });
+  expect(comparisonRow(live, "channel", "M005")).toMatchObject({ "基准值": 0, "差值（原始值）": .4, "变化率（%）或百分点": 40 });
+});
+
+test("逐日比较缺少对应位置时不借用基准期汇总", () => {
+  const live = reading(), before = reading(["2019-12-31", "2019-12-31"]);
+  live.comparison = { label: "独立对比", query: before.query, state: before.state };
+  const sheet = acquisitionGroupWorkbook(live, "channel").find(sheet => sheet.name.endsWith("比较"))!;
+  const row = sheet.rows.find(row => row[0] === "逐日" && row[2] === "RAW-X" && row[3] === acquisitionMetric("M001").name && row[4] === "2020-01-02")!;
+  expect(row.slice(7, 12)).toEqual([null, null, "次", null, null]);
+  expect(row.at(-1)).toBe("基准未返回");
+});
+
+for (const invalid of ["PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED", "missing source", "wrong rule", "missing rule", "blank rule", "wrong unit", "wrong authority", "wrong formula", "wrong input", "missing input", "missing group"] as const) test(`${invalid} 保留两期事实且不生成比较数值`, () => {
+  const { live, before } = withComparison(), group = groups(before).groups.find(group => group.key === "RAW-X")!, series = group.series.find(series => series.metric.id === "M005")!;
+  if (["PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED"].includes(invalid)) series.summary.sourceStatus = invalid as "PROCESSING";
+  else if (invalid === "missing source") delete series.summary.sourceStatus;
+  else if (invalid === "wrong rule") series.summary.ruleVersion = "other/v1";
+  else if (invalid === "missing rule") series.summary.ruleVersion = null;
+  else if (invalid === "blank rule") series.summary.ruleVersion = " ";
+  else if (invalid === "wrong unit") series.metric.unit = "次";
+  else if (invalid === "wrong authority") series.metric.authorityVersion = "other/v1";
+  else if (invalid === "wrong formula") series.metric.formula = "另一比例";
+  else if (invalid === "wrong input") series.metric.inputs[0].unit = "人";
+  else if (invalid === "missing input") series.summary.inputs[0].value = null;
+  else groups(before).groups = groups(before).groups.filter(item => item !== group);
+  expect(comparisonRow(live, "channel", "M005")).toMatchObject({ "当前值": .4, "差值（原始值）": null, "变化率（%）或百分点": null });
+  expect(acquisitionGroupWorkbook(live, "channel")[1].rows.some(row => row[0] === "当前期" && row[3] === "RAW-X" && row[5] === .4)).toBe(true);
+});
+
+test("单边缺组、请求失败、范围非READY与对比刷新失败保留对应状态和完整原键", () => {
+  const { live, before } = withComparison();
+  groups(before).groups[0].key = "baseline-only";
+  expect(comparisonRow(live, "channel", "M005", "汇总", "baseline-only")).toMatchObject({ "当前值": null, "基准值": .2, "差值（原始值）": null, "当前状态": "本期未返回该分组" });
+  groups(before).summary.state = "source_failure";
+  expect(comparisonRow(live, "channel", "M005")).toMatchObject({ "基准值": null, "差值（原始值）": null, "基准状态": "读取失败" });
+  groups(before).summary.state = "returned";
+  groups(before).summary.scopeStatuses = [{ metricId: "M005", sourceStatus: "SOURCE_INCOMPLETE" }];
+  expect(comparisonRow(live, "channel", "M005")).toMatchObject({ "基准值": null, "差值（原始值）": null, "基准来源状态": "SOURCE_INCOMPLETE" });
+  groups(before).summary.scopeStatuses = [];
+  if (before.state.status === "success") before.state.refreshError = { code: "FAILED", message: "failed" };
+  expect(comparisonRow(live, "channel", "M005")).toMatchObject({ "差值（原始值）": .2, "基准刷新状态": "刷新失败，保留上次查询结果" });
+});
+
+test("未对比不添加比较结果，启用但失败的对比保留空基准与失败状态", () => {
+  const live = reading();
+  expect(acquisitionGroupWorkbook(live, "channel").map(sheet => sheet.name)).toEqual(["数据说明", "来源渠道汇总", "来源渠道逐日"]);
+  const { live: compared } = withComparison();
+  compared.comparison!.state = { status: "failure", kind: "error", code: "FAILED", message: "failed" };
+  expect(comparisonRow(compared, "channel", "M005")).toMatchObject({ "当前值": .4, "基准值": null, "差值（原始值）": null, "基准状态": "读取失败" });
+});
+
+test("渠道表、悬停、详情和导出共用比较护栏，规则不一致不产生变化", () => {
+  const { live, before } = withComparison();
+  const render = () => {
+    const result = model(live), row = result.rows[0];
+    return {
+      table: renderToStaticMarkup(<ChannelQuality filters={DEFAULT_ACQUISITION_FILTERS} mixed detail={{ ...DEFAULT_ACQUISITION_VIEW.detail.sections.channel, showChange: "previous" }} pending={false} update={() => {}} open={() => {}} liveModel={result} />),
+      hint: renderToStaticMarkup(<LiveAcquisitionMetricHint row={row} id="M005" />),
+      detail: renderToStaticMarkup(<LiveAcquisitionMetricDetails row={row} id="M005" />)
+    };
+  };
+  let output = render();
+  for (const html of Object.values(output)) expect(html).toContain("+20.00 个百分点");
+  groups(before).groups.forEach(group => group.series.forEach(series => { series.summary.ruleVersion = "other/v1"; }));
+  output = render();
+  for (const html of Object.values(output)) { expect(html).not.toContain("+20.00 个百分点"); expect(html).toContain("不可比"); }
+  expect(output.hint).toContain("规则版本不一致"); expect(output.detail).toContain("规则版本不一致");
+  expect(comparisonRow(live, "channel", "M005")).toMatchObject({ "当前值": .4, "基准值": .2, "差值（原始值）": null, "变化率（%）或百分点": null });
+});
+
+test("下载目标表比较与同源导出一致，混版保留两期值但不计算变化", async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location: new URL("http://localhost/dashboards/public?board=5.7") } });
+  try {
+    const { AcquisitionDetailSection } = await import("./AcquisitionPreview"), { live, before } = withComparison();
+    const render = () => renderToStaticMarkup(<LiveDashboardContext.Provider value={live}><AcquisitionDetailSection dimension="target" filters={DEFAULT_ACQUISITION_FILTERS} comparisonEnabled mixed={false} open={() => {}} detail={{ ...DEFAULT_ACQUISITION_VIEW.detail.sections.target, showChange: "previous" }} update={() => {}} onExport={() => {}} pending={false} /></LiveDashboardContext.Provider>);
+    expect(render()).toContain("+300.00%");
+    groups(before, "downloadPlatform").groups.forEach(group => { group.series[0].summary.ruleVersion = "other/v1"; });
+    const html = render();
+    expect(html).toContain("80"); expect(html).toContain("不可比"); expect(html).not.toContain("+300.00%");
+    expect(comparisonRow(live, "downloadPlatform", "M003")).toMatchObject({ "当前值": 80, "基准值": 20, "差值（原始值）": null, "变化率（%）或百分点": null });
+  } finally { if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window"); }
+});
+
+test("整板与局部获客导出复用全部事实和比较，保留四路状态且说明Sheet不重名", async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location: new URL("http://localhost/dashboards/public?board=5.7") } });
+  let connectedBoardExportSheets: typeof import("./ConnectedBoard")["connectedBoardExportSheets"];
+  try { ({ connectedBoardExportSheets } = await import("./ConnectedBoard")); }
+  finally { if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window"); }
+  const { live } = withComparison(), board = connectedBoardExportSheets(live), grouped = acquisitionGroupBoardSheets(live);
+  for (const dimension of ["channel", "downloadPlatform"] as const) for (const sheet of acquisitionGroupWorkbook(live, dimension).slice(1)) {
+    expect(board.find(item => item.name === sheet.name)).toEqual(sheet);
+    expect(grouped.find(item => item.name === sheet.name)).toEqual(sheet);
+  }
+  expect(new Set(board.map(sheet => sheet.name)).size).toBe(board.length);
+  const channel = groups(live), download = groups(live, "downloadPlatform");
+  channel.day.state = "source_failure"; channel.summary.state = "empty"; download.day.state = "invalid_response";
+  const sheets = connectedBoardExportSheets(live);
+  expect(sheets.find(sheet => sheet.name === "来源渠道数据说明")!.rows).toContainEqual(["当前逐日请求状态", "source_failure"]);
+  expect(sheets.find(sheet => sheet.name === "来源渠道数据说明")!.rows).toContainEqual(["当前汇总请求状态", "empty"]);
+  expect(sheets.find(sheet => sheet.name === "下载目标数据说明")!.rows).toContainEqual(["当前逐日请求状态", "invalid_response"]);
+  expect(sheets.find(sheet => sheet.name === "下载目标数据说明")!.rows).toContainEqual(["当前汇总请求状态", "returned"]);
+  expect(sheets.find(sheet => sheet.name === "下载目标汇总")!.rows[1].slice(5, 7)).toEqual([80, "次"]);
+  expect(acquisitionGroupBoardSheets({ ...live, query: { ...live.query, boardId: "5.8" } })).toEqual([]);
 });
 
 test("动态渠道和下载目标悬停仅用紧凑读数，完整表格和导出留在点击详情", () => {

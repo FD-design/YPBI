@@ -3,13 +3,19 @@ import { DashboardCardModeControl } from "./DashboardCardMode";
 import { LiveHeaderExportContext, useLiveDashboard } from "./LiveDashboardContext";
 import type { DateRangeValue } from "../../../components/ui/date-range-model";
 
-function withAction(node: ReactNode, action: () => void, mode: "append" | "replace" = "append"): ReactNode {
+function withAction(node: ReactNode, action: () => void, mode: "append" | "replace" = "append", label?: string): ReactNode {
   if (!isValidElement(node)) return node;
-  const element = node as ReactElement<{ onClick?: (...args: unknown[]) => void; children?: ReactNode }>;
+  const element = node as ReactElement<{ onClick?: (...args: unknown[]) => void; children?: ReactNode; label?: string; content?: ReactNode; title?: string; "aria-label"?: string }>;
+  const presentation = label ? {
+    ...(typeof element.props.label === "string" ? { label } : {}),
+    ...(typeof element.props.content === "string" ? { content: label } : {}),
+    ...(typeof element.props.title === "string" ? { title: label } : {}),
+    ...(element.type === "button" || element.props["aria-label"] !== undefined ? { "aria-label": label } : {})
+  } : {};
   if (!element.props.onClick && element.type !== "button") {
-    return cloneElement(element, { children: isValidElement(element.props.children) ? withAction(element.props.children, action, mode) : Children.map(element.props.children, child => withAction(child, action, mode)) });
+    return cloneElement(element, { ...presentation, children: isValidElement(element.props.children) ? withAction(element.props.children, action, mode, label) : Children.map(element.props.children, child => withAction(child, action, mode, label)) });
   }
-  return cloneElement(element, { onClick: (...args: unknown[]) => { if (mode === "append") element.props.onClick?.(...args); action(); } });
+  return cloneElement(element, { ...presentation, ...(label && element.type === "button" && typeof element.props.children === "string" ? { children: label } : {}), onClick: (...args: unknown[]) => { if (mode === "append") element.props.onClick?.(...args); action(); } });
 }
 
 function samePresentation(target: ReactNode, source: ReactNode) {
@@ -49,5 +55,5 @@ export function DashboardActions({ favorite, copyLink, refresh, fullscreen, expo
   favorite?: ReactNode; copyLink?: ReactNode; refresh?: ReactNode; fullscreen?: ReactNode; exportAction?: ReactNode;
 }) {
   const live = useLiveDashboard();
-  return <><DashboardCardModeControl />{favorite}{copyLink}{live ? withAction(refresh, live.retry, "replace") : refresh}{fullscreen}<LiveHeaderExportContext.Provider value={Boolean(live)}>{exportAction}</LiveHeaderExportContext.Provider></>;
+  return <><DashboardCardModeControl />{favorite}{copyLink}{live ? withAction(refresh, live.retry, "replace", "刷新看板") : refresh}{fullscreen}<LiveHeaderExportContext.Provider value={Boolean(live)}>{exportAction}</LiveHeaderExportContext.Provider></>;
 }

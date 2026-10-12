@@ -55,7 +55,8 @@ test("四D1按各自人数显示参考百分比，正式三期和比较仍为空
     expect(selected(live, id).points.at(-1)).toMatchObject({ value: null, state: "no_value", sourceStatus: "SOURCE_INCOMPLETE" });
   }
   const rows = operatingLiveRows(live, { PH: live.state }), columns = operatingLiveColumns(live), sheet = operatingLiveExportRows(rows, columns, "2020-01-01");
-  const start = 3 + columns.length * 9;
+  const start = sheet[0].findIndex(cell => String(cell).endsWith("当日参考比率（%）"));
+  expect(start).toBeGreaterThanOrEqual(3 + columns.length * 9);
   expect(sheet[0].slice(start)).toHaveLength(24);
   expect(sheet[1].slice(start, start + 6)).toEqual([50, RETENTION_REFERENCE_LABEL, 50, RETENTION_REFERENCE_LABEL, 50, RETENTION_REFERENCE_LABEL]);
   expect(sheet[1].slice(start + 6, start + 12)).toEqual([100, RETENTION_REFERENCE_LABEL, 100, RETENTION_REFERENCE_LABEL, 100, RETENTION_REFERENCE_LABEL]);

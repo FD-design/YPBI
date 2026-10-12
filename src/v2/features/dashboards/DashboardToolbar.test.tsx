@@ -66,3 +66,26 @@ test("无原回调的原生按钮仍绑定正式重试", () => {
   action.click();
   expect(calls).toEqual(["retry"]);
 });
+
+test("真实刷新同步操作名与提示，演示刷新保留原名称", () => {
+  function Action({ label, onClick }: { label: string; onClick: () => void }) {
+    return <button aria-label={label} title={label} onClick={onClick}>{label}</button>;
+  }
+  const refresh = <Action label="刷新演示快照" onClick={() => {}} />;
+  const liveHtml = renderToStaticMarkup(<LiveDashboardContext.Provider value={reading(() => {})}><DashboardActions refresh={refresh} /></LiveDashboardContext.Provider>);
+  expect(liveHtml).toContain('aria-label="刷新看板"');
+  expect(liveHtml).toContain('title="刷新看板"');
+  expect(liveHtml).not.toContain("刷新演示快照");
+  const demoHtml = renderToStaticMarkup(<LiveDashboardContext.Provider value={null}><DashboardActions refresh={refresh} /></LiveDashboardContext.Provider>);
+  expect(demoHtml).toContain('aria-label="刷新演示快照"');
+});
+
+test("包装内的原生刷新按钮保留图标并同步标题和无障碍名称", () => {
+  const html = renderToStaticMarkup(<LiveDashboardContext.Provider value={reading(() => {})}>
+    <DashboardActions refresh={<span><button title="刷新演示快照" aria-label="刷新演示快照"><svg aria-hidden="true" /></button></span>} />
+  </LiveDashboardContext.Provider>);
+  expect(html).toContain('aria-label="刷新看板"');
+  expect(html).toContain('title="刷新看板"');
+  expect(html).toContain("<svg");
+  expect(html).not.toContain("刷新演示快照");
+});

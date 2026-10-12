@@ -9,6 +9,7 @@ import { livePeriodReadingStatistics } from "./live-period-statistics";
 import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, readableRegistrationCohortSeries, registrationMetricScopeLabel } from "./registration-cohort";
 import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
 import { metricNumberFormatOptions } from "../../../components/metric-number-format";
+import { isMonthlyMetric, liveMonthlySeriesRows, monthlyComparisonReason } from "./live-monthly-reading";
 
 export type LiveSeries = DailyDashboardSuccess["data"]["series"][number];
 export interface LiveDashboardReading {
@@ -88,13 +89,14 @@ export function liveDailyPoint(live: DailySources, metricId: string, date: strin
 }
 export function liveDailyReferenceRows(live: DailySources, metricIds: readonly string[]) {
   if (!live.comparison) return [];
-  return metricIds.filter(id => !isRegistrationRetentionMetric(id)).flatMap(id => dailyReferenceDates(live.query.dateRange[1]).map((date, i) => {
+  return metricIds.filter(id => !isRegistrationRetentionMetric(id) && !isMonthlyMetric(id)).flatMap(id => dailyReferenceDates(live.query.dateRange[1]).map((date, i) => {
     const point = liveDailyPoint(live, id, date);
     return { metricId: id, label: i === 0 ? "较前一天" : "较上周同日", ...point };
   }));
 }
 export function liveMetricModel(original: DashboardMetricCardModel, live: LiveDashboardReading): DashboardMetricCardModel {
   const model = liveIntervalMetricModel(original, live);
+  if (isMonthlyMetric(original.metric.id)) return liveMonthlyMetricModel(model, live);
   if (isRegistrationRetentionMetric(original.metric.id)) return periodMetricReading(model, `${live.query.dateRange.join(" 至 ")} · ${registrationMetricScopeLabel(original.metric.id)} · 已成熟注册批次`);
   const data = live.state.status === "success" ? live.state.data : null;
   const series = data?.data.series.find(item => item.metric.id === original.metric.id);
@@ -102,8 +104,64 @@ export function liveMetricModel(original: DashboardMetricCardModel, live: LiveDa
   return dailyMetricReading(model, { date: live.query.dateRange[1], compared: Boolean(live.comparison), read: date => liveDailyPoint(live, original.metric.id, date), statistics });
 }
 
+function liveMonthlyMetricModel(model: DashboardMetricCardModel, live: LiveDashboardReading): DashboardMetricCardModel {
+  const rowsFor = (state: LiveDashboardReading["state"] | NonNullable<LiveDashboardReading["comparison"]>["state"], query: DailyDashboardQuery) => {
+    const result = state.status === "success" ? state.data : null;
+    if (!result || !sameQuery(result, query)) return [];
+    const series = result.data.series.find(series => isMonthlyMetric(series.metric.id));
+    return series ? liveMonthlySeriesRows(series, result).filter(row => row.scope.month >= query.dateRange[0].slice(0, 7) && row.scope.month <= query.dateRange[1].slice(0, 7)) : [];
+  };
+  const rows = rowsFor(live.state, live.query);
+  const before = live.comparison ? rowsFor(live.comparison.state, live.comparison.query) : [];
+  const current = rows.at(-1);
+  const primaryLabel = current?.label ?? `${live.query.dateRange[1].slice(0, 7)} 自然月 · 查询范围尚未返回`;
+  const metric = { ...model.metric, aggregationLabel: `${primaryLabel} · ${live.platformName}` };
+  const base = model.result.status === "available" ? model.result : model.result.history;
+  const reading = { primaryLabel, comparisons: [] as import("./dashboard-metric-card-model").DashboardMetricComparison[], statistics: [] };
+  if (!base || !current) return { metric, result: { ...model.result, reading: { ...reading, comparisons: live.comparison ? [{ status: "unavailable", label: "较上一自然月", detail: "当前月或上一自然月未返回可比值。" }] : [] }, ...(model.result.status === "available" ? {} : {
+    contextLabel: primaryLabel, label: current?.point.state === "no_record" ? "本月未返回记录" : model.result.label,
+    message: current ? `主值 — · ${primaryLabel}。` : model.result.message
+  }) } };
+  type Row = typeof current;
+  const value = (row: Row | undefined) => row?.point.state === "available" && (!row.point.sourceStatus || row.point.sourceStatus === "READY") ? row.point.value : null;
+  const priorFor = (row: Row) => before.find(prior => !monthlyComparisonReason(row.scope, prior.scope));
+  const prior = priorFor(current);
+  const currentValue = value(current), priorValue = value(prior);
+  const unit = base.value.unit;
+  const reason = monthlyComparisonReason(current.scope, prior?.scope ?? before.at(-1)?.scope);
+  const comparison: import("./dashboard-metric-card-model").DashboardMetricComparison | null = !live.comparison ? null :
+    reason || currentValue === null || priorValue === null || priorValue === 0 ? {
+      status: "unavailable", label: "较上一自然月",
+      detail: live.comparison.state.status === "failure" ? "月度基准查询失败。" : reason ?? (priorValue === 0 ? "上一自然月基准为0，无法计算相对变化。" : "当前月或上一自然月未返回可比值。")
+    } : {
+      status: "available", label: "较上一自然月", kind: "relative_change",
+      display: ((currentValue - priorValue) / priorValue > 0 ? "+" : "") + liveValue((currentValue - priorValue) / priorValue, "%") + "%",
+      direction: currentValue > priorValue ? "up" : currentValue < priorValue ? "down" : "flat",
+      detail: `${current.label} 与 ${prior!.label} 的独立月度去重人数比较。查询截至日不代表上游数据水位。`,
+      notice: live.comparison.state.status === "success" && live.comparison.state.refreshError ? "对比期刷新失败，使用上次查询基准" : undefined,
+      rows: [{ label: "当前月", date: current.label, value: `${liveValue(currentValue, unit)} ${unit}` }, { label: "上一月", date: prior!.label, value: `${liveValue(priorValue, unit)} ${unit}` }]
+    };
+  const trendValue = (row: Row | undefined) => { const raw = value(row); return raw === null || !row ? null : { raw, display: liveValue(raw, unit), actualDate: row.label }; };
+  const pointFor = (row: Row, other?: Row, previous = false): import("./dashboard-metric-card-model").DashboardMetricTrendPoint => ({
+    key: row.scope.anchor, label: row.scope.month, actualDate: row.label, value: trendValue(row), counterpart: trendValue(other),
+    differenceDisplay: value(row) !== null && value(other) !== null ? difference(previous ? value(other)! : value(row)!, previous ? value(row)! : value(other)!, unit) : null,
+    state: row.point.state === "available" || row.point.state === "no_record" ? row.point.state : "no_value",
+    stateLabel: row.point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(row.point)
+  });
+  const paired = rows.map(row => ({ row, prior: live.comparison ? priorFor(row) : undefined }));
+  const result = { ...base, value: { ...base.value, raw: currentValue ?? base.value.raw, display: liveValue(currentValue, unit) }, comparison,
+    calculation: undefined, reading: { ...reading, comparisons: comparison ? [comparison] : [] },
+    trend: { current: paired.map(({ row, prior }) => ({ ...pointFor(row, prior), comparisonUnavailableReason: live.comparison && !prior ? "无合法月度基准" : undefined })),
+      comparison: paired.some(pair => pair.prior) ? paired.map(({ row, prior }) => prior ? pointFor(prior, row, true) : { ...pointFor(row), actualDate: "未返回月度基准", value: null, state: "no_value" as const, stateLabel: "无合法月度基准" }) : null } };
+  if (model.result.status !== "available") return { metric, result: { ...model.result, contextLabel: primaryLabel,
+    label: current.point.state === "no_record" ? "本月未返回记录" : model.result.label,
+    message: `主值 — · ${primaryLabel}。其他自然月结果见趋势和明细。`, reading: result.reading, history: result } };
+  return { metric, result };
+}
+
+const sameQuery = (data: DailyDashboardSuccess, query: DailyDashboardQuery) => data.data.query.pid === query.pid && data.data.query.boardId === query.boardId && data.data.query.dateRange[0] <= query.dateRange[0] && data.data.query.dateRange[1] >= query.dateRange[1];
+
 function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveDashboardReading): DashboardMetricCardModel {
-  const sameQuery = (data: DailyDashboardSuccess, query: DailyDashboardQuery) => data.data.query.pid === query.pid && data.data.query.boardId === query.boardId && data.data.query.dateRange[0] <= query.dateRange[0] && data.data.query.dateRange[1] >= query.dateRange[1];
   const source = live.state.status === "success" && sameQuery(live.state.data, live.query) ? live.state.data.data.series.find(series => series.metric.id === original.metric.id) : undefined;
   const series = source ? readableRegistrationCohortSeries(safeDiagnosticSeries({ ...source, points: source.points.filter(point => point.date >= live.query.dateRange[0] && point.date <= live.query.dateRange[1]) })) : undefined;
   const metric = { ...original.metric, aggregationLabel: `${live.query.dateRange[0]} 至 ${live.query.dateRange[1]} · ${live.platformName} · 业务日`,

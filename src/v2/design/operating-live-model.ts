@@ -7,6 +7,7 @@ import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../featu
 import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 import { metricNumberFormatOptions } from "../../components/metric-number-format";
 import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
+import { isMonthlyMetric, liveMonthlySeriesRows } from "../features/dashboards/live-monthly-reading";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
@@ -73,6 +74,17 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
           inputs: series?.metric.inputs.map(input => ({ ...input, value: readable(value) || diagnostic ? value?.inputs.find(value => value.key === input.key)?.value ?? null : null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote,
           ...(reference ? { referenceRatio: reference } : {}) };
       };
+      if (isMonthlyMetric(id)) {
+        const month = series && resource?.status === "success" ? liveMonthlySeriesRows(series, resource.data).find(row => row.scope.month === date.slice(0, 7)) : undefined;
+        const current = evidence(month?.scope.anchor ?? date);
+        const inapplicable = (day: string): DetailEvidence => ({ date: day, state: "not_applicable", label: "不适用日比较", fetchedAt: null, stale: false,
+          inputs: [], formula: null, unit: series?.metric.unit, sourceNote: "月活为自然月独立去重人数；日比较不使用月值，月度比较需要独立合法基准。" });
+        return { current: month ? resultValue(month.scope.anchor) : null, previousDay: null, previousWeek: null,
+          evidence: { current: { ...current, date: month?.label ?? `${date.slice(0, 7)} 自然月 · 查询范围尚未返回`,
+            label: current.state === "no_record" ? "本月未返回记录" : current.label,
+            sourceNote: [current.sourceNote, "实际查询截止不是来源数据水位；来源数据水位未返回。"].filter(Boolean).join(" ") },
+          previousDay: inapplicable(shiftDate(date, -1)), previousWeek: inapplicable(shiftDate(date, -7)) } };
+      }
       return { current: resultValue(date), previousDay: resultValue(shiftDate(date, -1)), previousWeek: resultValue(shiftDate(date, -7)),
         evidence: { current: evidence(date), previousDay: evidence(shiftDate(date, -1)), previousWeek: evidence(shiftDate(date, -7)) } };
     });
@@ -107,7 +119,10 @@ export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn
   const periods = ["current", "previousDay", "previousWeek"] as const;
   const labels = ["当日", "昨日", "上周同日"];
   const referenceColumns = columns.map((column, index) => ({ column, index })).filter(({ index }) => rows.some(row => periods.some(period => row.values[index]?.evidence?.[period].referenceRatio)));
-  return [["数据日", "业务平台", "PID", ...columns.flatMap(column => periods.flatMap((_, i) => [column.metric.name + "｜" + labels[i] + "（" + column.unit + "）", column.metric.name + "｜" + labels[i] + "状态", column.metric.name + "｜" + labels[i] + "查询时间"])),
+  const periodLabel = (column: DetailColumn, index: number) => isMonthlyMetric(column.metric.id) ? index === 0 ? "所属自然月" : `${labels[index]}（不适用）` : labels[index];
+  const monthlyColumns = columns.map((column, index) => ({ column, index })).filter(({ column }) => isMonthlyMetric(column.metric.id));
+  return [["数据日", "业务平台", "PID", ...columns.flatMap(column => periods.flatMap((_, i) => [column.metric.name + "｜" + periodLabel(column, i) + "（" + column.unit + "）", column.metric.name + "｜" + periodLabel(column, i) + "状态", column.metric.name + "｜" + periodLabel(column, i) + "查询时间"])),
+    ...monthlyColumns.map(({ column }) => `${column.metric.name}｜自然月实际查询范围（非数据水位）`),
     ...referenceColumns.flatMap(({ column }) => periods.flatMap((_, i) => [`${column.metric.name}｜${labels[i]}参考比率（%）`, `${column.metric.name}｜${labels[i]}参考说明`]))],
     ...rows.map(row => [date, row.name, row.pid, ...row.values.flatMap((value, i) => periods.flatMap(period => {
       const evidence = value.evidence?.[period];
@@ -117,7 +132,7 @@ export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn
         : value.state === "no_record" && period === "current" ? dashboardNoRecordLabels.day
         : "无可用结果";
       return [value[period] === null ? null : value[period]! * (columns[i].kind === "ratio" ? 100 : 1), status, evidence?.fetchedAt ?? null];
-    })), ...referenceColumns.flatMap(({ index }) => periods.flatMap(period => {
+    })), ...monthlyColumns.map(({ index }) => row.values[index]?.evidence?.current.date ?? "未返回"), ...referenceColumns.flatMap(({ index }) => periods.flatMap(period => {
       const reference = row.values[index]?.evidence?.[period].referenceRatio;
       return [reference ? reference.value * 100 : null, reference?.label ?? null];
     }))])];
@@ -128,10 +143,11 @@ export function operatingLiveCalculationRows(rows: DetailRow[], columns: DetailC
   const hasReferences = rows.some(row => row.values.some(value => periods.some(([period]) => value.evidence?.[period].referenceRatio)));
   return [["PID", "业务平台", "指标", "列键", "周期", "实际日期", "计算公式", "输入指标", "输入值", "输入单位", "状态", "查询时间", "刷新状态", "来源口径", ...(hasReferences ? ["参考比率（%）", "参考说明"] : [])],
     ...rows.flatMap(row => row.values.flatMap((value, index) => periods.flatMap(([period, label]) => {
+      if (isMonthlyMetric(columns[index].metric.id) && period !== "current") return [];
       const evidence = value.evidence?.[period];
       if (!evidence) return [];
       const inputs = evidence.inputs.length ? evidence.inputs : [{name:"来源未返回计算输入", value:null, unit:""}];
-      return inputs.map(input => [row.pid, row.name, columns[index].metric.name, detailColumnKey(columns[index]), label, evidence.date, evidence.formula,
+      return inputs.map(input => [row.pid, row.name, columns[index].metric.name, detailColumnKey(columns[index]), isMonthlyMetric(columns[index].metric.id) ? "所属自然月" : label, evidence.date, evidence.formula,
         input.name, input.value, input.unit, "待验数 · " + evidence.label, evidence.fetchedAt, evidence.stale ? "上次查询结果" : "本次查询结果", evidence.sourceNote ?? "",
         ...(hasReferences ? [evidence.referenceRatio ? evidence.referenceRatio.value * 100 : null, evidence.referenceRatio?.label ?? null] : [])]);
     })))];

@@ -85,3 +85,9 @@ test("明确不可比时保留两期图值和日期，tooltip不重新计算差�
   const comparable = detailedTrendOption({ kind: "line", unit: "%", dates: ["2020-01-01"], values: [.75], comparison: { dates: ["2019-12-31"], values: [.25] } });
   expect(comparable.tooltip.formatter([{ dataIndex: 0 }])).toContain("+50 个百分点");
 });
+
+test("自然月轴简写年月，提示保留实际查询范围", () => {
+  const option = detailedTrendOption({ kind: "line", unit: "人", dates: ["2020-02 自然月 · 2020-02-01 至 2020-02-29"], dateLabels: ["2020-02"], values: [9] });
+  expect(option.xAxis.data).toEqual(["2020-02"]);
+  expect(option.tooltip.formatter([{ dataIndex: 0 }])).toContain("2020-02-01 至 2020-02-29");
+});

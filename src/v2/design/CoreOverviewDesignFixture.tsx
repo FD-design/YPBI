@@ -332,21 +332,23 @@ function DetailMetricCell({ row, column, columnIndex, currentDate, previousDate,
   const currentLabel = operatingValueLabel(value, column);
   const previousLabel = operatingValueLabel(value, column, "previousDay", true);
   const weekLabel = operatingValueLabel(value, column, "previousWeek", true);
-  const explanation = `${row.name} · ${column.metric.name}：当前 ${currentLabel}；昨日 ${dateLabel(previousDate)} 为 ${previousLabel}${previousChange ? `，${previousChange.display}` : ""}；上周同日 ${dateLabel(previousWeekDate)} 为 ${weekLabel}${weekChange ? `，${weekChange.display}` : ""}。`;
+  const monthly = column.metric.id === "M018";
+  const actualRange = value.evidence?.current.date ?? `${currentDate.slice(0, 7)} 自然月 · 实际查询范围待返回`;
+  const explanation = monthly ? `${row.name} · ${column.metric.name}：${actualRange} · ${currentLabel}；不适用日比较。` : `${row.name} · ${column.metric.name}：当前 ${currentLabel}；昨日 ${dateLabel(previousDate)} 为 ${previousLabel}${previousChange ? `，${previousChange.display}` : ""}；上周同日 ${dateLabel(previousWeekDate)} 为 ${weekLabel}${weekChange ? `，${weekChange.display}` : ""}。`;
   const selectedChange = comparisonMode === "previousDay" ? previousChange : weekChange;
 
   const tooltip = value.state === "unsupported" ? <p>{column.pendingReason}</p> : <div className="core-review__detail-tooltip">
     <b className="core-review__tip-title">{row.name} · {column.metric.name}</b>
-    <div className="core-review__tip-current"><small>{currentDate}</small><strong>{currentLabel}</strong></div>
+    <div className="core-review__tip-current"><small>{monthly ? actualRange : currentDate}</small><strong>{currentLabel}</strong></div>
     {column.periodDays && <p>注册日 {currentDate} · 目标日 {retentionTargetDate(column, currentDate)}</p>}
-    <DetailComparisonLines current={value.current} baseline={value.previousDay} baselineLabel={previousLabel} kind={column.kind} unit={column.unit} label="较昨日" date={previousDate} onEmphasis />
-    <DetailComparisonLines current={value.current} baseline={value.previousWeek} baselineLabel={weekLabel} kind={column.kind} unit={column.unit} label="较上周同日" date={previousWeekDate} onEmphasis />
+    {monthly ? <p>不适用日比较；月度比较需要独立合法基准。实际查询截止不是来源数据水位。</p> : <><DetailComparisonLines current={value.current} baseline={value.previousDay} baselineLabel={previousLabel} kind={column.kind} unit={column.unit} label="较昨日" date={previousDate} onEmphasis />
+    <DetailComparisonLines current={value.current} baseline={value.previousWeek} baselineLabel={weekLabel} kind={column.kind} unit={column.unit} label="较上周同日" date={previousWeekDate} onEmphasis /></>}
   </div>;
   return <td className="is-number" data-column-key={detailColumnKey(column)}><FloatingHint className="core-review__cell-hint" content={tooltip}>
     <button type="button" className="core-review__detail-trigger" aria-label={explanation} onClick={(event) => onOpen({ row, column, columnIndex, trigger: event.currentTarget })}>
       <b className={value.state ? "is-unavailable" : undefined}>{value.evidence?.current.referenceRatio ? formatDetailValue(value.evidence.current.referenceRatio.value, "ratio") : currentLabel}</b>
       {value.evidence?.current.referenceRatio && <small>{value.evidence.current.referenceRatio.label}</small>}
-      {comparisonMode !== "none" && value.state !== "unsupported" && <small className="core-review__selected-change ui-metric-comparison"><ChangeValue direction={selectedChange?.direction ?? null}>{selectedChange?.display ?? "不可比"}</ChangeValue></small>}
+      {comparisonMode !== "none" && value.state !== "unsupported" && <small className="core-review__selected-change ui-metric-comparison"><ChangeValue direction={selectedChange?.direction ?? null}>{monthly ? "不适用日比较" : selectedChange?.display ?? "不可比"}</ChangeValue></small>}
     </button>
   </FloatingHint></td>;
 }
@@ -365,19 +367,20 @@ function DetailComparisonLines({ current, baseline, baselineLabel, kind, unit, l
 
 function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: SelectedDetail; date: string; live: boolean; onClose: () => void }) {
   const value = detail.row.values[detail.columnIndex];
+  const monthly = detail.column.metric.id === "M018";
   const hasReferences = Object.values(value.evidence ?? {}).some(evidence => evidence.referenceRatio);
   return <MetricReadingDialog title={detail.column.metric.name} onClose={onClose} content={<div className="core-review__snapshot-content">
-      <p>{detail.row.name} · {date} · {value.evidence ? "待验数" : live ? "待接口支持" : "演示数据"}</p>
-      <MetricSummary title={value.evidence?.current.referenceRatio ? "当日参考比率" : "当日结果"} value={operatingValueLabel(value, detail.column)} />
+      <p>{detail.row.name} · {monthly ? value.evidence?.current.date ?? `${date.slice(0, 7)} 自然月` : date} · {value.evidence ? "待验数" : live ? "待接口支持" : "演示数据"}</p>
+      <MetricSummary title={monthly ? "自然月结果" : value.evidence?.current.referenceRatio ? "当日参考比率" : "当日结果"} value={operatingValueLabel(value, detail.column)} />
       {detail.column.sourceLabel && <p>日报原字段：{detail.column.sourceLabel}（{detail.column.sourceColumn} 列） · 单位：{detail.column.unit}</p>}
       {detail.column.periodDays && <p>注册日 {date} · D{detail.column.periodDays} 目标日 {retentionTargetDate(detail.column, date)}。目标日完整观察结束后方可读取留存结果。</p>}
-      {detail.column.metric.id === "M018" && <p>自然月 {date.slice(0, 7)} · 数据截至日：待接口返回。月活为月内去重人数，不累加日活。</p>}
-      {detail.column.pendingReason ? <p>{detail.column.pendingReason}</p> : <>
+      {monthly && <p>{value.evidence?.current.date ?? `自然月 ${date.slice(0, 7)} · 实际查询范围待返回`}。实际查询截止不是来源数据水位；来源数据水位未返回。月活为月内独立去重人数，不累加日活。</p>}
+      {monthly ? <p>不适用日比较；月度比较需要独立合法基准。</p> : detail.column.pendingReason ? <p>{detail.column.pendingReason}</p> : <>
       <DetailComparisonLines current={value.current} baseline={value.previousDay} baselineLabel={operatingValueLabel(value, detail.column, "previousDay", true)} kind={detail.column.kind} unit={detail.column.unit} label="较昨日" date={shiftBusinessDate(date, -1)} />
       <DetailComparisonLines current={value.current} baseline={value.previousWeek} baselineLabel={operatingValueLabel(value, detail.column, "previousWeek", true)} kind={detail.column.kind} unit={detail.column.unit} label="较上周同日" date={shiftBusinessDate(date, -7)} />
       </>}
       <p>{detail.column.metric.definition}</p>
-      {value.evidence && <><p>{value.evidence.current.formula}</p><div className={hasReferences ? "core-review__snapshot-evidence" : undefined}><table className="ui-table"><thead><tr><th>日期</th><th>计算输入</th>{hasReferences && <><th>正式结果</th><th>参考比率</th></>}<th>状态</th><th>查询时间</th></tr></thead><tbody>{Object.entries(value.evidence).map(([period, evidence]) => <tr key={evidence.date}><td>{evidence.date}</td><td>{evidence.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ")}</td>{hasReferences && <><td>{formatDetailValue(value[period as "current" | "previousDay" | "previousWeek"], detail.column.kind, true, detail.column.unit)}</td><td>{evidence.referenceRatio ? <>{formatDetailValue(evidence.referenceRatio.value, "ratio")}<small className="core-review__reference-label">{evidence.referenceRatio.label}</small></> : "—"}</td></>}<td>{evidence.label}{evidence.stale ? " · 上次查询结果" : ""}</td><td>{evidence.fetchedAt ?? "—"}</td></tr>)}</tbody></table></div></>}
+      {value.evidence && <><p>{value.evidence.current.formula}</p><div className={hasReferences ? "core-review__snapshot-evidence" : undefined}><table className="ui-table"><thead><tr><th>{monthly ? "自然月与实际查询范围" : "日期"}</th><th>计算输入</th>{hasReferences && <><th>正式结果</th><th>参考比率</th></>}<th>状态</th><th>查询时间</th></tr></thead><tbody>{Object.entries(value.evidence).filter(([period]) => !monthly || period === "current").map(([period, evidence]) => <tr key={evidence.date}><td>{evidence.date}</td><td>{evidence.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ")}</td>{hasReferences && <><td>{formatDetailValue(value[period as "current" | "previousDay" | "previousWeek"], detail.column.kind, true, detail.column.unit)}</td><td>{evidence.referenceRatio ? <>{formatDetailValue(evidence.referenceRatio.value, "ratio")}<small className="core-review__reference-label">{evidence.referenceRatio.label}</small></> : "—"}</td></>}<td>{evidence.label}{evidence.stale ? " · 上次查询结果" : ""}</td><td>{evidence.fetchedAt ?? "—"}</td></tr>)}</tbody></table></div></>}
     </div>} />;
 }
 
