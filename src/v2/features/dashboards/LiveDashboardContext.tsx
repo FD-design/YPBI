@@ -8,7 +8,7 @@ import { dailyMetricReading, dailyReferenceDates, periodMetricReading, type Dail
 import { livePeriodReadingStatistics } from "./live-period-statistics";
 import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, readableRegistrationCohortSeries, registrationMetricScopeLabel } from "./registration-cohort";
 import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
-import { metricNumberFormatOptions } from "../../../components/metric-number-format";
+import { formatMetricNumber, metricNumberFormatOptions } from "../../../components/metric-number-format";
 import { isMonthlyMetric, liveMonthlySeriesRows, monthlyComparisonReason } from "./live-monthly-reading";
 import { dailyDashboardEnvironment, dataEnvironmentLabel } from "../../api/daily-dashboard-environment";
 import type { DataEnvironmentMode } from "../../api/dataEnvironmentPreference";
@@ -61,7 +61,7 @@ export const livePointStateLabel = (point: LiveSeries["points"][number], metric?
     : point.sourceStatus === "SOURCE_INCOMPLETE" ? "数据接入中"
       : point.sourceStatus === "FAILED" ? "数据异常"
         : liveStateLabel[point.state];
-export const liveValue = (value: number | null, unit: string) => value === null ? "—" : (unit === "%" ? value * 100 : value).toLocaleString("zh-CN", metricNumberFormatOptions(value, unit));
+export const liveValue = (value: number | null, unit: string) => value === null ? "—" : formatMetricNumber(unit === "%" ? value * 100 : value, "zh-CN", metricNumberFormatOptions(value, unit));
 export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number], referencePresentation = true): CalculationBasis | undefined {
   if (series.metric.inputs.length !== 2) return undefined;
   const diagnostic = diagnosticRatioInputs(series.metric, point);

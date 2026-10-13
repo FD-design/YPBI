@@ -40,6 +40,11 @@ function hook<T>(read: () => T) {
       const i = index++;
       if (!slots[i] || changed(slots[i].deps, deps)) slots[i] = { deps, callback };
       return slots[i].callback;
+    },
+    useMemo(calculate: () => unknown, deps?: unknown[]) {
+      const i = index++;
+      if (!slots[i] || changed(slots[i].deps, deps)) slots[i] = { deps, value: calculate() };
+      return slots[i].value;
     }
   };
   function render() {

@@ -294,6 +294,20 @@ function safeScalar(value: number | null, label: string) {
   return value;
 }
 
+function dimensionMetricKeysByCode(keys: Iterable<string>) {
+  const indexed = new Map<string, string[]>();
+  for (const key of keys) {
+    const separator = key.indexOf("|");
+    // Overall keys are supplied by requestedKeys, not by dimensional discovery.
+    if (separator < 0) continue;
+    const code = key.slice(0, separator);
+    const related = indexed.get(code) ?? [];
+    related.push(key);
+    indexed.set(code, related);
+  }
+  return indexed;
+}
+
 export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
   const metricCodes = [...new Set(query.metricCodes)];
   if (!metricCodes.length) throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 指标列表不能为空", 422);
@@ -373,6 +387,7 @@ export function aggregateBiV1MetricDays(
     rowsByDay.set(row.businessDate, rows);
   }
 
+  const globalKeysByCode = dimensionMetricKeysByCode(globalStatuses.keys());
   const days: BiV1MetricDay[] = [];
   for (let date = query.startDate; date <= query.endDate; date = nextDate(date)) {
     const dayRows = rowsByDay.get(date) ?? [];
@@ -382,10 +397,12 @@ export function aggregateBiV1MetricDays(
       const key = biV1MetricKey(row.metricCode, row.dimensions);
       grouped.set(key, [...(grouped.get(key) ?? []), row]);
     }
+    const dayKeysByCode = dimensionMetricKeysByCode(grouped.keys());
     for (const code of requested) {
       const relatedKeys = new Set([
         requestedKeys.get(code)!,
-        ...[...globalStatuses.keys(), ...grouped.keys()].filter((key) => key.startsWith(`${code}|`))
+        ...(globalKeysByCode.get(code) ?? []),
+        ...(dayKeysByCode.get(code) ?? [])
       ]);
       for (const key of relatedKeys) {
         if (invalidGlobalMetrics.has(key) || invalidMetricDays.has(`${date}\u0000${key}`)) {

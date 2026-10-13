@@ -1,7 +1,8 @@
 export type WorkbookCell = string | number | null;
 export interface WorkbookSheet { name: string; rows: WorkbookCell[][] }
 const encode = (text: string) => new TextEncoder().encode(text);
-const xml = (text: string) => text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]!);
+const xml = (text: string) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F&<>"']/.test(text) ? text
+  : text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]!);
 function column(index: number): string { let result = ""; for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) result = String.fromCharCode(65 + (n - 1) % 26) + result; return result; }
 function sheetColumnCount(rows: WorkbookCell[][]) { let maximum = 1; for (const row of rows) maximum = Math.max(maximum, row.length); return maximum; }
 const crcTable = Array.from({ length: 256 }, (_, index) => { let value = index; for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xEDB88320 ^ (value >>> 1) : value >>> 1; return value >>> 0; });

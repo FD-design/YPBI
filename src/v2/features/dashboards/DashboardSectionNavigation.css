@@ -1,0 +1,30 @@
+.dashboard-section-navigation {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  min-width: 0;
+}
+
+.dashboard-section-navigation__label {
+  color: var(--color-text-3);
+  font-size: var(--font-size-caption);
+}
+
+.dashboard-section-navigation > .ui-button {
+  height: auto;
+  min-height: var(--size-control-sm);
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  line-height: var(--line-height-body);
+}
+
+@media (max-width: 767px) {
+  .dashboard-section-navigation > .ui-menu-select {
+    width: 100%;
+    min-width: 0;
+  }
+}

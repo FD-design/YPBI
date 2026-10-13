@@ -429,9 +429,9 @@ function CoreOverviewDesignFixture() {
   const detailDate = live?.query.dateRange[1] ?? appliedFilters.end;
   const previousDate = shiftBusinessDate(detailDate, -1);
   const previousWeekDate = shiftBusinessDate(detailDate, -7);
-  const detailRows = operating.rows ?? operatingDetailRows(detailDate);
+  const detailRows = useMemo(() => operating.rows ?? operatingDetailRows(detailDate), [operating.rows, detailDate]);
   const detailColumns = operating.columns;
-  const detailModels = live ? operatingLiveSummary(live, operating.resources, detailRows, detailPlatform) : operatingSummaryModels(detailRows, detailPlatform, detailDate);
+  const detailModels = useMemo(() => live ? operatingLiveSummary(live, operating.resources, detailRows, detailPlatform) : operatingSummaryModels(detailRows, detailPlatform, detailDate), [live, operating.resources, detailRows, detailPlatform, detailDate]);
   const detailScopeLabel = detailPlatform === "all" ? "全部平台" : detailRows.find(row => row.pid === detailPlatform)?.name ?? "未知平台";
   const sortedRows = useMemo(() => selectOperatingRows(detailRows, detailPlatform).slice().sort((left, right) => {
     const leftValue = left.values[sort.columnIndex]?.current;
@@ -561,7 +561,7 @@ function CoreOverviewDesignFixture() {
       </div>
     </section></ReviewTools>
 
-    <DashboardHeader className="core-review__page-head" title="核心经营总览" breadcrumb="公共概览 / 官方看板" description="用于快速判断跨业务核心结果、周期变化、关键链路与数据完整性；各区域按自身统计范围与日期口径独立阅读。" summary="先看 6＋3 项核心结果，再看内容、获客、支付链路与经营明细；所有区域独立遵守数据准入。">
+    <DashboardHeader sectionNavigation className="core-review__page-head" title="核心经营总览" breadcrumb="公共概览 / 官方看板" description="用于快速判断跨业务核心结果、周期变化、关键链路与数据完整性；各区域按自身统计范围与日期口径独立阅读。" summary="先看 6＋3 项核心结果，再看内容、获客、支付链路与经营明细；所有区域独立遵守数据准入。">
       <section className="core-review__filter-bar" aria-label="看板工具栏">
         <div className="core-review__filter-controls">
           <DashboardQueryFields date={<DateRangePicker

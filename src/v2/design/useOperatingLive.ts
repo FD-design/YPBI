@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchDailyDashboard, V2RequestError } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
@@ -41,5 +41,7 @@ export function useOperatingLive(live: LiveDashboardReading | null) {
     void Promise.all(Array.from({ length: Math.min(3, platforms.length) }, worker));
     return () => controller.abort();
   }, [key, revision]);
-  return { resources, columns: operatingLiveColumns(live), rows: live ? operatingLiveRows(live, resources) : null };
+  const columns = useMemo(() => operatingLiveColumns(live), [live]);
+  const rows = useMemo(() => live ? operatingLiveRows(live, resources) : null, [live, resources]);
+  return { resources, columns, rows };
 }

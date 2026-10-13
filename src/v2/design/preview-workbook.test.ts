@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { buildPreviewWorkbook, type WorkbookSheet } from "./preview-workbook";
+import { createHash } from "node:crypto";
+import { buildPreviewWorkbook, prepareWorkbookSheets, type WorkbookSheet } from "./preview-workbook";
 
 function part(bytes: Uint8Array, name: string) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -57,4 +58,37 @@ test("空工作表保留单列，参差行宽按最宽行生成，数值及文�
   expect(ragged).toContain('<t xml:space="preserve">=SUM(A1)</t>');
   expect(ragged).not.toContain("<f>");
   expect(JSON.stringify(sheets)).toBe(original);
+});
+
+test("纯文本与需转义文本保留原始工作簿字节、数值、表名和公式字面量", () => {
+  const sheets: WorkbookSheet[] = [
+    { name: "  渠道/明细  ", rows: [[], [0, null, -1.25, NaN, Infinity, "普通中文", "ASCII text", "😀", "\"'&<>", "\u0000\u0007\u000B\u000C\u001F\t\n\r", "=SUM(A1)"]] },
+    { name: "渠道:明细", rows: [Array.from({ length: 750 }, (_, i) => i % 3 === 0 ? null : i % 3 === 1 ? i : "数据")] }
+  ];
+  const prepared = prepareWorkbookSheets(sheets);
+  const output = buildPreviewWorkbook(prepared);
+  expect(output.length).toBe(72206);
+  expect(createHash("sha256").update(output).digest("hex")).toBe("c559096a757ba12112239656bc7397b40d132f88ba45373babc0694fcefd15b6");
+  expect(prepared.map(sheet => sheet.name)).toEqual(["渠道·明细", "渠道·明细 (2)", "工作表索引"]);
+  const xml = part(output, "xl/worksheets/sheet1.xml");
+  expect(xml).toContain('<c r="A2"><v>0</v></c><c r="B2"/><c r="C2"><v>-1.25</v></c>');
+  for (const text of ["NaN", "Infinity", "普通中文", "ASCII text", "😀", "=SUM(A1)"]) expect(xml).toContain(`<t xml:space="preserve">${text}</t>`);
+  expect(xml).toContain("&quot;&apos;&amp;&lt;&gt;");
+  expect(xml).toContain('<t xml:space="preserve">\t\n\r</t>');
+  expect(xml).not.toContain("<f>");
+  expect(sheets[0].name).toBe("  渠道/明细  ");
+  expect(Number.isNaN(sheets[0].rows[1][3])).toBe(true);
+  expect(sheets[0].rows[1][4]).toBe(Infinity);
+});
+
+test("全部C0控制符沿用XML清理规则，合法空白与表名特殊字符保留", () => {
+  const controls = Array.from({ length: 32 }, (_, code) => `x${String.fromCharCode(code)}y`);
+  const output = buildPreviewWorkbook([{ name: "名称&<\"'>", rows: [controls, ["\u0085\u2028\u2029😀"]] }]);
+  const xml = part(output, "xl/worksheets/sheet1.xml");
+  for (let code = 0; code < controls.length; code++) {
+    const expected = [9, 10, 13].includes(code) ? controls[code] : "xy";
+    expect(xml).toContain(`<t xml:space="preserve">${expected}</t>`);
+  }
+  expect(xml).toContain('<t xml:space="preserve">\u0085\u2028\u2029😀</t>');
+  expect(part(output, "xl/workbook.xml")).toContain('name="名称&amp;&lt;&quot;&apos;&gt;"');
 });

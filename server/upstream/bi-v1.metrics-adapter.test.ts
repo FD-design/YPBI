@@ -22,6 +22,92 @@ const message = (rows: ReturnType<typeof makeRow>[]) => ({
   rows
 });
 
+describe("指标键顺序与按日隔离", () => {
+  const first = "2026-09-21", second = "2026-09-22";
+  const query = { pid: "PH", startDate: first, endDate: second, metricCodes: ["M016", "M008", "M016"] as const,
+    dimensions: ["clientPlatform"] as const };
+  const row = (code: BiV1MetricCode, platform: string, value: number, date: string | null = first, status: BiV1MetricDataStatus = "READY") => ({
+    ...makeRow(code, "count", status === "READY" ? value : null, value, 0, { clientPlatform: platform }, status), businessDate: date ?? undefined
+  });
+  const payload = (rows: ReturnType<typeof row>[]) => ({ ...message([]), rows });
+
+  test("相关键保持请求键→global→当日键，跨指标和重复请求编码保持原顺序", () => {
+    const days = aggregateBiV1MetricDays(payload([
+      row("M008", "ios", 0, null, "PROCESSING"),
+      row("M016", "web", 0, null, "PROCESSING"),
+      row("M008", "android", 0, null, "SOURCE_INCOMPLETE"),
+      row("M008", "web", 4), row("M016", "android", 8), row("M008", "android", 1), row("M016", "web", 3),
+      row("M016", "ios", 9, second), row("M008", "ios", 2, second)
+    ]), query);
+    expect(Object.keys(days[0].metrics)).toEqual([
+      "M016|group:clientPlatform", "M016|web", "M016|android",
+      "M008|group:clientPlatform", "M008|ios", "M008|android", "M008|web"
+    ]);
+    expect(Object.keys(days[1].metrics)).toEqual([
+      "M016|group:clientPlatform", "M016|web", "M016|ios",
+      "M008|group:clientPlatform", "M008|ios", "M008|android"
+    ]);
+    expect(days[0].metrics["M016|web"]).toMatchObject({ state: "available", value: 3 });
+    expect(days[0].metrics["M008|android"]).toMatchObject({ state: "available", value: 1 });
+    expect(days[1].metrics["M016|web"]).toMatchObject({ state: "no_value", dataStatus: "PROCESSING", value: null });
+    expect(days[1].metrics["M008|android"]).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null });
+    expect(days[1].metrics["M008|web"]).toBeUndefined();
+  });
+
+  test("多维键的global顺序、每日重复别名和global冲突保持独立", () => {
+    const cross = (platform: string, cohort: string, value: number, date: string | null = first, status: BiV1MetricDataStatus = "READY") => ({
+      ...makeRow("M016", "count", status === "READY" ? value : null, value, 0, { clientPlatform: platform, userCohort: cohort }, status), businessDate: date ?? undefined
+    });
+    const days = aggregateBiV1MetricDays({ ...message([]), rows: [
+      cross("web", "old", 0, null, "PROCESSING"),
+      cross("android", "new", 0, null, "PROCESSING"),
+      cross("android", "new", 0, null, "SOURCE_INCOMPLETE"),
+      cross("ios", "old", 2), cross("iOS", "old_user", 2), cross("android", "new", 4),
+      cross("ios", "old", 3, second), cross("android", "new", 5, second)
+    ] }, { ...query, metricCodes: ["M016"], dimensions: ["clientPlatform", "userCohort"] });
+    for (const day of days) {
+      expect(Object.keys(day.metrics)).toEqual([
+        "M016|group:clientPlatform,userCohort", "M016|old+web", "M016|android+new", "M016|ios+old"
+      ]);
+      expect(day.metrics["M016|android+new"]).toMatchObject({ state: "invalid_value", dataStatus: null, value: null });
+      expect(day.metrics["M016|old+web"]).toMatchObject({ state: "no_value", dataStatus: "PROCESSING" });
+    }
+    expect(days[0].metrics["M016|ios+old"]).toMatchObject({ state: "invalid_value", value: null });
+    expect(days[1].metrics["M016|ios+old"]).toMatchObject({ state: "available", value: 3 });
+  });
+
+  test("无维度global与空返回不新增分组键，缺日不借前日结果", () => {
+    const overallQuery = { ...query, dimensions: [] };
+    const days = aggregateBiV1MetricDays({ ...message([]), rows: [
+      { ...makeRow("M008", "count", null, 0, 0, {}, "SOURCE_INCOMPLETE"), businessDate: undefined },
+      makeRow("M016", "count", 7, 7, 0)
+    ] }, overallQuery);
+    for (const day of days) expect(Object.keys(day.metrics)).toEqual(["M016", "M008"]);
+    expect(days[0].metrics.M016).toMatchObject({ state: "available", value: 7 });
+    expect(days[1].metrics.M016).toMatchObject({ state: "no_record", value: null });
+    expect(days[1].metrics.M008).toMatchObject({ state: "no_value", dataStatus: "SOURCE_INCOMPLETE" });
+    const empty = aggregateBiV1MetricDays(message([]), overallQuery);
+    expect(empty.map(day => Object.keys(day.metrics))).toEqual([["M016", "M008"], ["M016", "M008"]]);
+    expect(empty.every(day => Object.values(day.metrics).every(point => point.state === "no_record"))).toBe(true);
+  });
+
+  test("未知维度冲突不进入分桶、不影响健康切片，越界范围仍先拒绝", () => {
+    const days = aggregateBiV1MetricDays(payload([
+      row("M016", "kiosk", 99), row("M016", "android", 4), row("M008", "ios", 3),
+      row("M016", "android", 5, second)
+    ]), query);
+    expect(days[0].metrics["M016|group:clientPlatform"]).toMatchObject({ state: "source_failure", value: null });
+    expect(days[0].metrics["M016|android"]).toMatchObject({ state: "available", value: 4 });
+    expect(days[0].metrics["M008|ios"]).toMatchObject({ state: "available", value: 3 });
+    expect(Object.keys(days[0].metrics).some(key => key.includes("kiosk") || key.includes("unmapped"))).toBe(false);
+    expect(days[1].metrics["M016|group:clientPlatform"]).toMatchObject({ state: "no_record" });
+    for (const bad of [
+      { ...row("M016", "android", 4), dimensions: { pid: "TT", clientPlatform: "android" } },
+      row("M016", "android", 4, "2026-09-23"), row("M003", "android", 4)
+    ]) expect(() => aggregateBiV1MetricDays(payload([bad]), query)).toThrow("请求范围不一致");
+  });
+});
+
 describe("SOURCE_INCOMPLETE 比率诊断输入", () => {
   const date = "2020-01-01";
   const query = { pid: "PH", startDate: date, endDate: date, metricCodes: ["M020"] as const,

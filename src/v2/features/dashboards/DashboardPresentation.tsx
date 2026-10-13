@@ -6,6 +6,7 @@ import { MetricReadingDialog } from "./MetricReadingDialog";
 import { DataOriginBadge } from "../../components/DataOrigin";
 import { useLiveDashboard } from "./LiveDashboardContext";
 import { dashboardGuidance } from "./dashboard-guidance";
+import { DashboardSectionNavigation } from "./DashboardSectionNavigation";
 
 export function DashboardGuidance({ title, guidanceKey }: { title: string; guidanceKey?: string }) {
   const description = dashboardGuidance(title, guidanceKey);
@@ -17,17 +18,19 @@ export function DashboardSectionHeading({ title, id, guidanceKey, badge }: { tit
 }
 
 /** Shared page hierarchy; query capabilities remain owned by each dashboard. */
-export function DashboardHeader({ title, breadcrumb, description, summary, children, className = "" }: {
-  title: string; breadcrumb: string; description?: string; summary?: ReactNode; children: ReactNode; className?: string;
+export function DashboardHeader({ title, breadcrumb, description, summary, children, className = "", sectionNavigation = false }: {
+  title: string; breadcrumb: string; description?: string; summary?: ReactNode; children: ReactNode; className?: string; sectionNavigation?: boolean;
 }) {
   const live = useLiveDashboard();
-  return <header className={`dashboard-header ${className}`}>
+  const headerRef = useRef<HTMLElement>(null);
+  return <header ref={headerRef} className={`dashboard-header ${className}`}>
     <div className="dashboard-header__heading">
       <span className="dashboard-header__breadcrumb">{breadcrumb}</span>
       <div className="dashboard-header__title-row"><h1>{title}</h1>{!live?.metricIds.length && <DataOriginBadge />}{description && <DashboardDescription description={description} />}</div>
     </div>
     <div className="dashboard-header__tools">{children}</div>
     {(summary || Boolean(live?.metricIds.length)) && <div className="dashboard-header__summary">{live?.metricIds.length ? `${live.platformName} · 真实主值 ${live.query.dateRange[1]} · 趋势 ${live.query.dateRange.join(" 至 ")}` : summary}</div>}
+    {sectionNavigation && <DashboardSectionNavigation headerRef={headerRef} />}
   </header>;
 }
 
