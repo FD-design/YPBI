@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { enabledSecondaryPlatformPids } from "../platforms/registry";
 import { productionDataPreviewDefaults } from "./production-data-preview";
+import { productionDashboardReadingDefaults } from "./production-dashboard-reading";
 
 const emptyStringAsUndefined = (value: unknown) => (
   typeof value === "string" && value.trim() === "" ? undefined : value
@@ -29,6 +30,7 @@ const envSchema = z.object({
   BI_PUBLIC_ORIGIN: z.preprocess(emptyStringAsUndefined, z.url().optional()),
   BI_V2_CORE_OVERVIEW_QUERY_ENABLED: explicitBoolean,
   BI_LOCAL_DASHBOARD_READING_ENABLED: explicitBoolean,
+  BI_PRODUCTION_DASHBOARD_READING_ENABLED: explicitBoolean,
   BI_TEST_DATA_PREVIEW_ENABLED: explicitBoolean,
   UPSTREAM_TEST_API_BASE_URL: z.preprocess(emptyStringAsUndefined, z.url().optional()),
   UPSTREAM_TEST_USER_NAME: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
@@ -39,10 +41,13 @@ const envSchema = z.object({
 
 export type AppEnv = z.infer<typeof envSchema>;
 
-function productionSourceWithDataPreviewDefaults(source: NodeJS.ProcessEnv) {
+function productionSourceWithReadingDefaults(source: NodeJS.ProcessEnv) {
   if (source.NODE_ENV !== "production" || !source.UPSTREAM_USER_NAME?.trim()) return source;
+  const authorizedDeployment = source.BI_PUBLIC_ORIGIN?.trim().replace(/\/$/, "") === productionDashboardReadingDefaults.publicOrigin;
   return {
     ...source,
+    BI_PRODUCTION_DASHBOARD_READING_ENABLED: source.BI_PRODUCTION_DASHBOARD_READING_ENABLED?.trim()
+      || String(authorizedDeployment && productionDashboardReadingDefaults.enabled),
     BI_TEST_DATA_PREVIEW_ENABLED: source.BI_TEST_DATA_PREVIEW_ENABLED?.trim() || String(productionDataPreviewDefaults.enabled),
     UPSTREAM_TEST_API_BASE_URL: source.UPSTREAM_TEST_API_BASE_URL?.trim() || productionDataPreviewDefaults.baseUrl,
     UPSTREAM_TEST_USER_NAME: source.UPSTREAM_TEST_USER_NAME?.trim() || source.UPSTREAM_USER_NAME.trim()
@@ -50,7 +55,7 @@ function productionSourceWithDataPreviewDefaults(source: NodeJS.ProcessEnv) {
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const parsed = envSchema.safeParse(productionSourceWithDataPreviewDefaults(source));
+  const parsed = envSchema.safeParse(productionSourceWithReadingDefaults(source));
   if (!parsed.success) {
     throw new Error(`环境变量配置错误：${z.prettifyError(parsed.error)}`);
   }

@@ -604,14 +604,20 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     }, { prefix: "/api/bi/v2/auth" });
   }
 
+  const localDailyReadingEnabled = env.BI_LOCAL_DASHBOARD_READING_ENABLED
+    && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1";
+  const productionDailyReadingEnabled = env.NODE_ENV === "production"
+    && env.BI_PRODUCTION_DASHBOARD_READING_ENABLED;
+  const formalDailyReadingEnabled = localDailyReadingEnabled || productionDailyReadingEnabled;
+
   await app.register(v2BiPlugin, {
     prefix: "/api/bi/v2",
     identityProvider,
     metricQueryService: v2MetricQueryService,
-    dailyDashboardService: (env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1") || previewEnabled
+    dailyDashboardService: formalDailyReadingEnabled || previewEnabled
       ? new DailyDashboardService(upstream, undefined, app.log)
       : undefined,
-    productionDailyDashboardEnabled: env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.NODE_ENV !== "production" && env.HOST === "127.0.0.1",
+    productionDailyDashboardEnabled: formalDailyReadingEnabled,
     dataEnvironmentResolver: {
       testAvailable: previewEnabled,
       resolveTest: (request, principal) => {
