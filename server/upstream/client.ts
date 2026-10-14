@@ -11,10 +11,10 @@ export type CredentialSite = PlatformSiteId;
 interface PersistedCredentials { primary?: { token: string; updatedAt: string }; secondary?: { token: string; updatedAt: string } }
 interface PendingRead {
   promise: Promise<unknown>;
-  queueSignal: AbortSignal;
+  signal: AbortSignal;
   addConsumer: (signal?: AbortSignal) => void;
 }
-interface QueuedConsumerSignal {
+interface ConsumerSignal {
   callbacks: Set<() => void>;
   listener: () => void;
 }
@@ -29,7 +29,7 @@ export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
   private readonly responseCache = new Map<string, { expiresAt: number; value: unknown }>();
   private readonly inFlight = new Map<string, PendingRead>();
-  private readonly queuedConsumerSignals = new WeakMap<AbortSignal, QueuedConsumerSignal>();
+  private readonly consumerSignals = new WeakMap<AbortSignal, ConsumerSignal>();
   private readonly requestWorkQueue: RequestWorkQueue;
   private credentialUpdateQueue: Promise<void> = Promise.resolve();
   private credentials: PersistedCredentials = {};
@@ -162,40 +162,35 @@ export class UpstreamClient {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     if (cached) this.responseCache.delete(cacheKey);
     const pending = this.inFlight.get(cacheKey);
-    if (pending && !pending.queueSignal.aborted) {
+    if (pending && !pending.signal.aborted) {
       pending.addConsumer(consumerSignal);
       return pending.promise;
     }
 
-    const queueController = new AbortController();
+    const requestController = new AbortController();
     const consumers = new Map<AbortSignal, () => void>();
-    let started = false, hasUncancelledConsumer = false;
+    let hasUncancelledConsumer = false;
     const releaseConsumers = () => {
       for (const unsubscribe of consumers.values()) unsubscribe();
       consumers.clear();
     };
     const addConsumer = (signal?: AbortSignal) => {
-      if (started) return;
       if (!signal) { hasUncancelledConsumer = true; return; }
       if (consumers.has(signal)) return;
       const cancel = () => {
         consumers.delete(signal);
-        if (!started && !hasUncancelledConsumer && consumers.size === 0) queueController.abort();
+        if (!hasUncancelledConsumer && consumers.size === 0) requestController.abort();
       };
-      consumers.set(signal, this.watchQueuedConsumer(signal, cancel));
+      consumers.set(signal, this.watchConsumer(signal, cancel));
     };
     addConsumer(consumerSignal);
 
     const request = this.requestWorkQueue.run(
-      remainingMs => {
-        started = true;
-        releaseConsumers();
-        return this.fetchJson(url, token, userName, remainingMs);
-      },
+      remainingMs => this.fetchJson(url, token, userName, remainingMs, requestController.signal),
       this.env.REQUEST_TIMEOUT_MS,
-      queueController.signal
+      requestController.signal
     ).then((value) => {
-      if (this.inFlight.get(cacheKey) !== entry) return value;
+      if (this.inFlight.get(cacheKey) !== entry || requestController.signal.aborted) return value;
       this.pruneResponseCache();
       this.responseCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
       return value;
@@ -203,33 +198,33 @@ export class UpstreamClient {
       releaseConsumers();
       if (this.inFlight.get(cacheKey) === entry) this.inFlight.delete(cacheKey);
     });
-    const entry: PendingRead = { promise: request, queueSignal: queueController.signal, addConsumer };
+    const entry: PendingRead = { promise: request, signal: requestController.signal, addConsumer };
     this.inFlight.set(cacheKey, entry);
     return request;
   }
 
-  private watchQueuedConsumer(signal: AbortSignal, onAbort: () => void) {
-    let observed = this.queuedConsumerSignals.get(signal);
+  private watchConsumer(signal: AbortSignal, onAbort: () => void) {
+    let observed = this.consumerSignals.get(signal);
     if (!observed) {
       const callbacks = new Set<() => void>();
       const listener = () => {
         signal.removeEventListener("abort", listener);
-        this.queuedConsumerSignals.delete(signal);
+        this.consumerSignals.delete(signal);
         const cancelled = [...callbacks];
         callbacks.clear();
         for (const cancel of cancelled) cancel();
       };
       observed = { callbacks, listener };
-      this.queuedConsumerSignals.set(signal, observed);
+      this.consumerSignals.set(signal, observed);
       signal.addEventListener("abort", listener, { once: true });
     }
     observed.callbacks.add(onAbort);
     const registration = observed;
     return () => {
       registration.callbacks.delete(onAbort);
-      if (registration.callbacks.size === 0 && this.queuedConsumerSignals.get(signal) === registration) {
+      if (registration.callbacks.size === 0 && this.consumerSignals.get(signal) === registration) {
         signal.removeEventListener("abort", registration.listener);
-        this.queuedConsumerSignals.delete(signal);
+        this.consumerSignals.delete(signal);
       }
     };
   }
@@ -264,9 +259,12 @@ export class UpstreamClient {
     return { baseUrl: this.env.UPSTREAM_API_BASE_URL, token: this.credentials.primary?.token ?? this.env.UPSTREAM_X_TOKEN, userName: this.env.UPSTREAM_USER_NAME };
   }
 
-  private async fetchJson(url: URL, token?: string, userName?: string, timeoutMs = this.env.REQUEST_TIMEOUT_MS): Promise<unknown> {
+  private async fetchJson(url: URL, token?: string, userName?: string, timeoutMs = this.env.REQUEST_TIMEOUT_MS, signal?: AbortSignal): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const onConsumerAbort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener("abort", onConsumerAbort, { once: true });
     try {
       const headers: Record<string, string> = {};
       if (token) headers["x-token"] = token;
@@ -306,6 +304,7 @@ export class UpstreamClient {
       throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "无法连接后台接口");
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onConsumerAbort);
     }
   }
 }

@@ -174,16 +174,119 @@ describe("UpstreamClient shared physical request capacity", () => {
     expect(requests).toHaveLength(2);
   });
 
-  test("an unsignalled consumer keeps shared queued work and running requests ignore consumer cancellation", async () => {
-    const { client, requests } = fixture({ maxActiveRequests: 1 }), queuedConsumer = new AbortController(), runningConsumer = new AbortController();
-    const first = client.get("/api/hold", { pid: "PH" }, undefined, runningConsumer.signal);
+  test("an unsignalled consumer keeps shared queued work when another consumer cancels", async () => {
+    const { client, requests } = fixture({ maxActiveRequests: 1 }), queuedConsumer = new AbortController();
+    const first = client.get("/api/hold", { pid: "PH" });
     const cancelled = client.get("/api/shared", { pid: "PH" }, undefined, queuedConsumer.signal), joined = client.get("/api/shared", { pid: "PH" });
-    queuedConsumer.abort(); runningConsumer.abort();
+    queuedConsumer.abort();
     expect(requests[0].signal?.aborted).toBe(false);
     requests[0].resolve(response(0)); await first;
     expect(requests).toHaveLength(2);
     requests[1].resolve(response(1));
     expect(await cancelled).toEqual(await joined);
+  });
+
+  test("all running consumers cancelling aborts the physical request and releases its slot", async () => {
+    const { client, requests, stats } = fixture({ maxActiveRequests: 1 }), a = new AbortController(), b = new AbortController();
+    const first = client.get("/api/shared", { pid: "PH" }, undefined, a.signal), joined = client.get("/api/shared", { pid: "PH" }, undefined, b.signal);
+    const ended = Promise.allSettled([first, joined]), next = client.get("/api/next", { pid: "PH" });
+    a.abort();
+    expect(requests[0].signal?.aborted).toBe(false);
+    b.abort();
+    expect(requests[0].signal?.aborted).toBe(true);
+    expect((await ended).every(result => result.status === "rejected" && result.reason.code === "UPSTREAM_TIMEOUT")).toBe(true);
+    await flush();
+    expect(requests).toHaveLength(2);
+    expect(stats()).toEqual({ active: 1, peak: 1 });
+    requests[1].resolve(response(2));
+    expect(await next).toEqual({ code: 200, msg: { value: 2 } });
+  });
+
+  test("a healthy consumer joining after dispatch preserves shared running work", async () => {
+    const { client, requests } = fixture({ maxActiveRequests: 1 }), earlier = new AbortController(), later = new AbortController();
+    const first = client.get("/api/shared", { pid: "PH" }, undefined, earlier.signal);
+    await flush();
+    const joined = client.get("/api/shared", { pid: "PH" }, undefined, later.signal);
+    earlier.abort();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].signal?.aborted).toBe(false);
+    requests[0].resolve(response(7));
+    expect(await first).toEqual(await joined);
+    expect(await client.get("/api/shared", { pid: "PH" })).toEqual({ code: 200, msg: { value: 7 } });
+    expect(requests).toHaveLength(1);
+  });
+
+  test("an unsignalled consumer joining after dispatch preserves shared running work", async () => {
+    const { client, requests } = fixture({ maxActiveRequests: 1 }), consumer = new AbortController();
+    const first = client.get("/api/shared", { pid: "PH" }, undefined, consumer.signal);
+    await flush();
+    const joined = client.get("/api/shared", { pid: "PH" });
+    consumer.abort();
+    expect(requests[0].signal?.aborted).toBe(false);
+    requests[0].resolve(response(7));
+    expect(await first).toEqual(await joined);
+    expect(requests).toHaveLength(1);
+  });
+
+  test("running cancellation reaches response JSON parsing and releases the slot after parsing ends", async () => {
+    const { client, requests } = fixture({ maxActiveRequests: 1 }), consumer = new AbortController();
+    const first = client.get("/api/parsing", { pid: "PH" }, undefined, consumer.signal), ended = first.catch(error => error);
+    const next = client.get("/api/next", { pid: "PH" });
+    const heldResponse = response(1);
+    Object.defineProperty(heldResponse, "json", { value: () => new Promise((_resolve, reject) => {
+      requests[0].signal?.addEventListener("abort", () => reject(new DOMException("Fixture parsing aborted", "AbortError")), { once: true });
+    }) });
+    requests[0].resolve(heldResponse);
+    await flush();
+    expect(requests).toHaveLength(1);
+    consumer.abort();
+    expect(requests[0].signal?.aborted).toBe(true);
+    expect(await ended).toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+    await flush();
+    expect(requests).toHaveLength(2);
+    requests[1].resolve(response(2));
+    expect(await next).toEqual({ code: 200, msg: { value: 2 } });
+  });
+
+  test("a cancelled late JSON success keeps its slot until completion and cannot refill the cache", async () => {
+    const { client, requests } = fixture({ maxActiveRequests: 1 }), consumer = new AbortController(), body = deferred<unknown>();
+    const first = client.get("/api/shared", { pid: "PH" }, undefined, consumer.signal), ended = first.catch(error => error);
+    const heldResponse = response(1);
+    Object.defineProperty(heldResponse, "json", { value: () => body.promise });
+    requests[0].resolve(heldResponse);
+    await flush();
+    consumer.abort();
+    expect(requests[0].signal?.aborted).toBe(true);
+    const next = client.get("/api/next", { pid: "PH" });
+    expect(requests).toHaveLength(1);
+    body.resolve({ code: 200, msg: { value: 1 } });
+    await ended;
+    await flush();
+    expect(requests).toHaveLength(2);
+    requests[1].resolve(response(2));
+    expect(await next).toEqual({ code: 200, msg: { value: 2 } });
+    const recovery = client.get("/api/shared", { pid: "PH" });
+    expect(requests).toHaveLength(3);
+    requests[2].resolve(response(3));
+    expect(await recovery).toEqual({ code: 200, msg: { value: 3 } });
+    expect(await client.get("/api/shared", { pid: "PH" })).toEqual({ code: 200, msg: { value: 3 } });
+    expect(requests).toHaveLength(3);
+  });
+
+  test("source expiry cancels its late running batch without extending physical occupancy", async () => {
+    const { client, requests } = fixture({ maxActiveRequests: 1, timeoutMs: 100 }), budget = new SourceReadBudget(100);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      const source = budget.read(() => client.get("/api/late-batch", { pid: "PH" }, undefined, budget.signal));
+      await expect(source).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+      expect(budget.expired).toBe(true);
+      expect(requests[0].signal?.aborted).toBe(true);
+      const next = client.get("/api/next", { pid: "PH" });
+      await flush();
+      expect(requests).toHaveLength(2);
+      requests[1].resolve(response(2));
+      expect(await next).toEqual({ code: 200, msg: { value: 2 } });
+    } finally { budget.dispose(); }
   });
 
   test("cancelled consumers and unavailable PIDs fail before HTTP or cache access", async () => {
@@ -208,7 +311,7 @@ describe("UpstreamClient shared physical request capacity", () => {
     expect(requests).toHaveLength(1);
   });
 
-  test("dispatch and rejection remove the shared source listener when its last queued read ends", async () => {
+  test("rejection and completion remove the shared source listener when its last physical read ends", async () => {
     const { client, requests } = fixture({ maxActiveRequests: 1, maxQueuedRequests: 2 }), consumer = new AbortController();
     const first = client.get("/api/hold", { pid: "PH" });
     const a = client.get("/api/queued-a", { pid: "PH" }, undefined, consumer.signal), b = client.get("/api/queued-b", { pid: "PH" }, undefined, consumer.signal);
@@ -217,7 +320,7 @@ describe("UpstreamClient shared physical request capacity", () => {
     requests[0].resolve(response(0)); await first;
     expect(getEventListeners(consumer.signal, "abort")).toHaveLength(1);
     requests[1].resolve(response(1)); await a;
-    expect(getEventListeners(consumer.signal, "abort")).toHaveLength(0);
+    expect(getEventListeners(consumer.signal, "abort")).toHaveLength(1);
     requests[2].resolve(response(2)); await b;
     expect(getEventListeners(consumer.signal, "abort")).toHaveLength(0);
   });
