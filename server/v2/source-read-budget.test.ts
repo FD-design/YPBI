@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getEventListeners } from "node:events";
 import { UpstreamError } from "../upstream/client";
 import { SourceReadBudget } from "./source-read-budget";
 
@@ -10,6 +11,34 @@ const deferred = <T>() => {
 };
 
 describe("private source read budget", () => {
+  test("外部查询已取消时不启动读取、不登记监听且不判来源预算到期", async () => {
+    const controller = new AbortController(); controller.abort();
+    const budget = new SourceReadBudget(1000, controller.signal);
+    let started = false;
+    await expect(budget.read(async () => { started = true; return 1; })).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+    expect(started).toBe(false);
+    expect(budget.signal.aborted).toBe(true);
+    expect(budget.expired).toBe(false);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+    budget.dispose();
+  });
+
+  test("多个并行读取共用一个外部取消监听，取消清理并隔离全部迟到结果", async () => {
+    const controller = new AbortController(), budget = new SourceReadBudget(1000, controller.signal);
+    const pending = Array.from({ length: 36 }, () => deferred<number>());
+    const reads = pending.map(item => budget.read(() => item.promise).catch(error => error));
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+    expect(getEventListeners(budget.signal, "abort")).toHaveLength(0);
+    controller.abort();
+    const results = await Promise.all(reads);
+    expect(results.every(error => error.code === "UPSTREAM_TIMEOUT")).toBe(true);
+    expect(budget.expired).toBe(false);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+    pending.forEach((item, index) => index % 2 ? item.reject(new Error("late fixture failure")) : item.resolve(7));
+    await Promise.resolve();
+    budget.dispose();
+  });
+
   test("returns successful results and original source errors within the budget", async () => {
     const budget = new SourceReadBudget(1000);
     const original = new UpstreamError("UPSTREAM_AUTH_FAILED", "private details", 403);

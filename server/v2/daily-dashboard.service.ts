@@ -426,11 +426,12 @@ type SourceReadDiagnostics = {
   errorCodeCounts: SourceReadErrorCodeCounts;
 };
 type DailyDashboardLogger = { info(fields: { queryId: string; boardId: string; sources: SourceReadDiagnostics[] }, message: string): void };
-export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery): Promise<DailyDashboardSuccess> }
+export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardSuccess> }
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
   constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number } = {}) {}
-  async execute(query: DailyDashboardQuery): Promise<DailyDashboardV2Success> {
+  async execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
+    if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     if (query.projection !== undefined && !dailyDashboardQuerySchema.safeParse(query).success) throw new UpstreamError("INVALID_DAILY_READING_QUERY", "看板查询参数不合法", 400);
     const fetchedAt = this.now().toISOString();
     const operatingSnapshot = query.projection === "operating_snapshot";
@@ -439,7 +440,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const sourceDiagnostics: SourceReadDiagnostics[] = [];
     const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: Pick<UpstreamClient, "get">) => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
-      const budget = new SourceReadBudget(this.options.sourceReadTimeoutMs ?? 10_000);
+      const budget = new SourceReadBudget(this.options.sourceReadTimeoutMs ?? 10_000, consumerSignal);
       const source: SourceReadDiagnostics = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, abandonedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} };
       if (this.logger) sourceDiagnostics.push(source);
       try {
@@ -449,7 +450,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             const result = await budget.read(() => {
               started = true;
               if (this.logger) source.readCallCount++;
-              return this.client.get(...args);
+              return this.client.get(args[0], args[1], args[2], budget.signal);
             });
             if (this.logger) source.successfulReadCallCount++;
             return result;
@@ -615,7 +616,10 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }
       const requests = [...groups.values()];
       let next = 0;
-      await Promise.all(Array.from({ length: Math.min(3, requests.length) }, async () => {
+      // Operating reads submit independent groups to the shared physical-request
+      // queue; a slow group does not reserve an otherwise idle source slot.
+      const metricWorkers = operatingSnapshot ? requests.length : Math.min(3, requests.length);
+      await Promise.all(Array.from({ length: metricWorkers }, async () => {
         while (next < requests.length) {
           const group = requests[next++];
           try {
@@ -659,6 +663,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     });
     const acquisitionTask = readSource("acquisition", async (client) => query.boardId === "5.7" ? readBiV1AcquisitionGroups(client, query, acquisitionMetric) : undefined);
     const [acquisitionGroups] = await Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, channelTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
+    if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     const pointCache = new Map<string, DailyPoint>();
     const pointFor = (id: CandidateId, date: string): DailyPoint => {
       const key = `${id}|${date}`;

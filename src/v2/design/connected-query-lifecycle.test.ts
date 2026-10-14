@@ -240,22 +240,22 @@ test("经营日期切换不显示旧日值，旧请求迟到不能覆盖新日�
   expect(ph.status === "success" && ph.data.data.series[0].points.every(point => point.value === .4)).toBe(true);
 });
 
-test("经营20PID快照保持三路调度，退出时取消在途且不继续启动后续平台", async () => {
+test("经营20PID快照保持六路有界调度，退出时取消在途且不继续启动后续平台", async () => {
   const live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: [...OPERATING_METRIC_IDS],
     platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6"]);
   pending[0].succeed(); await flush();
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6", "QA7"]);
   pending[1].fail(); await flush();
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6", "QA7", "QA8"]);
   expect(pending.every(item => item.query.projection === "operating_snapshot")).toBe(true);
   expect(rendered.value.resources.QA1.status).toBe("success");
   expect(rendered.value.resources.QA2.status).toBe("failure");
   rendered.dispose();
   expect(pending.every(item => item.signal.aborted)).toBe(true);
   pending.slice(2).forEach(item => item.succeed(4)); await flush();
-  expect(pending).toHaveLength(5);
+  expect(pending).toHaveLength(8);
 });
 
 test("经营快照展示名称和主指标列表变化保留在途队列，20PID各读取一次", async () => {
@@ -263,20 +263,20 @@ test("经营快照展示名称和主指标列表变化保留在途队列，20PID
     platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
   let selected = "all";
   const pending = requests(), rendered = hook(() => useOperatingLive(live, selected));
-  expect(pending).toHaveLength(3);
+  expect(pending).toHaveLength(6);
   live = { ...live, platforms: live.platforms!.map(platform => ({ ...platform, name: platform.name + "更新" })) };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(3);
+  expect(pending).toHaveLength(6);
   expect(pending.every(item => !item.signal.aborted)).toBe(true);
   expect(rendered.value.rows!.map(row => row.name)).toEqual(live.platforms!.map(platform => platform.name));
   live = { ...live, metricIds: [...live.metricIds, "M098"] };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(3);
+  expect(pending).toHaveLength(6);
   selected = "QA1";
   rendered.render(); await flush();
-  expect(pending).toHaveLength(3);
+  expect(pending).toHaveLength(6);
   for (let completed = 0; completed < 20; completed++) {
-    expect(pending.length - completed).toBeLessThanOrEqual(3);
+    expect(pending.length - completed).toBeLessThanOrEqual(6);
     pending[completed].succeed(); await flush();
   }
   expect(pending.map(item => item.query.pid)).toEqual(live.platforms!.map(platform => platform.pid));
@@ -297,21 +297,21 @@ test("经营有序PID范围切换取消旧队列，退出真实读取停止并�
     platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
   let live: LiveDashboardReading | null = initial;
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6"]);
   live = { ...initial, platforms: [...initial.platforms!].reverse() };
   rendered.render(); await flush();
-  expect(pending.slice(0, 3).every(item => item.signal.aborted)).toBe(true);
-  expect(pending.slice(3).map(item => item.query.pid)).toEqual(["QA20", "QA19", "QA18"]);
+  expect(pending.slice(0, 6).every(item => item.signal.aborted)).toBe(true);
+  expect(pending.slice(6).map(item => item.query.pid)).toEqual(["QA20", "QA19", "QA18", "QA17", "QA16", "QA15"]);
   live = { ...live, platforms: live.platforms!.slice(1) };
   rendered.render(); await flush();
-  expect(pending.slice(3, 6).every(item => item.signal.aborted)).toBe(true);
-  expect(pending.slice(6).map(item => item.query.pid)).toEqual(["QA19", "QA18", "QA17"]);
+  expect(pending.slice(6, 12).every(item => item.signal.aborted)).toBe(true);
+  expect(pending.slice(12).map(item => item.query.pid)).toEqual(["QA19", "QA18", "QA17", "QA16", "QA15", "QA14"]);
   live = null;
   expect(rendered.render().rows).toBeNull(); await flush();
   expect(pending.every(item => item.signal.aborted)).toBe(true);
   pending.forEach(item => item.succeed(4)); await flush();
   expect(rendered.value.rows).toBeNull();
-  expect(pending).toHaveLength(9);
+  expect(pending).toHaveLength(18);
 });
 
 for (const status of ["loading", "failure"] as const) test(`页头${status}明确正式环境时，经营刷新失败不保留测试环境旧结果`, async () => {

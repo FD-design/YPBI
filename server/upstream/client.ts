@@ -5,9 +5,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { enabledPlatformsForSite, getEnabledPlatformByPid, type PlatformSiteId } from "../platforms/registry";
 import { currentUpstreamRequestProfile } from "./request-profile";
+import { RequestWorkQueue } from "./request-work-queue";
 
 export type CredentialSite = PlatformSiteId;
 interface PersistedCredentials { primary?: { token: string; updatedAt: string }; secondary?: { token: string; updatedAt: string } }
+interface PendingRead {
+  promise: Promise<unknown>;
+  queueSignal: AbortSignal;
+  addConsumer: (signal?: AbortSignal) => void;
+}
+interface QueuedConsumerSignal {
+  callbacks: Set<() => void>;
+  listener: () => void;
+}
 
 export class UpstreamError extends Error {
   constructor(public readonly code: string, message: string, public readonly statusCode = 502) {
@@ -18,14 +28,23 @@ export class UpstreamError extends Error {
 export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
   private readonly responseCache = new Map<string, { expiresAt: number; value: unknown }>();
-  private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly inFlight = new Map<string, PendingRead>();
+  private readonly queuedConsumerSignals = new WeakMap<AbortSignal, QueuedConsumerSignal>();
+  private readonly requestWorkQueue: RequestWorkQueue;
   private credentialUpdateQueue: Promise<void> = Promise.resolve();
   private credentials: PersistedCredentials = {};
 
   constructor(
     private readonly env: AppEnv,
-    private readonly fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch
+    private readonly fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response> = fetch,
+    options: { maxActiveRequests?: number; maxQueuedRequests?: number } = {}
   ) {
+    this.requestWorkQueue = new RequestWorkQueue({
+      maxActive: options.maxActiveRequests,
+      maxQueued: options.maxQueuedRequests,
+      timeoutError: () => new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504),
+      overflowError: () => new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429)
+    });
     try {
       if (existsSync(env.UPSTREAM_CREDENTIALS_FILE)) this.credentials = JSON.parse(readFileSync(env.UPSTREAM_CREDENTIALS_FILE, "utf8")) as PersistedCredentials;
     } catch {
@@ -109,34 +128,94 @@ export class UpstreamClient {
     return this.credentialStatus().find((item) => item.site === site)!;
   }
 
-  async get(path: string, params: Record<string, string>, inboundToken?: string): Promise<unknown> {
+  async get(path: string, params: Record<string, string>, inboundToken?: string, consumerSignal?: AbortSignal): Promise<unknown> {
+    if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504);
     const requestProfile = currentUpstreamRequestProfile();
     const profile = this.selectProfile(params.pid);
     const token = requestProfile?.token ?? inboundToken ?? profile.token;
+    const userName = profile.userName;
     if (!token) {
       throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源 Token 尚未配置", 503);
     }
     const url = new URL(path, profile.baseUrl);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
     const partition = requestProfile?.cachePartition
-      ?? `production:${createHash("sha256").update(`${profile.userName ?? ""}\u0000${token}`).digest("hex")}`;
+      ?? `production:${createHash("sha256").update(`${userName ?? ""}\u0000${token}`).digest("hex")}`;
     const cacheKey = `${partition}\u0000${url.toString()}`;
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     if (cached) this.responseCache.delete(cacheKey);
     const pending = this.inFlight.get(cacheKey);
-    if (pending) return pending;
+    if (pending && !pending.queueSignal.aborted) {
+      pending.addConsumer(consumerSignal);
+      return pending.promise;
+    }
 
-    const request = this.fetchJson(url, token, profile.userName).then((value) => {
-      if (this.inFlight.get(cacheKey) !== request) return value;
+    const queueController = new AbortController();
+    const consumers = new Map<AbortSignal, () => void>();
+    let started = false, hasUncancelledConsumer = false;
+    const releaseConsumers = () => {
+      for (const unsubscribe of consumers.values()) unsubscribe();
+      consumers.clear();
+    };
+    const addConsumer = (signal?: AbortSignal) => {
+      if (started) return;
+      if (!signal) { hasUncancelledConsumer = true; return; }
+      if (consumers.has(signal)) return;
+      const cancel = () => {
+        consumers.delete(signal);
+        if (!started && !hasUncancelledConsumer && consumers.size === 0) queueController.abort();
+      };
+      consumers.set(signal, this.watchQueuedConsumer(signal, cancel));
+    };
+    addConsumer(consumerSignal);
+
+    const request = this.requestWorkQueue.run(
+      remainingMs => {
+        started = true;
+        releaseConsumers();
+        return this.fetchJson(url, token, userName, remainingMs);
+      },
+      this.env.REQUEST_TIMEOUT_MS,
+      queueController.signal
+    ).then((value) => {
+      if (this.inFlight.get(cacheKey) !== entry) return value;
       this.pruneResponseCache();
       this.responseCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
       return value;
     }).finally(() => {
-      if (this.inFlight.get(cacheKey) === request) this.inFlight.delete(cacheKey);
+      releaseConsumers();
+      if (this.inFlight.get(cacheKey) === entry) this.inFlight.delete(cacheKey);
     });
-    this.inFlight.set(cacheKey, request);
+    const entry: PendingRead = { promise: request, queueSignal: queueController.signal, addConsumer };
+    this.inFlight.set(cacheKey, entry);
     return request;
+  }
+
+  private watchQueuedConsumer(signal: AbortSignal, onAbort: () => void) {
+    let observed = this.queuedConsumerSignals.get(signal);
+    if (!observed) {
+      const callbacks = new Set<() => void>();
+      const listener = () => {
+        signal.removeEventListener("abort", listener);
+        this.queuedConsumerSignals.delete(signal);
+        const cancelled = [...callbacks];
+        callbacks.clear();
+        for (const cancel of cancelled) cancel();
+      };
+      observed = { callbacks, listener };
+      this.queuedConsumerSignals.set(signal, observed);
+      signal.addEventListener("abort", listener, { once: true });
+    }
+    observed.callbacks.add(onAbort);
+    const registration = observed;
+    return () => {
+      registration.callbacks.delete(onAbort);
+      if (registration.callbacks.size === 0 && this.queuedConsumerSignals.get(signal) === registration) {
+        signal.removeEventListener("abort", registration.listener);
+        this.queuedConsumerSignals.delete(signal);
+      }
+    };
   }
 
   private pruneResponseCache(now = Date.now()) {
@@ -169,9 +248,9 @@ export class UpstreamClient {
     return { baseUrl: this.env.UPSTREAM_API_BASE_URL, token: this.credentials.primary?.token ?? this.env.UPSTREAM_X_TOKEN, userName: this.env.UPSTREAM_USER_NAME };
   }
 
-  private async fetchJson(url: URL, token?: string, userName?: string): Promise<unknown> {
+  private async fetchJson(url: URL, token?: string, userName?: string, timeoutMs = this.env.REQUEST_TIMEOUT_MS): Promise<unknown> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.env.REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const headers: Record<string, string> = {};
       if (token) headers["x-token"] = token;

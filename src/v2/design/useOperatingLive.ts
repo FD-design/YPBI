@@ -5,6 +5,8 @@ import { shiftDate } from "../../components/ui/date-range-model";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { operatingLiveRows, operatingLiveColumns, operatingLiveColumnMetadataKey, operatingResource, operatingDataEnvironment, type OperatingResources } from "./operating-live-model";
 
+const MAX_OPERATING_REQUESTS = 6;
+
 /** Independent per-PID snapshots; failed or missing results never become fixtures. */
 export function useOperatingLive(live: LiveDashboardReading | null, platform = "all") {
   const [resources, setResources] = useState<OperatingResources>({});
@@ -39,7 +41,7 @@ export function useOperatingLive(live: LiveDashboardReading | null, platform = "
         }
       }
     };
-    void Promise.all(Array.from({ length: Math.min(3, platforms.length) }, worker));
+    void Promise.all(Array.from({ length: Math.min(MAX_OPERATING_REQUESTS, platforms.length) }, worker));
     return () => controller.abort();
   }, [key, revision]);
   const columnMetadataKey = useMemo(() => operatingLiveColumnMetadataKey(live, resources, platform), [live, resources, platform]);

@@ -288,8 +288,10 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
     if (!query.success || !board) return sendV2Error(request, reply, 400, "INVALID_DAILY_READING_QUERY", "看板查询参数不合法");
     if (!canAccessPid(principal, query.data.pid)) return sendV2Error(request, reply, 403, "PID_ACCESS_DENIED", "当前账号无权访问所选业务平台");
     if (!board.metricIds.length) return sendV2Error(request, reply, 422, "DAILY_BOARD_NOT_READY", "该看板尚无可读取的数据");
+    const controller = new AbortController();
+    const unbindClientAbort = bindClientRequestAbort(request.raw, reply.raw, controller, "daily_reading_client_aborted");
     try {
-      const result = dailyDashboardSuccessSchema.safeParse(await runInEnvironment(context, () => options.dailyDashboardService!.execute(query.data)));
+      const result = dailyDashboardSuccessSchema.safeParse(await runInEnvironment(context, () => options.dailyDashboardService!.execute(query.data, controller.signal)));
       const expectedMetricIds = query.data.projection ? OPERATING_METRIC_IDS : board.metricIds;
       if (!result.success || !dailyDashboardMatchesQuery(result.data, query.data, expectedMetricIds) || !dailyDashboardMatchesMapping(result.data)) {
         request.log.warn({ outcome: "response_contract_conflict", durationMs: Date.now() - startedAt }, "daily dashboard query rejected");
@@ -304,6 +306,8 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
         return sendV2Error(request, reply, failure.statusCode, failure.code, failure.message);
       }
       return sendV2Error(request, reply, 502, "DAILY_SOURCE_CONFLICT", "数据结构或范围异常，未显示本次结果");
+    } finally {
+      unbindClientAbort();
     }
   });
 

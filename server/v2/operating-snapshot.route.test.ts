@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import Fastify, { type FastifyInstance } from "fastify";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { OPERATING_METRIC_IDS } from "../../contracts/operating-detail-projection";
 import type { IdentityResolution } from "../identity/identity-provider";
 import { currentUpstreamRequestProfile } from "../upstream/request-profile";
+import { UpstreamError } from "../upstream/client";
 import { DailyDashboardService, dailyDashboardCatalog, type DailyDashboardExecutor } from "./daily-dashboard.service";
 import { v2BiPlugin } from "./plugin";
 
@@ -15,14 +17,59 @@ afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())
 const reader = (role = "reader", pidScope: "all" | string[] = ["PH"]): IdentityResolution => ({ status: "authenticated", principal: {
   subjectId: "fixture-reader", roles: [role], permissions: ["bi:read"], pidScope
 } });
-async function appFor(identity: IdentityResolution = reader(), executor: DailyDashboardExecutor = service()) {
+async function appFor(identity: IdentityResolution = reader(), executor: DailyDashboardExecutor = service(), setup?: (app: FastifyInstance) => void) {
   const app = Fastify(); apps.push(app);
+  setup?.(app);
   await app.register(v2BiPlugin, { prefix: "/api/bi/v2", identityProvider: { resolve: async () => identity },
     metricQueryService: { execute: async () => { throw new Error("not requested"); } },
     dailyDashboardService: executor, productionDailyDashboardEnabled: true });
   return app;
 }
 describe("兼容经营快照HTTP边界", () => {
+  for (const event of ["request_abort", "premature_response_close"] as const) test(`${event}透传内部取消信号并清理路由监听`, async () => {
+    let rawRequest!: IncomingMessage, rawResponse!: ServerResponse;
+    let signal!: AbortSignal, requestListeners: Function[] = [], responseListeners: Function[] = [];
+    const app = await appFor(reader(), { execute: async (_query, received) => {
+      signal = received!;
+      expect(signal.aborted).toBe(false);
+      if (event === "request_abort") rawRequest.emit("aborted");
+      else rawResponse.emit("close");
+      expect(signal.aborted).toBe(true);
+      throw new UpstreamError("UPSTREAM_TIMEOUT", "fixture cancelled", 504);
+    } }, app => app.addHook("onRequest", (request, reply, done) => {
+      rawRequest = request.raw; rawResponse = reply.raw;
+      requestListeners = rawRequest.listeners("aborted"); responseListeners = rawResponse.listeners("close");
+      done();
+    }));
+    const result = await app.inject({ method: "POST", url: "/api/bi/v2/queries/dashboards/daily-reading", payload: query }).catch(error => error);
+    if (event === "premature_response_close") expect(result.code).toBe("LIGHT_ECONNRESET");
+    else expect(result.statusCode).toBe(504);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    // The injection transport removes its own once-listeners on completion;
+    // the route must leave no additional listeners behind.
+    expect(rawRequest.listeners("aborted").every(listener => requestListeners.includes(listener))).toBe(true);
+    expect(rawResponse.listeners("close").every(listener => responseListeners.includes(listener))).toBe(true);
+  });
+
+  test("正常响应完成清理取消监听，不改变93列且正常关闭不取消已完成查询", async () => {
+    let rawRequest!: IncomingMessage, rawResponse!: ServerResponse, signal!: AbortSignal;
+    let requestListeners: Function[] = [], responseListeners: Function[] = [];
+    const app = await appFor(reader(), { execute: (request, received) => {
+      signal = received!; return service().execute(request, signal);
+    } }, app => app.addHook("onRequest", (request, reply, done) => {
+      rawRequest = request.raw; rawResponse = reply.raw;
+      requestListeners = rawRequest.listeners("aborted"); responseListeners = rawResponse.listeners("close");
+      done();
+    }));
+    const result = await app.inject({ method: "POST", url: "/api/bi/v2/queries/dashboards/daily-reading", payload: query });
+    expect(result.statusCode).toBe(200);
+    expect(result.json().data.series).toHaveLength(93);
+    expect(rawRequest.listeners("aborted").every(listener => requestListeners.includes(listener))).toBe(true);
+    expect(rawResponse.listeners("close").every(listener => responseListeners.includes(listener))).toBe(true);
+    rawResponse.emit("close"); rawRequest.emit("aborted");
+    expect(signal.aborted).toBe(false);
+  });
+
   for (const role of ["reader", "analyst", "maintainer"]) test(`${role}读取93列，默认121列仍保留`, async () => {
     const app = await appFor(reader(role));
     const snapshot = await app.inject({ method: "POST", url: "/api/bi/v2/queries/dashboards/daily-reading", payload: query });
