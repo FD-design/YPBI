@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchDailyDashboard, V2RequestError } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
-import { operatingLiveRows, operatingLiveColumns, operatingResource, type OperatingResources } from "./operating-live-model";
+import { operatingLiveRows, operatingLiveColumns, operatingLiveColumnMetadataKey, operatingResource, type OperatingResources } from "./operating-live-model";
 
 /** Independent per-PID snapshots; failed or missing results never become fixtures. */
-export function useOperatingLive(live: LiveDashboardReading | null) {
+export function useOperatingLive(live: LiveDashboardReading | null, platform = "all") {
   const [resources, setResources] = useState<OperatingResources>({});
   const platforms = live?.platforms ?? [], date = live?.query.dateRange[1] ?? "";
   const environment = live ? liveDataEnvironment(live) : undefined;
@@ -41,7 +41,8 @@ export function useOperatingLive(live: LiveDashboardReading | null) {
     void Promise.all(Array.from({ length: Math.min(3, platforms.length) }, worker));
     return () => controller.abort();
   }, [key, revision]);
-  const columns = useMemo(() => operatingLiveColumns(live), [live]);
-  const rows = useMemo(() => live ? operatingLiveRows(live, resources) : null, [live, resources]);
+  const columnMetadataKey = useMemo(() => operatingLiveColumnMetadataKey(live, resources, platform), [live, resources, platform]);
+  const columns = useMemo(() => operatingLiveColumns(live, resources, platform), [live, columnMetadataKey]);
+  const rows = useMemo(() => live ? operatingLiveRows(live, resources, platform) : null, [live, resources, platform]);
   return { resources, columns, rows };
 }

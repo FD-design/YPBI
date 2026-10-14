@@ -34,7 +34,8 @@ function cookiePair(setCookie: string | string[] | undefined, name: string) {
 }
 
 async function createApp(
-  options: Omit<BiAuthPluginOptions, "authService"> = {}
+  options: Omit<BiAuthPluginOptions, "authService"> = {},
+  now: () => Date = () => new Date()
 ) {
   const repository = new MemoryAuthRepository();
   const accounts = new BiAccountAdminService(repository, testScryptParameters);
@@ -46,6 +47,7 @@ async function createApp(
   });
   const authService = await BiAuthService.create(repository, {
     csrfSecret: "test-only-csrf-secret-at-least-32-bytes",
+    now,
     scryptParameters: testScryptParameters
   });
   const app = Fastify();
@@ -73,22 +75,45 @@ async function login(app: FastifyInstance, password = "Correct-password-2026") {
 
 describe("biAuthPlugin", () => {
   test("登录设置安全 Cookie，响应不泄露密码、哈希或原始会话", async () => {
-    const { app } = await createApp();
+    const issuedAt = new Date("2026-10-14T00:00:00.000Z");
+    const { app } = await createApp({}, () => new Date(issuedAt));
     const response = await login(app);
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
     const setCookies = setCookieValues(response.headers["set-cookie"]);
     expect(setCookies).toHaveLength(1);
+    expect(setCookies[0]).toContain("Max-Age=1296000;");
     expect(setCookies.find((value) => value.startsWith(`${BI_SESSION_COOKIE}=`))).toContain("HttpOnly; Secure; SameSite=Strict");
     expect(response.json().data).toMatchObject({
       user: { role: "analyst", pidScope: "all", permissions: ["bi:account:change-password"] },
       mustChangePassword: true
     });
     expect(response.json().data.csrfToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(response.json().data.expiresAt).toBe(new Date(issuedAt.getTime() + 15 * 24 * 60 * 60_000).toISOString());
     expect(response.body).not.toContain("Correct-password-2026");
     expect(response.body).not.toContain("$scrypt$");
     expect(response.body).not.toContain(BI_SESSION_COOKIE);
+  });
+
+  test("普通会话读取保持原到期时间，15天到期后清除 Cookie", async () => {
+    let timestamp = new Date("2026-10-14T00:00:00.000Z").getTime();
+    const { app } = await createApp({}, () => new Date(timestamp));
+    const loggedIn = await login(app);
+    const cookie = cookiePair(loggedIn.headers["set-cookie"], BI_SESSION_COOKIE)!;
+    const expiresAt = loggedIn.json().data.expiresAt as string;
+    timestamp += 12 * 60 * 60_000 + 1;
+
+    const session = await app.inject({ method: "GET", url: "/api/bi/v2/auth/session", headers: { cookie } });
+    expect(session.statusCode).toBe(200);
+    expect(session.json().data.expiresAt).toBe(expiresAt);
+    expect(session.headers["set-cookie"]).toBeUndefined();
+
+    timestamp = new Date(expiresAt).getTime();
+    const expired = await app.inject({ method: "GET", url: "/api/bi/v2/auth/session", headers: { cookie } });
+    expect(expired.statusCode).toBe(401);
+    expect(expired.json().error.code).toBe("AUTHENTICATION_REQUIRED");
+    expect(setCookieValues(expired.headers["set-cookie"])[0]).toContain("Max-Age=0;");
   });
 
   test("本地开发配置使用独立非 Secure Cookie，且读写使用同一名称", async () => {
@@ -381,7 +406,8 @@ describe("biAuthPlugin", () => {
   });
 
   test("修改密码校验当前密码并使全部旧会话失效", async () => {
-    const { app } = await createApp();
+    const changedAt = new Date("2026-10-14T00:00:00.000Z");
+    const { app } = await createApp({}, () => new Date(changedAt));
     const first = await login(app);
     const second = await login(app);
     const firstSession = cookiePair(first.headers["set-cookie"], BI_SESSION_COOKIE)!;
@@ -397,6 +423,8 @@ describe("biAuthPlugin", () => {
       payload: { currentPassword: "Correct-password-2026", newPassword: "Replacement-password-2026" }
     });
     expect(changed.statusCode).toBe(200);
+    expect(setCookieValues(changed.headers["set-cookie"])[0]).toContain("Max-Age=1296000;");
+    expect(changed.json().data.expiresAt).toBe(new Date(changedAt.getTime() + 15 * 24 * 60 * 60_000).toISOString());
     expect(changed.json().data.mustChangePassword).toBe(false);
     expect(changed.json().data.user.permissions).toEqual(permissionsByRole.analyst);
     const replacementCookie = cookiePair(changed.headers["set-cookie"], BI_SESSION_COOKIE)!;

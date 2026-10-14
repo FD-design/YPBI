@@ -234,14 +234,14 @@ function derivedPoint(mapping: CandidateMapping, date: string, sources: DailyPoi
     state: inputs[1].value === 0 ? "zero_denominator" : "available", inputs,
     ...(sources.every(point => point.sourceStatus === "READY") ? { sourceStatus: "READY" as const } : {}) };
 }
-function periodStatistics(id: CandidateId, points: readonly DailyPoint[], query: DailyDashboardQuery, today: string): DailyPeriodStatistics {
+function periodStatistics(id: CandidateId, points: readonly DailyPoint[], query: DailyDashboardQuery, today: string, dates?: readonly string[]): DailyPeriodStatistics {
   const dayCount = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
   const context = { aggregationVersion: DAILY_STATISTICS_VERSION, dateRange: query.dateRange, dayCount };
   const kinds = periodStatisticKinds[id];
   if (!kinds?.length) return { ...context, state: "unsupported", values: [], reason: "该指标暂不提供周期合计或日均" };
   if (query.dateRange[1] >= today) return { ...context, state: "incomplete", values: [], reason: "所选日期包含尚未结束的业务日" };
   if (points.length !== dayCount || points.some((point, index) =>
-    point.date !== new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10)
+    point.date !== (dates ? dates[index] : new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10))
     || point.state !== "available" || point.value === null
   )) return { ...context, state: "incomplete", values: [], reason: "所选日期存在缺失或不可用日值" };
   const mapping = mappings[id];
@@ -502,6 +502,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     } });
     const today = toBeijingDate(fetchedAt);
     const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
+    const dates = Array.from({ length: days }, (_, index) => new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10));
     const channelDays = new Map<string, Record<string, unknown>>();
     const channelFailures = new Set<string>();
     const needsChannel = sourceIds.some(id => mappings[id].channel);
@@ -511,7 +512,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, days) }, async () => {
         while (next < days) {
-          const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0,10);
+          const date = dates[next++];
           try {
             const result = z.object({ msg: z.object({ pageData:z.array(z.object({sumDate:z.string()}).loose()) }).loose() }).loose().parse(await client.get(PAYMENT_RATE_API,{pid:query.pid,startTime:date+" 00:00:00",endTime:date+" 23:59:59",page:"1",count:"100"}));
             assertScopeEcho(result.msg, query.pid, date);
@@ -526,7 +527,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       let next = 0;
       const worker = async () => {
         while (next < days) {
-          const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0, 10);
+          const date = dates[next++];
           try {
             const result = z.object({ msg: z.object({ pageData: z.array(rowSchema), totalData: z.array(z.record(z.string(), z.unknown())).max(1) }).loose() }).loose().parse(await client.get(CHANNEL_V2_API, {
               pid: query.pid, page: "1", count: "1", sumDateBegin: date + " 00:00:00", sumDateEnd: date + " 23:59:59"
@@ -548,7 +549,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, days) }, async () => {
         while (next < days) {
-          const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0, 10);
+          const date = dates[next++];
           try {
             const payload = await client.get(CHECKIN_OVERVIEW_API, { pid: query.pid, date });
             const result = z.object({ msg: z.object({ date: z.string() }).loose() }).loose().parse(payload);
@@ -565,7 +566,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, days) }, async () => {
         while (next < days) {
-          const date = new Date(Date.parse(query.dateRange[0]) + next++ * 86400000).toISOString().slice(0, 10);
+          const date = dates[next++];
           if (date >= today) { watchDays.set(date, { state: "no_value", value: null }); continue; }
           try { watchDays.set(date, await readWatchAttemptDay(client, query.pid, date)); }
           catch { watchFailures.add(date); }
@@ -625,8 +626,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           } catch {
             // Each filter group is independent. Missing or failed slices cannot
             // borrow the overall value or overwrite another group's healthy result.
-            for (let i = 0; i < days; i++) {
-              const date = new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10);
+            for (const date of dates) {
               const existing = biV1MetricDays.get(date) ?? { date, metrics: {} };
               for (const code of group.codes) existing.metrics[biV1MetricKey(code, group.filters)] = {
                 state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null
@@ -644,8 +644,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         const result = await readBiV1MonthlyMetricDays(client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] }, today);
         result.days.forEach(day => monthlyDays.set(day.date, day));
       } catch {
-        for (let i = 0; i < days; i++) {
-          const date = new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10);
+        for (const date of dates) {
           monthlyDays.set(date, { date, metrics: { M018: { state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null } } });
         }
       }
@@ -763,8 +762,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       ...(acquisitionGroups ? { acquisitionGroups } : {}),
       ...(playbackGroups ? { playbackGroups } : {}),
       series: ids.map(id => {
-        const points = Array.from({ length: days }, (_, i) => pointFor(id, new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10)));
-        return { metric: metric(id), points, periodStatistics: periodStatistics(id, points, query, today) };
+        const points = dates.map(date => pointFor(id, date));
+        return { metric: metric(id), points, periodStatistics: periodStatistics(id, points, query, today, dates) };
       })
     } });
     try {

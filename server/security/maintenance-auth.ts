@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 const SESSION_COOKIE = "bi_maintenance_session";
-const SESSION_TTL_MS = 30 * 60_000;
+const SESSION_TTL_MS = 15 * 24 * 60 * 60_000;
 const LOCK_TTL_MS = 15 * 60_000;
 
 interface AuthFailure {

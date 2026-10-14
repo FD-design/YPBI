@@ -6,6 +6,7 @@ import { REGISTRATION_RETENTION_WINDOWS, registrationCohortMetricId, registratio
 import { connectedCohortExportRows } from "./ConnectedCohorts";
 import type { WorkbookSheet as ExportSheet } from "./preview-workbook";
 import { diagnosticRatioInputs } from "../features/dashboards/diagnostic-inputs";
+import { isMonthlyMetric, liveMonthlySeriesRows } from "../features/dashboards/live-monthly-reading";
 
 const isCohortSeries = (id: string) => /^M(?:02[0-3]|115)(?:\.|$)/.test(id);
 const nonCohortSeries = (result: DailyDashboardSuccess) => result.data.series.filter(series => !isCohortSeries(series.metric.id));
@@ -31,7 +32,7 @@ export function connectedTopicExportSheets(live: LiveDashboardValue, cohortLive:
       ...liveExportEnvironmentRows(live), ["注册留存数据环境", dataEnvironmentLabel(liveDataEnvironment(cohortLive))],
       ["注册留存对比数据环境", cohortLive.comparison ? dataEnvironmentLabel(liveDataEnvironment(cohortLive.comparison)) : "未启用对比"],
       ["数据性质", "真实后台候选结果，待验数"], ["平台", live.query.pid], ["范围", live.query.dateRange.join(" 至 ")],
-      ["主值", "普通日指标为所选结束日；注册留存卡按成熟已返回批次加权；本文件逐日列出原始值"], ["完整性", "未知"], ["数据水位", "未返回"],
+      ["主值", "普通日指标为所选结束日；月活按自然月列出实际查询范围；注册留存卡按成熟已返回批次加权"], ["完整性", "未知"], ["数据水位", "未返回"],
       ["对比状态", !live.comparison ? "不对比" : live.comparison.state.status !== "success" || !live.comparison.state.data ? "对比查询未成功，不以演示结果补齐" : "独立读取上一等长周期"],
       ["注册日分组", scopeLabel], ["注册日期", cohortLive.query.dateRange.join(" 至 ")], ["注册留存当前状态", livePeriodStatus(cohortLive)],
       ["注册留存对比日期", cohortLive.comparison?.query.dateRange.join(" 至 ") ?? "未启用对比"], ["注册留存对比状态", livePeriodStatus(cohortLive, true)]
@@ -50,12 +51,17 @@ export function connectedTopicExportSheets(live: LiveDashboardValue, cohortLive:
         point.label, live.query.pid, point.date, point.value, point.unit === "%" ? "原始比值" : point.unit,
         point.calculation ? `${point.calculation.numerator.name}：${point.calculation.numerator.value ?? "—"} ${point.calculation.numerator.unit}；${point.calculation.denominator.name}：${point.calculation.denominator.value ?? "—"} ${point.calculation.denominator.unit}` : "",
         point.reason ?? "该日未返回", point.fetchedAt, point.freshness ?? "本次查询结果"])] }] : []),
-    ...periods.flatMap(period => nonCohortSeries(period.result).map(series => ({ name: period.name + "-" + series.metric.name, rows: [
-      ["日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态"],
-      ...series.points.map(point => [point.date, hasUsableInputs(point) ? point.value : null,
-        ...point.inputs.map(input => hasUsableInputs(point) || diagnosticRatioInputs(series.metric, point) ? input.value : null), livePointStateLabel(point, series.metric), period.result.data.fetchedAt,
-        period.stale ? "上次查询结果" : "本次查询结果"])
-    ] }))),
+    ...periods.flatMap(period => nonCohortSeries(period.result).map(series => {
+      const monthly = isMonthlyMetric(series.metric.id);
+      const records = monthly ? liveMonthlySeriesRows(series, period.result).map(({ point, label }) => ({ point, date: label }))
+        : series.points.map(point => ({ point, date: point.date }));
+      return { name: period.name + "-" + series.metric.name, rows: [
+        [monthly ? "自然月与实际查询范围" : "日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态", ...(monthly ? ["范围说明"] : [])],
+        ...records.map(({ point, date }) => [date, hasUsableInputs(point) ? point.value : null,
+          ...point.inputs.map(input => hasUsableInputs(point) || diagnosticRatioInputs(series.metric, point) ? input.value : null), monthly && point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(point, series.metric), period.result.data.fetchedAt,
+          period.stale ? "上次查询结果" : "本次查询结果", ...(monthly ? ["实际查询截止不是来源数据水位"] : [])])
+      ] };
+    })),
     ...cohortPeriods.map(period => ({ name: period.name, rows: connectedCohortExportRows(period.query, period.state, scope) }))
   ];
 }

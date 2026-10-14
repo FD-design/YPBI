@@ -367,7 +367,7 @@ describe("数据源维护管理接口", () => {
 
   test("登录成功后签发安全 Cookie，响应禁止缓存且不回显密码", async () => {
     const { app } = await createHarness();
-
+    const startedAt = Date.now();
     const response = await app.inject({
       method: "POST",
       url: "/api/bi/admin/auth/login",
@@ -377,6 +377,10 @@ describe("数据源维护管理接口", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
     const cookie = maintenanceSetCookie(response.headers["set-cookie"]);
+    expect(cookie).toContain("Max-Age=1296000;");
+    const expiresAt = new Date(response.json().data.expiresAt).getTime();
+    expect(expiresAt).toBeGreaterThanOrEqual(startedAt + 15 * 24 * 60 * 60_000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 15 * 24 * 60 * 60_000);
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("Secure");
     expect(cookie).toContain("SameSite=Strict");

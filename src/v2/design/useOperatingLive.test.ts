@@ -84,7 +84,7 @@ test("null到真实读取再到null保持钩子顺序并立即移除真实行", 
 function derivationRenderer() {
   const internals = (React as unknown as Record<string, { H: unknown }>).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
   const memos: { deps: readonly unknown[]; value: unknown }[] = [];
-  return (live: LiveDashboardReading | null, resources: OperatingResources) => {
+  return (live: LiveDashboardReading | null, resources: OperatingResources, platform = "all") => {
     let index = 0;
     const prior = internals.H;
     internals.H = {
@@ -98,7 +98,7 @@ function derivationRenderer() {
         return memos[i].value;
       }
     };
-    try { return useOperatingLive(live); } finally { internals.H = prior; }
+    try { return useOperatingLive(live, platform); } finally { internals.H = prior; }
   };
 }
 
@@ -144,4 +144,28 @@ test("完整resources引用变化重算行但复用列，刷新失败与读取�
   expect(failed.rows![0].values[index]).toMatchObject({ current: null, evidence: { current: { state: "failed", label: "读取失败" } } });
   const pending = render(live, { PH: { status: "loading" } });
   expect(pending.rows![0].values[index]).toMatchObject({ current: null, evidence: { current: { state: "loading", label: "读取中" } } });
+});
+
+test("页头读取失败时独立资源更新列单位，单位冲突与单PID选择共享同一投影", () => {
+  const render = derivationRenderer(), live: LiveDashboardReading = { ...loadingReading(), state: { status: "failure", kind: "error", code: "TIMEOUT", message: "读取失败" },
+    platforms: [{ pid: "PH", name: "Pornhub" }, { pid: "TT", name: "TikTok" }] };
+  const second = source(7, "元", "独立经营");
+  second.data.data.query.pid = "TT";
+  const resources: OperatingResources = { PH: live.state, TT: second };
+  const initial = render(live, { PH: live.state, TT: { status: "loading" } });
+  const index = initial.columns.findIndex(column => column.metric.id === "M058" && !column.slice);
+  expect(initial.columns[index].unit).toBe("");
+  const loaded = render(live, resources);
+  expect(loaded.columns[index].unit).toBe("元");
+  expect(loaded.rows![1].values[index].current).toBe(7);
+  const otherUnit = source(0, "USD", "独立平台"), mixed = { ...resources, PH: otherUnit };
+  const conflict = render(live, mixed);
+  expect(conflict.columns[index].unit).toBe("");
+  expect(conflict.rows!.map(row => row.values[index].current)).toEqual([null, null]);
+  const selected = render(live, mixed, "TT");
+  expect(selected.columns[index].unit).toBe("元");
+  expect(selected.rows![1].values[index]).toMatchObject({ current: 7, evidence: { current: { state: "available", unit: "元" } } });
+  const restored = render(live, mixed);
+  expect(restored.columns[index].unit).toBe("");
+  expect(restored.rows!.map(row => row.values[index].current)).toEqual([null, null]);
 });

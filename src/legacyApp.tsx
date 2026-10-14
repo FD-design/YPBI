@@ -2364,7 +2364,7 @@ function DataSourceMaintenance() {
       const siteOne = site === "primary";
       return <article className="source-site-card" key={site}><div className="source-site-title"><div><i className={status?.configured ? "ready" : ""} /><span>{siteOne ? "站1" : "站2"}</span><b>{siteOne ? "主后台" : "第二后台"}</b></div><em>{status?.configured ? "已配置" : "未配置"}</em></div><dl><div><dt>请求用户名</dt><dd>{status?.userName || "--"}</dd></div><div><dt>当前 Token</dt><dd>{status?.tokenHint ?? "--"}</dd></div><div><dt>页面更新时间</dt><dd>{status?.updatedAt ? new Date(status.updatedAt).toLocaleString("zh-CN") : "由服务器环境变量提供"}</dd></div><div><dt>平台范围</dt><dd>{siteOne ? "PH 等主站平台" : "FBI、BZMH、TJD 等第二站平台"}</dd></div></dl><label><span>粘贴新 Token</span><input type="password" autoComplete="new-password" placeholder="Token 不会在保存后回显" value={tokens[site]} onChange={(event) => setTokens((current) => ({ ...current, [site]: event.target.value }))} /></label><small>仅更新 Token；请求地址、用户名和 PID 路由仍由服务器配置管理。</small><div className="source-site-actions"><button disabled={busySite !== null} onClick={() => testSite(site)}>{busySite === site ? "验证中..." : "测试当前连接"}</button><button className="primary-btn" disabled={busySite !== null || !tokens[site].trim()} onClick={() => saveSite(site)}>{busySite === site ? "验证并保存中..." : "验证并保存"}</button></div></article>;
     })}</div>
-    <div className="credential-security-note"><b>安全说明</b><span>Token 只发送给本站 BI 后端，浏览器不保存、不回显；服务器以仅 root 可读文件保存。维护密码只用于登录，登录后使用30分钟安全会话，浏览器脚本无法读取会话凭证。</span></div>
+    <div className="credential-security-note"><b>安全说明</b><span>Token 只发送给本站 BI 后端，浏览器不保存、不回显；服务器以仅 root 可读文件保存。维护密码只用于登录，登录后使用15天安全会话，浏览器脚本无法读取会话凭证。</span></div>
   </section>;
 }
 

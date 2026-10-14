@@ -200,6 +200,39 @@ test("业务请求 401 全局清除旧页面并回登录，403 仅显示无权�
   expect(new URL(page.url()).searchParams.get("returnTo")).toBe("/data/metrics");
 });
 
+test("普通会话按服务端15天期限恢复、复核及到期", async ({ page }) => {
+  const issuedAt = new Date("2026-10-14T00:00:00.000Z");
+  const expiresAt = new Date(issuedAt.getTime() + 15 * 24 * 60 * 60_000).toISOString();
+  await page.clock.install({ time: new Date(issuedAt.getTime() - 1_000) });
+  await page.clock.pauseAt(issuedAt);
+  let sessionValid = true;
+  let sessionRequests = 0;
+  await page.route("**/api/bi/v2/auth/session", (route) => {
+    sessionRequests += 1;
+    return route.fulfill(sessionValid
+      ? { status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { ...sessionData(), expiresAt } }) }
+      : { status: 401, contentType: "application/json", body: JSON.stringify(authError()) });
+  });
+  await installMetricCatalog(page);
+  await page.goto(`${baseUrl}/data/metrics`, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#metric-open-M016")).toBeVisible();
+
+  await page.clock.fastForward(30 * 60_000 + 1);
+  await expect(page.locator("#metric-open-M016")).toBeVisible();
+  await page.clock.fastForward(12 * 60 * 60_000 - 30 * 60_000);
+  await expect(page.locator("#metric-open-M016")).toBeVisible();
+  const requestsBeforeFocus = sessionRequests;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => sessionRequests).toBeGreaterThan(requestsBeforeFocus);
+  await page.clock.fastForward(15 * 24 * 60 * 60_000 - 12 * 60 * 60_000 - 2);
+  await expect(page.locator("#metric-open-M016")).toBeVisible();
+
+  sessionValid = false;
+  await page.clock.fastForward(251);
+  await expect(page.getByRole("heading", { name: "登录 YPBI" })).toBeVisible();
+  await expect(page.locator("#metric-open-M016")).toHaveCount(0);
+});
+
 test("页面重新获得焦点时复核会话，失效后清除旧页面并回登录", async ({ page }) => {
   let sessionValid = true;
   await page.route("**/api/bi/v2/auth/session", (route) => route.fulfill(sessionValid

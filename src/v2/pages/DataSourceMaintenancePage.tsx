@@ -369,7 +369,7 @@ export function DataSourceMaintenancePage() {
       <header className="v2-page-head"><div><span className="v2-eyebrow">管理中心</span><h1>数据源维护</h1><p>使用独立维护会话管理上游 Token，与普通 BI 登录及数据权限相互隔离。</p></div></header>
       <SourceConnectionGuide />
       <section className="v2-maintenance-login">
-        <div className="v2-maintenance-login__intro"><ShieldCheck aria-hidden="true" /><div><h2>进入受保护配置</h2><p>维护会话有效期 30 分钟。连续输错 5 次后，当前来源会锁定 15 分钟。</p></div></div>
+        <div className="v2-maintenance-login__intro"><ShieldCheck aria-hidden="true" /><div><h2>进入受保护配置</h2><p>维护会话有效期 15 天。连续输错 5 次后，当前来源会锁定 15 分钟。</p></div></div>
         <form onSubmit={login}>
           <label htmlFor="maintenance-password"><span>维护密码</span><input id="maintenance-password" type="password" autoComplete="current-password" minLength={12} maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)} disabled={operation.kind === "login"} autoFocus /></label>
           {access.error && <div className="v2-inline-alert v2-inline-alert--danger" role="alert"><AlertTriangle aria-hidden="true" /><span>{access.error.message}{access.error.code && <small>错误代码：{access.error.code}</small>}</span></div>}

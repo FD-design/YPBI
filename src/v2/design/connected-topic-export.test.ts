@@ -3,6 +3,7 @@ import type { DailyDashboardV2Success } from "../../../contracts/daily-dashboard
 import type { LiveDashboardReading, LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import { REGISTRATION_COHORT_SCOPES, REGISTRATION_RETENTION_WINDOWS, registrationCohortMetricId, registrationCohortScopeLabel, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
 import { connectedTopicExportSheets } from "./connected-topic-export";
+import { recordDailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 
 type Series = DailyDashboardV2Success["data"]["series"][number];
 function series(id: string, date: string, count: number, base?: number, overrides: Partial<LiveSeries["points"][number]> = {}): Series {
@@ -101,5 +102,76 @@ describe("真实留存专题整页导出", () => {
     expect(rows).toHaveLength(4);
     expect(rows.every(row => row[0] === previousCohortDate && row[2] === null && row[4] === null && row[5] === null && row[7] === "读取失败")).toBe(true);
     expect(sheets.find(sheet => sheet.name === "读取说明")!.rows).toContainEqual(["注册留存对比状态", "读取失败"]);
+  });
+});
+
+function monthlyReading(dateRange: [string, string], anchors: Record<string, number | null>, fetchedAt = "2026-10-12T00:00:00Z") {
+  const dates = Array.from({ length: (Date.parse(dateRange[1]) - Date.parse(dateRange[0])) / 86400000 + 1 }, (_, index) =>
+    new Date(Date.parse(dateRange[0]) + index * 86400000).toISOString().slice(0, 10));
+  const monthly = series("M018", dateRange[0], 0), daily = series("M016", dateRange[0], 42);
+  monthly.points = dates.map(date => Object.hasOwn(anchors, date) && anchors[date] !== null
+    ? { date, state: "available", sourceStatus: "READY", value: anchors[date], inputs: [{ key: "count", value: anchors[date] }] }
+    : { date, state: "no_record", value: null, inputs: [{ key: "count", value: null }] });
+  daily.points = dates.map(date => ({ ...daily.points[0], date }));
+  for (const item of [monthly, daily]) item.periodStatistics = {
+    aggregationVersion: "daily-statistics/v1", dateRange, dayCount: dates.length, state: "unsupported", values: [], reason: "本夹具仅核对明细"
+  };
+  const live = reading(dateRange[1], [monthly, daily]);
+  live.query.dateRange = dateRange;
+  if (live.state.status !== "success") throw new Error("expected successful fixture");
+  live.state.data.data.fetchedAt = fetchedAt;
+  recordDailyDashboardEnvironment(live.state.data, "test");
+  return live;
+}
+
+describe("真实留存专题整页月活导出", () => {
+  const rows = (live: LiveDashboardReading, name = "当前期-M018") => connectedTopicExportSheets(live, live, "overall").find(sheet => sheet.name === name)!.rows;
+
+  test("历史月中结果和计算输入共用完整自然月，不导出非锚点伪空日", () => {
+    const live = monthlyReading(["2020-01-12", "2020-01-17"], { "2020-01-17": 42 });
+    const before = JSON.stringify(live), monthly = rows(live);
+    expect(monthly).toHaveLength(2);
+    expect(monthly[0]).toEqual(["自然月与实际查询范围", "结果（人）", "人数（人）", "状态", "查询时间", "刷新状态", "范围说明"]);
+    expect(monthly[1]).toEqual(["2020-01 自然月 · 2020-01-01 至 2020-01-31", 42, 42, "已返回", "2026-10-12T00:00:00Z", "本次查询结果", "实际查询截止不是来源数据水位"]);
+    expect(rows(live, "读取说明")).toContainEqual(["数据环境", "测试数据"]);
+    expect(rows(live, "指标口径")).toContainEqual(["M018", "人", null, "M018来源"]);
+    expect(JSON.stringify(live)).toBe(before);
+    const daily = rows(live, "当前期-M016");
+    expect(daily[0]).toEqual(["日期", "结果（人）", "人数（人）", "状态", "查询时间", "刷新状态"]);
+    expect(daily.slice(1).map(row => row[0])).toEqual(["2020-01-12", "2020-01-13", "2020-01-14", "2020-01-15", "2020-01-16", "2020-01-17"]);
+    expect(daily.slice(1).every(row => row[1] === 42 && row[2] === 42)).toBe(true);
+  });
+
+  test("当前月范围采用执行快照已结束业务日，保留刷新与独立对比期", () => {
+    const live = monthlyReading(["2026-10-03", "2026-10-06"], { "2026-10-06": 12 }, "2026-10-11T16:30:00Z");
+    const previous = monthlyReading(["2026-09-03", "2026-09-06"], { "2026-09-06": 8 });
+    if (live.state.status === "success") live.state.refreshError = { message: "读取失败", code: "UPSTREAM_TIMEOUT" };
+    const compared = attachComparison(live, previous);
+    expect(rows(compared)[1]).toEqual(["2026-10 自然月 · 2026-10-01 至 2026-10-11", 12, 12, "已返回", "2026-10-11T16:30:00Z", "上次查询结果", "实际查询截止不是来源数据水位"]);
+    expect(rows(compared, "对比期-M018")[1].slice(0, 3)).toEqual(["2026-09 自然月 · 2026-09-01 至 2026-09-30", 8, 8]);
+  });
+
+  test("跨年闰月每月唯一一行，真实0与缺月状态各自保留", () => {
+    const live = monthlyReading(["2019-12-20", "2020-03-04"], { "2019-12-31": 0, "2020-01-31": 42, "2020-02-29": null, "2020-03-04": 7 });
+    expect(rows(live).slice(1).map(row => row.slice(0, 4))).toEqual([
+      ["2019-12 自然月 · 2019-12-01 至 2019-12-31", 0, 0, "已返回"],
+      ["2020-01 自然月 · 2020-01-01 至 2020-01-31", 42, 42, "已返回"],
+      ["2020-02 自然月 · 2020-02-01 至 2020-02-29", null, null, "本月未返回记录"],
+      ["2020-03 自然月 · 2020-03-01 至 2020-03-31", 7, 7, "已返回"]
+    ]);
+  });
+
+  for (const [sourceStatus, state, label] of [["PROCESSING", "no_value", "计算中"], ["SOURCE_INCOMPLETE", "no_value", "数据接入中"], ["NOT_MATURE", "immature", "待成熟"], ["FAILED", "source_failure", "数据异常"]] as const) {
+    test(`月活${sourceStatus}只保留所属月与状态，清空残留结果和计算输入`, () => {
+      const live = monthlyReading(["2020-01-12", "2020-01-17"], { "2020-01-17": 987654 });
+      if (live.state.status !== "success") throw new Error("expected successful fixture");
+      Object.assign(live.state.data.data.series[0].points.at(-1)!, { state, sourceStatus, value: null });
+      expect(rows(live)[1].slice(0, 4)).toEqual(["2020-01 自然月 · 2020-01-01 至 2020-01-31", null, null, label]);
+    });
+  }
+
+  test("尚无已结束业务日时保留月状态，不生成实际截止", () => {
+    const live = monthlyReading(["2026-10-01", "2026-10-01"], {}, "2026-09-30T17:00:00Z");
+    expect(rows(live)[1].slice(0, 4)).toEqual(["2026-10 自然月 · 尚无已结束业务日", null, null, "本月未返回记录"]);
   });
 });

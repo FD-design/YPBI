@@ -12,7 +12,7 @@ import type { AuthRepository, AuthenticatedSessionRecord, AuthUserRecord } from 
 import { principalForUser } from "./roles";
 import { createOpaqueToken, deriveCsrfToken, hashOpaqueToken, safeTokenEquals } from "./tokens";
 
-const SESSION_TTL_MS = 12 * 60 * 60_000;
+const SESSION_TTL_MS = 15 * 24 * 60 * 60_000;
 const loginFailurePolicy = { threshold: 5, windowMs: 15 * 60_000, lockMs: 15 * 60_000 } as const;
 
 export class AuthServiceError extends Error {

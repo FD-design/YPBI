@@ -18,6 +18,8 @@ describe("MaintenanceAuth", () => {
     const session = auth.login("127.0.0.1", userOne, password);
 
     expect(session.token.length).toBeGreaterThan(32);
+    expect(session.expiresAt).toBe(1_000 + 15 * 24 * 60 * 60_000);
+    expect(auth.sessionCookie(session.token)).toContain("Max-Age=1296000; HttpOnly; Secure; SameSite=Strict");
     expect(auth.authenticate("127.0.0.1", userOne, `other=1; bi_maintenance_session=${session.token}`)).toBe(true);
     expect(auth.authenticate("127.0.0.2", userOne, `bi_maintenance_session=${session.token}`)).toBe(false);
   });
@@ -89,11 +91,18 @@ describe("MaintenanceAuth", () => {
     expect(auth.revokeSubject("user-1")).toBe(0);
   });
 
-  test("过期会话失效并从内存中移除", () => {
+  test("维护会话固定有效15天，认证不续期且精确到期", () => {
     let now = 1_000;
     const auth = new MaintenanceAuth(passwordHash, () => now);
     const session = auth.login("127.0.0.1", userOne, password);
-    now += 30 * 60_000 + 1;
+    const expiresAt = 1_000 + 15 * 24 * 60 * 60_000;
+    expect(session.expiresAt).toBe(expiresAt);
+    for (const elapsed of [30 * 60_000 + 1, 12 * 60 * 60_000 + 1, 15 * 24 * 60 * 60_000 - 1]) {
+      now = 1_000 + elapsed;
+      expect(auth.authenticate("127.0.0.1", userOne, `bi_maintenance_session=${session.token}`)).toBe(true);
+      expect(session.expiresAt).toBe(expiresAt);
+    }
+    now = expiresAt;
 
     expect(auth.authenticate("127.0.0.1", userOne, `bi_maintenance_session=${session.token}`)).toBe(false);
   });

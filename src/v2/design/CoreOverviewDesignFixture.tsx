@@ -387,7 +387,8 @@ function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: Selecte
 
 function CoreOverviewDesignFixture() {
   const live = useLiveDashboard();
-  const operating = useOperatingLive(live);
+  const [detailPlatform, setDetailPlatform] = useState("all");
+  const operating = useOperatingLive(live, detailPlatform);
   const shared = readPreviewQuery();
   const initialView = parseExtendedView(new URLSearchParams(window.location.search).get("view"));
   const initialFilters: FilterState = { ...(initialView?.range ?? shared.range), scope: "all", comparison: (initialView?.compared ?? shared.compared) ? "previous" : "none" };
@@ -402,7 +403,6 @@ function CoreOverviewDesignFixture() {
   const [activeChain, setActiveChain] = useState<ChainKey>("content");
   const [sort, setSort] = useState({ columnIndex: 0, direction: "desc" as "asc" | "desc" });
   const [detailComparison, setDetailComparison] = useState<DetailComparisonMode>("none");
-  const [detailPlatform, setDetailPlatform] = useState("all");
   const [adAudience,setAdAudience]=useState("all");
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [locatedColumn, setLocatedColumn] = useState("");

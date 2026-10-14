@@ -19,7 +19,8 @@ const testScryptParameters: ScryptParameters = {
 
 async function harness(
   role: "reader" | "analyst" | "maintainer" = "reader",
-  passwordKdfGate?: PasswordKdfGate
+  passwordKdfGate?: PasswordKdfGate,
+  sessionOptions: { sessionTtlMs?: number } = { sessionTtlMs: 60_000 }
 ) {
   let timestamp = new Date("2026-09-08T08:00:00.000Z");
   const now = () => new Date(timestamp);
@@ -34,7 +35,7 @@ async function harness(
   const service = await BiAuthService.create(repository, {
     csrfSecret: "test-only-csrf-secret-at-least-32-bytes",
     now,
-    sessionTtlMs: 60_000,
+    ...sessionOptions,
     scryptParameters: testScryptParameters,
     passwordKdfGate
   });
@@ -42,11 +43,50 @@ async function harness(
     repository,
     accounts,
     service,
+    now,
     advance(milliseconds: number) { timestamp = new Date(timestamp.getTime() + milliseconds); }
   };
 }
 
 describe("BiAuthService", () => {
+  test("普通会话固定有效15天，读取不续期且精确到期", async () => {
+    const { service, advance, now } = await harness("reader", undefined, {});
+    const issuedAt = now().getTime();
+    const login = await service.login("alice", "Correct-password-2026");
+    const expiresAt = issuedAt + 15 * 24 * 60 * 60_000;
+    expect(login.expiresAt.getTime()).toBe(expiresAt);
+    expect(service.sessionTtlSeconds()).toBe(1_296_000);
+
+    for (const elapsed of [30 * 60_000 + 1, 12 * 60 * 60_000 + 1, 15 * 24 * 60 * 60_000 - 1]) {
+      advance(issuedAt + elapsed - now().getTime());
+      const session = await service.resolveSession(login.sessionToken);
+      expect(session).not.toBeNull();
+      expect(service.sessionData(login.sessionToken, session!).expiresAt).toBe(login.expiresAt.toISOString());
+    }
+    advance(1);
+    expect(await service.resolveSession(login.sessionToken)).toBeNull();
+  });
+
+  test("服务重建保留存量会话原期限，新登录使用15天", async () => {
+    const { repository, service: previousService, advance, now } = await harness("reader", undefined, {
+      sessionTtlMs: 12 * 60 * 60_000
+    });
+    const previous = await previousService.login("alice", "Correct-password-2026");
+    const service = await BiAuthService.create(repository, {
+      csrfSecret: "test-only-csrf-secret-at-least-32-bytes",
+      now,
+      scryptParameters: testScryptParameters
+    });
+    const current = await service.login("alice", "Correct-password-2026");
+    expect(current.expiresAt.getTime() - now().getTime()).toBe(15 * 24 * 60 * 60_000);
+    expect((await service.resolveSession(previous.sessionToken))?.record.session.expiresAt).toEqual(previous.expiresAt);
+    advance(12 * 60 * 60_000 - 1);
+    expect(await service.resolveSession(previous.sessionToken)).not.toBeNull();
+    advance(1);
+    expect(await service.resolveSession(previous.sessionToken)).toBeNull();
+    expect(await service.resolveSession(current.sessionToken)).not.toBeNull();
+  });
+
   test("登录签发不透明会话并固定授予全部 PID", async () => {
     const { service } = await harness("analyst");
     const result = await service.login("  ALICE ", "Correct-password-2026");
@@ -131,8 +171,9 @@ describe("BiAuthService", () => {
     expect(permissionsByRole.analyst).toEqual(expect.arrayContaining(permissionsByRole.reader));
     expect(permissionsByRole.maintainer).toEqual(expect.arrayContaining(permissionsByRole.analyst));
     for (const role of ["reader", "analyst", "maintainer"] as const) {
-      const { service } = await harness(role);
+      const { service, now } = await harness(role, undefined, {});
       const login = await service.login("alice", "Correct-password-2026");
+      expect(login.expiresAt.getTime() - now().getTime()).toBe(15 * 24 * 60 * 60_000);
       expect(login.principal.pidScope).toBe("all");
       expect(login.principal.role).toBe(role);
       expect(login.principal.permissions).toEqual(["bi:account:change-password"]);
@@ -140,12 +181,14 @@ describe("BiAuthService", () => {
   });
 
   test("首次改密原子撤销旧会话、签发新会话并恢复角色权限", async () => {
-    const { service } = await harness("analyst");
+    const { service, now, advance } = await harness("analyst", undefined, {});
     const first = await service.login("alice", "Correct-password-2026");
+    advance(12 * 60 * 60_000 + 1);
     const oldSession = await service.resolveSession(first.sessionToken);
     const changed = await service.changePassword(oldSession!, "Correct-password-2026", "Replacement-password-2026");
 
     expect(changed.mustChangePassword).toBe(false);
+    expect(changed.expiresAt.getTime() - now().getTime()).toBe(15 * 24 * 60 * 60_000);
     expect(changed.principal.permissions).toEqual([...permissionsByRole.analyst]);
     expect(changed.sessionToken).not.toBe(first.sessionToken);
     expect(await service.resolveSession(first.sessionToken)).toBeNull();

@@ -1,6 +1,6 @@
-import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
+import type { DailyDashboardSuccess, DailyReadingMetric } from "../../../contracts/daily-dashboard";
 import type { V2ResourceState } from "../api/useV2Resource";
-import { liveMetricModel, liveMetricUnit, livePointStateLabel, liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveMetricModel, livePointStateLabel, liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import type { DataEnvironmentMode } from "../api/dataEnvironmentPreference";
 import { shiftDate } from "../../components/ui/date-range-model";
@@ -47,33 +47,65 @@ export interface DetailEvidence {
   inputs: { name: string; unit: string; value: number | null }[]; formula: string | null;
   referenceRatio?: NonNullable<ReturnType<typeof retentionReferenceRatio>>;
 }
-export function operatingLiveColumns(live: LiveDashboardReading | null): DetailColumn[] {
+interface OperatingColumnMetadata { source: DailyReadingMetric; units: Set<string> }
+function operatingColumnMetadata(live: LiveDashboardReading | null, resources?: OperatingResources, platform = "all") {
+  const metadata = new Map<string, OperatingColumnMetadata>();
+  if (!live) return metadata;
+  const date = live.query.dateRange[1], environment = liveDataEnvironment(live);
+  const metricIds = new Set(live.metricIds);
+  for (const item of live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]) {
+    if (platform !== "all" && item.pid !== platform) continue;
+    const hasResource = resources && Object.hasOwn(resources, item.pid);
+    const resource = hasResource ? operatingResource(resources[item.pid], item.pid, date, environment) : undefined;
+    const fallback = !hasResource && item.pid === live.query.pid && live.state.status === "success"
+      && live.state.data.data.query.pid === item.pid && live.state.data.data.query.boardId === live.query.boardId
+      && live.state.data.data.query.dateRange[0] <= date && live.state.data.data.query.dateRange[1] >= date ? live.state.data : null;
+    const result = resource?.status === "success" ? resource.data : fallback;
+    for (const { metric } of result?.data.series ?? []) {
+      if (!metricIds.has(metric.id)) continue;
+      const current = metadata.get(metric.id);
+      if (current) current.units.add(metric.unit);
+      else metadata.set(metric.id, { source: metric, units: new Set([metric.unit]) });
+    }
+  }
+  return metadata;
+}
+
+/** Only metadata affects columns; refresh flags and values do not invalidate their projection. */
+export function operatingLiveColumnMetadataKey(live: LiveDashboardReading | null, resources: OperatingResources, platform = "all") {
+  return JSON.stringify([...operatingColumnMetadata(live, resources, platform)].map(([id, { source, units }]) => [id, source, [...units]]));
+}
+
+export function operatingLiveColumns(live: LiveDashboardReading | null, resources?: OperatingResources, platform = "all"): DetailColumn[] {
+  const metadata = operatingColumnMetadata(live, resources, platform);
   return DETAIL_COLUMNS.map(column => {
     const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
     if (!live?.metricIds.includes(id)) return column;
-    const source = live.state.status === "success" && live.state.data.data.query.pid === live.query.pid ? live.state.data.data.series.find(series => series.metric.id === id)?.metric : undefined;
+    const entry = metadata.get(id), source = entry?.source;
     return { ...column, pendingReason: undefined,
       metric: source ? { ...column.metric, definition: [source.definition, source.sourceNote].filter(Boolean).join(" ") } : column.metric,
-      unit: liveMetricUnit(live, id) ?? (column.unit.startsWith("USD") ? "" : column.metric.id === "M060" ? "次" : column.unit) };
+      unit: entry ? entry.units.size === 1 ? source!.unit : "" : (column.unit.startsWith("USD") ? "" : column.metric.id === "M060" ? "次" : column.unit) };
   });
 }
-export function operatingLiveRows(live: LiveDashboardReading, resources: OperatingResources): DetailRow[] {
+export function operatingLiveRows(live: LiveDashboardReading, resources: OperatingResources, selectedPlatform = "all"): DetailRow[] {
   const date = live.query.dateRange[1];
+  const metadata = operatingColumnMetadata(live, resources, selectedPlatform);
   return (live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]).map(platform => {
     const resource = operatingResource(resources[platform.pid], platform.pid, date, liveDataEnvironment(live));
     const values = DETAIL_COLUMNS.map((column): DetailValue => {
       const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
       if (!id || !live.metricIds.includes(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
       const series = resource?.status === "success" ? resource.data.data.series.find(series => series.metric.id === id) : undefined;
+      const unitConflict = (metadata.get(id)?.units.size ?? 0) > 1;
       const point = (day: string) => series?.points.find(point => point.date === day);
       const readable = (value: ReturnType<typeof point>) => value && (!value.sourceStatus || value.sourceStatus === "READY") && (value.state === "available" || value.state === "zero_denominator");
-      const resultValue = (day: string) => { const value = point(day); return readable(value) && value?.state === "available" ? value.value : null; };
+      const resultValue = (day: string) => { const value = point(day); return !unitConflict && readable(value) && value?.state === "available" ? value.value : null; };
       const evidence = (day: string): DetailEvidence => {
         const value = point(day);
         const diagnostic = series && diagnosticRatioInputs(series.metric, value);
-        const reference = series && retentionReferenceRatio(series.metric, value);
-        return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : value?.state === "available" && !readable(value) ? "no_value" : value?.state ?? "no_value",
-          label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : value ? livePointStateLabel(value) : "字段未返回",
+        const reference = !unitConflict && series && retentionReferenceRatio(series.metric, value);
+        return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : unitConflict && readable(value) ? "invalid_value" : value?.state === "available" && !readable(value) ? "no_value" : value?.state ?? "no_value",
+          label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : unitConflict && readable(value) ? "单位不一致" : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : value ? livePointStateLabel(value) : "字段未返回",
           fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: resource?.status === "success" && Boolean(resource.refreshError),
           inputs: series?.metric.inputs.map(input => ({ ...input, value: readable(value) || diagnostic ? value?.inputs.find(value => value.key === input.key)?.value ?? null : null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote,
           ...(reference ? { referenceRatio: reference } : {}) };

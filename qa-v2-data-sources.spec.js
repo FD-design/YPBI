@@ -183,6 +183,7 @@ test("维护登录后区分当前测试、候选验证和验证并保存", async
   await expect(page.getByRole("button",{name:"账号菜单，QA 维护者"})).toBeVisible();
 
   await expect(page.getByRole("heading", { name: "进入受保护配置" })).toBeVisible();
+  await expect(page.locator(".v2-maintenance-login__intro")).toContainText("维护会话有效期 15 天。");
   await expect(page.getByRole("region", {name:"真实数据接入步骤"})).toContainText("连接通过不等于所有指标可用");
   await page.getByLabel("维护密码").fill(fakePassword);
   await page.getByRole("button", { name: "进入维护页面" }).click();
