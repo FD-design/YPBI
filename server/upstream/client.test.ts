@@ -28,6 +28,34 @@ const env: AppEnv = {
 };
 
 describe("UpstreamClient business errors", () => {
+  test("取证文本检查屏蔽配置凭据与当前测试会话，不返回凭据值", async () => {
+    const client = new UpstreamClient({
+      ...env,
+      TOKEN_MAINTENANCE_KEY: "fake-maintenance-protected-value",
+      BI_AUTH_CSRF_SECRET: "fake-csrf-protected-value-000000000",
+      DATABASE_URL: "postgres://fake-database-protected-value",
+      BI_AUTH_DATABASE_URL: "postgres://fake-auth-database-protected-value"
+    });
+    for (const text of ["PH", "M016", "bi-v1", "effective_play_v3", "2026-10-12"]) {
+      expect(client.isProtectedDiagnosticText(text)).toBe(false);
+    }
+    for (const text of ["test-token", "prefix-secondary-token-suffix", "primary-user", "https://example.com",
+      "fake-maintenance-protected-value", "fake-csrf-protected-value-000000000",
+      "postgres://fake-database-protected-value", "postgres://fake-auth-database-protected-value"]) {
+      expect(client.isProtectedDiagnosticText(text)).toBe(true);
+    }
+    expect(client.isProtectedDiagnosticText("ephemeral-preview-token-7777")).toBe(false);
+    await runWithUpstreamRequestProfile({
+      environment: "test", baseUrl: "https://ephemeral.example.test", userName: "ephemeral-preview-user",
+      token: "ephemeral-preview-token-7777", cachePartition: "ephemeral-preview-partition"
+    }, async () => {
+      for (const text of ["ephemeral-preview-token-7777", "ephemeral-preview-user", "ephemeral-preview-partition", "https://ephemeral.example.test"]) {
+        expect(client.isProtectedDiagnosticText(text)).toBe(true);
+      }
+    });
+    expect(client.isProtectedDiagnosticText("ephemeral-preview-token-7777")).toBe(false);
+  });
+
   test("按 PID 选择备用后台及其匹配凭证", async () => {
     let requestUrl = "";
     let requestHeaders: RequestInit["headers"];

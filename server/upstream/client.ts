@@ -61,6 +61,22 @@ export class UpstreamClient {
     return [status("primary", this.env.UPSTREAM_X_TOKEN, this.env.UPSTREAM_USER_NAME), status("secondary", this.env.UPSTREAM_SECONDARY_X_TOKEN, this.env.UPSTREAM_SECONDARY_USER_NAME)];
   }
 
+  /** Tests a projected diagnostic string without exposing configured secrets. */
+  isProtectedDiagnosticText(value: string): boolean {
+    const profile = currentUpstreamRequestProfile();
+    const protectedValues = [
+      this.credentials.primary?.token, this.credentials.secondary?.token,
+      this.env.UPSTREAM_X_TOKEN, this.env.UPSTREAM_SECONDARY_X_TOKEN,
+      this.env.TOKEN_MAINTENANCE_KEY, this.env.BI_AUTH_CSRF_SECRET,
+      this.env.DATABASE_URL, this.env.BI_AUTH_DATABASE_URL,
+      this.env.UPSTREAM_API_BASE_URL, this.env.UPSTREAM_SECONDARY_API_BASE_URL,
+      this.env.UPSTREAM_TEST_API_BASE_URL, this.env.UPSTREAM_USER_NAME,
+      this.env.UPSTREAM_SECONDARY_USER_NAME, this.env.UPSTREAM_TEST_USER_NAME,
+      profile?.token, profile?.userName, profile?.baseUrl, profile?.cachePartition
+    ];
+    return protectedValues.some(secret => typeof secret === "string" && secret.length > 0 && value.includes(secret));
+  }
+
   async verifyCredential(site: CredentialSite, token?: string) {
     const profile = this.profileForSite(site);
     const testToken = token ?? profile.token;

@@ -21,7 +21,7 @@ import { ChannelAdapter, CHANNEL_AB_API, CHANNEL_DETAIL_API } from "./upstream/c
 import { z } from "zod";
 import { apiCatalog } from "./upstream/catalog";
 import { SourceQueryError, SourceService } from "./upstream/source.service";
-import { platformRegistry } from "./platforms/registry";
+import { platformRegistry, getEnabledPlatformByPid } from "./platforms/registry";
 import { createWorkspaceStore } from "./persistence/workspace.store";
 import { SpecialAdapter } from "./upstream/special.adapter";
 import { MetadataAdapter } from "./upstream/metadata.adapter";
@@ -35,6 +35,9 @@ import { bindClientRequestAbort } from "./http/client-request-abort";
 import { PDaySumM016Source } from "./v2/m016-source";
 import { V2MetricQueryService } from "./v2/metric-query.service";
 import { DailyDashboardService } from "./v2/daily-dashboard.service";
+import { operatingEvidenceQuerySchema } from "../contracts/operating-evidence";
+import { readOperatingEvidence } from "./v2/operating-evidence.service";
+import { runWithUpstreamRequestProfile } from "./upstream/request-profile";
 import {
   v2BiPlugin,
   type V2CoreOverviewQueryExecutor,
@@ -216,6 +219,15 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   }
   if (authService && !identityProvider) identityProvider = new SessionIdentityProvider(authService, sessionCookie);
   identityProvider ??= new UnavailableIdentityProvider();
+  const resolvePreviewForPrincipal = (request: FastifyRequest, principal: Principal) => {
+    const securityContext = maintenanceSecurityContext(principal);
+    const ordinarySession = browserSessionId(request);
+    if (!securityContext || !ordinarySession) return { status: "invalid" as const };
+    return dataPreviewSessions.resolve({
+      ip: request.ip, context: securityContext, browserSessionId: ordinarySession,
+      cookieHeader: requestCookieHeader(request)
+    });
+  };
   const v2MetricQueryService = dependencies.v2MetricQueryService ?? new V2MetricQueryService(new PDaySumM016Source(upstream));
   app.addHook("onClose", async () => {
     await workspaceStore.close();
@@ -329,6 +341,66 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
     reply.header("cache-control", "no-store");
     return { success: true, data: upstream.credentialStatus() };
+  });
+  const evidenceStarts = new Map<string, number>();
+  let evidenceActive = 0;
+  app.get("/api/bi/admin/data-sources/operating-evidence", { exposeHeadRoute: false }, async (request, reply) => {
+    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    const fail = (status: number, code: string, message: string) => reply.code(status).send({
+      success: false, error: { code, message, requestId: request.id }
+    });
+    const principal = adminPrincipals.get(request)!;
+    if (!principal.permissions.includes("bi:read")) return fail(403, "BI_READ_ACCESS_DENIED", "当前账号没有BI数据读取权限");
+    const parsed = operatingEvidenceQuerySchema.safeParse(request.query);
+    if (!parsed.success) return fail(400, "INVALID_OPERATING_EVIDENCE_QUERY", "取证参数不合法，请明确平台、日期、模式及环境");
+    const input = parsed.data;
+    const platform = getEnabledPlatformByPid(input.pid);
+    if (!platform) return fail(422, "UPSTREAM_PID_NOT_AVAILABLE", "所选业务平台不存在或已停用");
+    if (principal.pidScope !== "all" && (!Array.isArray(principal.pidScope) || !principal.pidScope.includes(input.pid))) {
+      return fail(403, "PID_ACCESS_DENIED", "当前账号无权访问所选业务平台");
+    }
+    const environmentHeader = request.headers["x-ypbi-data-environment"];
+    if (environmentHeader !== undefined && environmentHeader !== input.environment) {
+      return fail(400, "INVALID_DATA_ENVIRONMENT", "取证环境与请求环境不一致");
+    }
+    const profile = input.environment === "test" ? resolvePreviewForPrincipal(request, principal) : null;
+    if (input.environment === "test") {
+      if (!previewEnabled) return fail(409, "DATA_PREVIEW_DISABLED", "测试数据模式尚未启用");
+      if (profile?.status !== "active") return fail(409, "DATA_PREVIEW_SESSION_REQUIRED", "测试数据会话无效，请重新验证测试Token");
+    } else {
+      const allowed = env.NODE_ENV === "production" ? env.BI_PRODUCTION_DASHBOARD_READING_ENABLED
+        : env.BI_LOCAL_DASHBOARD_READING_ENABLED && env.HOST === "127.0.0.1";
+      if (!allowed) return fail(422, "DAILY_READING_DISABLED", "当前环境未开启真实看板读取");
+    }
+    const now = Date.now();
+    for (const [subject, started] of evidenceStarts) if (now - started >= 60_000) evidenceStarts.delete(subject);
+    if (evidenceActive >= 2 || evidenceStarts.has(principal.subjectId) || evidenceStarts.size >= 256) {
+      reply.header("retry-after", "60");
+      return fail(429, "OPERATING_EVIDENCE_RATE_LIMITED", "取证查询正在执行或过于频繁，请一分钟后重试");
+    }
+    evidenceStarts.set(principal.subjectId, now);
+    evidenceActive++;
+    const controller = new AbortController();
+    const unbindAbort = bindClientRequestAbort(request.raw, reply.raw, controller, "operating_evidence_client_aborted");
+    try {
+      const operation = () => readOperatingEvidence(upstream, input, { signal: controller.signal, sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS });
+      const data = profile?.status === "active" ? await runWithUpstreamRequestProfile(profile.profile, operation) : await operation();
+      const response = { success: true, data: { ...data, site: input.environment === "test" ? "test" : platform.siteId } };
+      if (Buffer.byteLength(JSON.stringify(response), "utf8") > 4 * 1024 * 1024) {
+        return fail(413, "OPERATING_EVIDENCE_TOO_LARGE", "取证结果超过安全下载上限，未输出业务正文");
+      }
+      reply.type("application/json; charset=utf-8");
+      reply.header("content-disposition", `attachment; filename="bi-operating-evidence-${input.environment}-${input.pid}-${input.date}-${input.view}.json"`);
+      return response;
+    } catch (error) {
+      const code = error instanceof UpstreamError && error.code === "INVALID_OPERATING_EVIDENCE_QUERY" ? "INVALID_OPERATING_EVIDENCE_QUERY"
+        : controller.signal.aborted ? "OPERATING_EVIDENCE_CANCELLED" : "OPERATING_EVIDENCE_FAILED";
+      request.log.warn({ outcome: code }, "operating evidence query failed");
+      return fail(code === "INVALID_OPERATING_EVIDENCE_QUERY" ? 400 : 502, code, "取证查询未完成，未输出异常业务正文");
+    } finally {
+      unbindAbort();
+      evidenceActive--;
+    }
   });
   app.post("/api/bi/admin/data-sources/test", async (request, reply) => {
     const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
@@ -620,17 +692,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     productionDailyDashboardEnabled: formalDailyReadingEnabled,
     dataEnvironmentResolver: {
       testAvailable: previewEnabled,
-      resolveTest: (request, principal) => {
-        const securityContext = maintenanceSecurityContext(principal);
-        const ordinarySession = browserSessionId(request);
-        if (!securityContext || !ordinarySession) return { status: "invalid" };
-        return dataPreviewSessions.resolve({
-          ip: request.ip,
-          context: securityContext,
-          browserSessionId: ordinarySession,
-          cookieHeader: requestCookieHeader(request)
-        });
-      }
+      resolveTest: resolvePreviewForPrincipal
     },
     coreOverviewQueryEnabled: env.BI_V2_CORE_OVERVIEW_QUERY_ENABLED,
     coreOverviewQueryService: dependencies.v2CoreOverviewQueryService
