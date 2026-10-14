@@ -10,7 +10,7 @@ import { operatingLiveColumns, operatingLiveColumnMetadataKey, operatingLiveRows
 const date = "2020-01-01", range: [string, string] = ["2019-12-25", date];
 const failure = { status: "failure" as const, kind: "error" as const, code: "UPSTREAM_TIMEOUT", message: "读取失败" };
 
-function resource(pid: string, unit = "元", value = 24) {
+function resource(pid: string, unit = "元", value = 24, environment: "production" | "test" = "production") {
   const metric: DailyReadingMetric = { id: "M058", referenceMetricId: "M058", name: "总充值金额", unit, definition: `${pid}正式定义`, authorityVersion: "qa-v1", formula: null,
     sourceNote: `${pid}正式来源`, inputs: [{ key: "value", name: "总充值金额", unit }] };
   const result: DailyDashboardSuccess = { success: true, data: {
@@ -20,7 +20,7 @@ function resource(pid: string, unit = "元", value = 24) {
       periodStatistics: { aggregationVersion: "daily-statistics/v1", dateRange: range, dayCount: 8, state: "unsupported", values: [], reason: "本样例只验证逐日经营快照" } }]
   } };
   expect(dailyDashboardV2SuccessSchema.safeParse(result).success).toBe(true);
-  recordDailyDashboardEnvironment(result, "production");
+  recordDailyDashboardEnvironment(result, environment);
   return { status: "success" as const, data: result, refreshing: false, refreshError: null };
 }
 
@@ -31,6 +31,56 @@ function reading(state: OperatingResources[string] = failure): LiveDashboardRead
 }
 
 const amountIndex = DETAIL_COLUMNS.findIndex(column => column.metric.id === "M058" && !column.slice);
+
+for (const environment of ["production", "test"] as const) for (const primary of [failure, { status: "loading" as const }]) {
+  test(`${environment}环境${primary.status}页头继续隔离异环境经营元数据、数值、摘要及导出`, () => {
+    const live = { ...reading(primary), dataEnvironment: environment }, otherEnvironment = environment === "production" ? "test" : "production";
+    const resources = { PH: primary, TT: resource("TT", "元", 24, otherEnvironment) };
+    const columns = operatingLiveColumns(live, resources), rows = operatingLiveRows(live, resources), exported = operatingLiveExportRows(rows, columns, date);
+    expect([columns[amountIndex].unit, ...(["current", "previousDay", "previousWeek"] as const).map(period => rows[1].values[amountIndex][period]),
+      ...[0, 3, 6].map(offset => exported[2][3 + amountIndex * 9 + offset])]).toEqual(["", null, null, null, null, null, null]);
+    expect(operatingLiveSummary(live, resources, rows, "all").find(model => model.metric.id === "M058")!.result.status).not.toBe("available");
+    expect(operatingLiveSummary(live, resources, rows, "TT").find(model => model.metric.id === "M058")!.result.status).not.toBe("available");
+    expect(operatingLiveCalculationRows(rows, columns).filter(row => row[0] === "TT" && row[3] === "M058:overall").every(row => row[8] === null)).toBe(true);
+  });
+  test(`${environment}环境${primary.status}页头保留其他合法平台的单位、数值及导出`, () => {
+    const live = { ...reading(primary), dataEnvironment: environment }, resources = { PH: primary, TT: resource("TT", "元", 0, environment) };
+    const columns = operatingLiveColumns(live, resources), rows = operatingLiveRows(live, resources), exported = operatingLiveExportRows(rows, columns, date);
+    expect(columns[amountIndex].unit).toBe("元");
+    expect(rows[1].values[amountIndex]).toMatchObject({ current: 0, previousDay: 0, previousWeek: 0 });
+    expect(exported[2][3 + amountIndex * 9]).toBe(0);
+    expect(operatingLiveSummary(live, resources, rows, "all").find(model => model.metric.id === "M058")!.result).toMatchObject({ status: "available", completeness: "partial", value: { raw: 0, unit: "元" } });
+  });
+}
+
+test("已确认环境优先于页头旧来源，页头回退元数据同样遵守环境", () => {
+  const primary = resource("PH", "USD", 5, "test"), live = reading(primary), resources = { PH: primary, TT: resource("TT", "元", 0) };
+  const columns = operatingLiveColumns(live, resources), rows = operatingLiveRows(live, resources);
+  expect(columns[amountIndex].unit).toBe("元");
+  expect(rows.map(row => row.values[amountIndex].current)).toEqual([null, 0]);
+  expect(operatingLiveSummary(live, resources, rows, "all").find(model => model.metric.id === "M058")!.result).toMatchObject({ status: "available", value: { raw: 0, unit: "元" } });
+  expect(operatingLiveColumns(live)[amountIndex].unit).toBe("");
+});
+
+for (const mismatch of ["pid", "date", "unconfirmed_environment"] as const) test(`${mismatch}经营资源不进入已确认范围的列元数据、数值和导出`, () => {
+  const source = resource(mismatch === "pid" ? "PH" : "TT"), live = reading(failure);
+  if (mismatch === "date") source.data.data.query.dateRange = ["2019-12-24", "2019-12-31"];
+  if (mismatch === "unconfirmed_environment") source.data = structuredClone(source.data);
+  const resources = { PH: failure, TT: source }, columns = operatingLiveColumns(live, resources), rows = operatingLiveRows(live, resources);
+  expect(columns[amountIndex].unit).toBe("");
+  expect(rows[1].values[amountIndex].current).toBeNull();
+  expect(operatingLiveExportRows(rows, columns, date)[2][3 + amountIndex * 9]).toBeNull();
+});
+
+test("未提供显式环境时保持原来源环境推导及未确认行为", () => {
+  const source = resource("PH"), live = reading(source);
+  delete live.dataEnvironment;
+  const mismatched = { PH: source, TT: resource("TT", "USD", 5, "test") };
+  expect(operatingLiveColumns(live, mismatched)[amountIndex].unit).toBe("元");
+  expect(operatingLiveRows(live, mismatched)[1].values[amountIndex].current).toBeNull();
+  live.state = failure;
+  expect(operatingLiveColumns(live, { PH: failure, TT: mismatched.TT })[amountIndex].unit).toBe("USD");
+});
 
 for (const primary of [failure, { status: "loading" as const }]) test(`${primary.status}页头不清空经营成功平台的金额单位`, () => {
   const live = reading(primary), resources = { PH: primary, TT: resource("TT") };

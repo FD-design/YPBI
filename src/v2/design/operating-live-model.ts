@@ -25,10 +25,14 @@ export interface DetailEvidence {
   referenceRatio?: NonNullable<ReturnType<typeof retentionReferenceRatio>>;
 }
 interface OperatingColumnMetadata { source: DailyReadingMetric; units: Set<string> }
+/** The requested operating environment remains authoritative while the primary source is unavailable. */
+export function operatingDataEnvironment(live: LiveDashboardReading) {
+  return live.dataEnvironment ?? liveDataEnvironment(live);
+}
 function operatingColumnMetadata(live: LiveDashboardReading | null, resources?: OperatingResources, platform = "all") {
   const metadata = new Map<string, OperatingColumnMetadata>();
   if (!live) return metadata;
-  const date = live.query.dateRange[1], environment = liveDataEnvironment(live);
+  const date = live.query.dateRange[1], environment = operatingDataEnvironment(live);
   const metricIds = new Set(live.metricIds);
   for (const item of live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]) {
     if (platform !== "all" && item.pid !== platform) continue;
@@ -36,7 +40,8 @@ function operatingColumnMetadata(live: LiveDashboardReading | null, resources?: 
     const resource = hasResource ? operatingResource(resources[item.pid], item.pid, date, environment) : undefined;
     const fallback = !hasResource && item.pid === live.query.pid && live.state.status === "success"
       && live.state.data.data.query.pid === item.pid && live.state.data.data.query.boardId === live.query.boardId
-      && live.state.data.data.query.dateRange[0] <= date && live.state.data.data.query.dateRange[1] >= date ? live.state.data : null;
+      && live.state.data.data.query.dateRange[0] <= date && live.state.data.data.query.dateRange[1] >= date
+      && (environment === undefined || dailyDashboardEnvironment(live.state.data) === environment) ? live.state.data : null;
     const result = resource?.status === "success" ? resource.data : fallback;
     for (const { metric } of result?.data.series ?? []) {
       if (!metricIds.has(metric.id)) continue;
@@ -68,7 +73,7 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
   const date = live.query.dateRange[1];
   const metadata = operatingColumnMetadata(live, resources, selectedPlatform);
   return (live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]).map(platform => {
-    const resource = operatingResource(resources[platform.pid], platform.pid, date, liveDataEnvironment(live));
+    const resource = operatingResource(resources[platform.pid], platform.pid, date, operatingDataEnvironment(live));
     const values = DETAIL_COLUMNS.map((column): DetailValue => {
       const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
       if (!id || !live.metricIds.includes(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
@@ -105,7 +110,7 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
   });
 }
 export function operatingLiveSummary(live: LiveDashboardReading, resources: OperatingResources, rows: DetailRow[], platform: string) {
-  const date = live.query.dateRange[1], resource = operatingResource(resources[platform], platform, date, liveDataEnvironment(live));
+  const date = live.query.dateRange[1], resource = operatingResource(resources[platform], platform, date, operatingDataEnvironment(live));
   if (platform === "all") return operatingPlatformSummary(date, Object.fromEntries(OPERATING_SUMMARY_IDS.map(id =>
     [id, operatingSummaryEntries(live, resources, rows, summaryColumn(id))])));
   return OPERATING_SUMMARY_IDS.map(metricId => {
@@ -122,7 +127,7 @@ export function operatingLiveSummary(live: LiveDashboardReading, resources: Oper
 function operatingSummaryEntries(live: LiveDashboardReading, resources: OperatingResources, rows: DetailRow[], column: DetailColumn): AggregateSummaryEntry[] {
   const date = live.query.dateRange[1], id = OPERATING_LIVE_IDS[detailColumnKey(column)];
   return (live.platforms ?? rows.map(({ pid, name }) => ({ pid, name }))).map(platform => {
-    const resource = operatingResource(resources[platform.pid], platform.pid, date, liveDataEnvironment(live));
+    const resource = operatingResource(resources[platform.pid], platform.pid, date, operatingDataEnvironment(live));
     const series = resource?.status === "success" && live.metricIds.includes(id) ? resource.data.data.series.find(series => series.metric.id === id) : undefined;
     const point = series?.points.find(point => point.date === date) ?? null;
     return { ...platform, metric: series ? { ...series.metric, id: column.metric.id } : null, point,

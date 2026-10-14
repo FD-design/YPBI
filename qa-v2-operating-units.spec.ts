@@ -24,7 +24,7 @@ const generated = JSON.parse(execFileSync(bun, ["--no-env-file", "-e", `
 `], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })) as { catalog: { success: true; data: { items: { id: string; metricIds: string[] }[] } }; results: Record<string, DailyDashboardV2Success> };
 const metricIds = generated.catalog.data.items.find(board => board.id === "5.2")!.metricIds;
 
-async function fixtures(page: Page, conflicting = false) {
+async function fixtures(page: Page, conflicting = false, sliceOnly = false) {
   const calls: DailyDashboardQuery[] = [];
   await page.route("**/*", async route => {
     const address = new URL(route.request().url());
@@ -43,7 +43,7 @@ async function fixtures(page: Page, conflicting = false) {
     if (!path.endsWith("/queries/dashboards/daily-reading")) return route.fulfill({ status: 404, json: { success: false, error: { code: "NOT_FOUND", message: "隔离验收未配置此读取", requestId: "qa-operating-units" } } });
     const query = route.request().postDataJSON() as DailyDashboardQuery;
     calls.push(query);
-    if (!conflicting && query.pid === "PH") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "隔离验收来源读取失败", requestId: "qa-primary-failed" } } });
+    if (!conflicting && !sliceOnly && query.pid === "PH") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "隔离验收来源读取失败", requestId: "qa-primary-failed" } } });
     const result = structuredClone(generated.results[JSON.stringify(query)]);
     if (!result) throw new Error(`隔离验收未登记查询范围：${JSON.stringify(query)}`);
     const amount = result.data.series.find(series => series.metric.id === "M058")!;
@@ -58,6 +58,16 @@ async function fixtures(page: Page, conflicting = false) {
     if (!query.projection) people.periodStatistics = { ...people.periodStatistics, state: "available", reason: null, values: [{ kind: "daily_average", value: 0 }] };
     const processing = result.data.series.find(series => series.metric.id === "M058.new")!;
     processing.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "PROCESSING", value: null, inputs: processing.metric.inputs.map(input => ({ key: input.key, value: null })) }));
+    if (sliceOnly) {
+      amount.metric.unit = "币种未确认";
+      amount.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "PROCESSING", value: null,
+        inputs: amount.metric.inputs.map(input => ({ key: input.key, value: null })) }));
+      if (!query.projection) amount.periodStatistics = { ...amount.periodStatistics, state: "incomplete", values: [], reason: "隔离验收总体尚未就绪" };
+      processing.metric.unit = "元";
+      processing.metric.inputs.forEach(input => { input.unit = "元"; });
+      processing.points.forEach(point => Object.assign(point, { state: "available", sourceStatus: "READY", value: 24,
+        inputs: processing.metric.inputs.map(input => ({ key: input.key, value: 24 })) }));
+    }
     const retention = result.data.series.find(series => series.metric.id === "M020.natural")!;
     retention.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: retention.metric.inputs.map((input, i) => ({ key: input.key, value: i === 0 ? 1 : 2 })) }));
     dailyDashboardV2SuccessSchema.parse(result);
@@ -157,4 +167,24 @@ test("全部平台金额单位冲突关闭数值与XLSX，单PID选择恢复自�
   await expect(cell(page, "TikTok", "M058:overall")).toHaveText("单位不一致");
   await cell(page, "TikTok", "M058:overall").scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath("mixed-units-protected.png") });
+});
+
+test("总体金额未就绪时，单PID新用户拆分详情和真实XLSX仍显示24元", async ({ page }, info) => {
+  await fixtures(page, false, true); await page.goto(url);
+  await expect(cell(page, "TikTok", "M058:overall")).toHaveText("计算中");
+  await expect(cell(page, "TikTok", "M058:新用户")).toHaveText("24");
+  await choosePlatform(page, "TikTok");
+  await local(page).getByRole("button", { name: /^总充值金额，按/ }).click();
+  const detail = page.getByRole("dialog", { name: "总充值金额 · 维度拆解", exact: true });
+  await expect(detail.locator(".metric-breakdown__summary")).toContainText("计算中");
+  const newUser = detail.locator(".metric-breakdown__row").filter({ hasText: "新用户" });
+  await expect(newUser.locator("b")).toHaveText("24");
+  await expect(newUser.locator("small")).toHaveText("元");
+  await page.screenshot({ path: info.outputPath("partial-amount-slice-unit.png") });
+  await detail.getByRole("button", { name: "关闭详情", exact: true }).click();
+  const sheet = await download(page), amount = sheet[0].indexOf("总充值金额（新用户）｜当日（元）");
+  expect(amount).toBeGreaterThan(2);
+  expect(sheet).toHaveLength(2);
+  expect(sheet[1][2]).toBe("TT");
+  expect(sheet[1][amount]).toBe(24);
 });

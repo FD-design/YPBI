@@ -76,13 +76,13 @@ export function operatingValueLabel(value: DetailValue, column: DetailColumn, pe
 export function operatingDetailBreakdown(model: DashboardMetricCardModel, rows: DetailRow[], platform: string, date: string, aggregateColumn?: (column: DetailColumn) => DashboardMetricCardModel) {
   const row = rows.find(item => item.pid === platform);
   const real = rows.some(row => row.values.some(value => Boolean(value.evidence)));
-  const aggregateUnits = new Set<string>();
+  const availableUnits = new Set<string>();
   const result = operatingBreakdownModel(model, `数据日 ${date} · ${platform === "all" ? `各平台合计 · 未跨PID去重${real ? " · 待验数" : " · 演示数据"}` : row?.name ?? "未知平台"}`, slice => {
     const column = breakdownColumn(model.metric.id, slice);
     if (platform === "all" && column) {
       const aggregated = aggregateColumn?.(column) ?? operatingDemoColumnSummary(rows, date, column), value = aggregated.result;
       if (value.status === "available") {
-        aggregateUnits.add(value.value.unit);
+        availableUnits.add(value.value.unit);
         return { status: "available", raw: value.value.raw, display: value.value.display, origin: real ? "pending" : "demo", sample: [aggregated.metric.aggregationLabel,
         value.calculation ? `${value.calculation.numerator.name} ${value.calculation.numerator.value} ${value.calculation.numerator.unit} / ${value.calculation.denominator.name} ${value.calculation.denominator.value} ${value.calculation.denominator.unit}` : ""].filter(Boolean).join("；") };
       }
@@ -91,19 +91,19 @@ export function operatingDetailBreakdown(model: DashboardMetricCardModel, rows: 
     const columnIndex = column ? DETAIL_COLUMNS.indexOf(column) : -1;
     const value = row?.values[columnIndex];
     if (model.metric.id === "M020" && model.result.status === "immature") return { status: "immature", label: "未成熟", reason: "该注册日用户的次日观察尚未结束。" };
-    if (value && value.current !== null && column) return { status: "available", raw: value.current, display: column.kind === "ratio" ? (value.current * 100).toFixed(2) : formatMetricNumber(value.current, "en-US", column.kind === "currency" || column.kind === "average" ? metricNumberFormatOptions(value.current, value.evidence?.current.unit ?? column.unit) : { maximumFractionDigits: 2 }), origin: value.evidence ? "pending" : "demo", sample: value.evidence?.current.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ") };
+    if (value && value.current !== null && column) {
+      availableUnits.add(value.evidence ? value.evidence.current.unit ?? "" : column.unit);
+      return { status: "available", raw: value.current, display: column.kind === "ratio" ? (value.current * 100).toFixed(2) : formatMetricNumber(value.current, "en-US", column.kind === "currency" || column.kind === "average" ? metricNumberFormatOptions(value.current, value.evidence?.current.unit ?? column.unit) : { maximumFractionDigits: 2 }), origin: value.evidence ? "pending" : "demo", sample: value.evidence?.current.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ") };
+    }
     if (value?.evidence) return { status: "no_record", label: column ? operatingValueLabel(value, column) : value.evidence.current.label, reason: "真实查询状态；不使用演示数据补齐。" };
     if (value?.state === "no_record") return { status: "no_record", label: dashboardNoRecordLabels.day, reason: "本次查询未返回当前日期、业务平台和维度的记录。" };
     return { status: "unsupported", label: "待接口支持", reason: operatingPendingReason(model.metric.id, slice) };
   });
-  const liveSlice = row?.values.find((value, index) => DETAIL_COLUMNS[index].metric.id === model.metric.id && value.evidence);
-  if (platform === "all") {
-    if (model.result.status === "available") aggregateUnits.add(model.result.value.unit);
-    if (aggregateUnits.size > 1) return { ...result, unit: "", groups: result.groups.map(group => ({ ...group, rows: group.rows.map(row => ({ ...row,
-      value: row.value.status === "available" ? { status: "no_record" as const, label: "单位不一致", reason: "各拆分结果的单位不同，不能使用同一单位展示；未换算或替换原始数值。" } : row.value })) })) };
-    return { ...result, unit: aggregateUnits.values().next().value ?? (real ? "" : result.unit) };
-  }
-  return { ...result, unit: liveSlice ? liveSlice.evidence?.current.unit ?? "" : model.result.status === "available" ? model.result.value.unit ?? result.unit : result.unit };
+  if (model.result.status === "available") availableUnits.add(model.result.value.unit);
+  if (availableUnits.size > 1) return { ...result, unit: "", groups: result.groups.map(group => ({ ...group, rows: group.rows.map(row => ({ ...row,
+    value: row.value.status === "available" ? { status: "no_record" as const, label: "单位不一致", reason: "各拆分结果的单位不同，不能使用同一单位展示；原始数值与单位保留在明细和计算依据。" } : row.value })) })) };
+  const sourceUnits = new Set(platform === "all" ? [] : row?.values.flatMap((value, index) => DETAIL_COLUMNS[index].metric.id === model.metric.id && value.evidence?.current.unit ? [value.evidence.current.unit] : []) ?? []);
+  return { ...result, unit: availableUnits.values().next().value ?? (sourceUnits.size === 1 ? sourceUnits.values().next().value : undefined) ?? (real ? "" : result.unit) };
 }
 
 export function operatingSummaryModels(rows: DetailRow[], platform: string, date: string): DashboardMetricCardModel[] {

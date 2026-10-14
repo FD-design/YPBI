@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { DailyDashboardSuccess, DailyPoint } from "../../../contracts/daily-dashboard";
+import { dailyDashboardV2SuccessSchema, type DailyDashboardSuccess, type DailyPoint } from "../../../contracts/daily-dashboard";
 import { recordDailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { DETAIL_COLUMNS, summaryColumn } from "./operating-detail-columns";
@@ -109,4 +109,47 @@ for (const [id, unit] of [["M058", "元"], ["M067", "元/人"]] as const) test(`
   expect(detail.unit).toBe(unit);
   expect(detail.groups.flatMap(group => group.rows).find(row => row.label === "新用户")?.value).toMatchObject({ status: "available", raw: id === "M067" ? 100 : 200 });
   expect(detail.unit).not.toContain("USD");
+});
+
+function singlePlatformAmount(overallUnit: string, overallReady: boolean, sliceUnits: string[]) {
+  const { live, resources } = setup(), source = resources.PH;
+  live.metricIds = [...live.metricIds];
+  if (source.status !== "success") throw Error("fixture");
+  const amount = source.data.data.series.find(series => series.metric.id === "M058")!;
+  amount.metric = { ...amount.metric, unit: overallUnit, inputs: [{ key: "value", name: "充值金额", unit: overallUnit }] };
+  amount.points = amount.points.map(point => ({ ...point, state: overallReady ? "available" : "no_value", sourceStatus: overallReady ? "READY" : "PROCESSING", value: overallReady ? 162.02 : null,
+    inputs: [{ key: "value", value: overallReady ? 162.02 : null }] }));
+  for (const [index, unit] of sliceUnits.entries()) {
+    const id = ["M058.new", "M058.nature", "M058.internal"][index];
+    live.metricIds.push(id);
+    source.data.data.series.push({ ...amount, metric: { ...amount.metric, id, unit, inputs: [{ key: "value", name: "充值金额", unit }] },
+      points: amount.points.map(point => ({ ...point, state: "available", sourceStatus: "READY", value: 24, inputs: [{ key: "value", value: 24 }] })) });
+  }
+  for (const series of source.data.data.series) if (series.periodStatistics) series.periodStatistics.reason = "本样例仅验证经营日值";
+  expect(dailyDashboardV2SuccessSchema.safeParse(source.data).success).toBe(true);
+  const rows = operatingLiveRows(live, resources, "PH"), model = operatingLiveSummary(live, resources, rows, "PH").find(model => model.metric.id === "M058")!;
+  return { rows, model, detail: operatingDetailBreakdown(model, rows, "PH", date) };
+}
+
+test("单PID金额总体未就绪时，拆分详情使用可用切片的正式单位", () => {
+  const { model, detail } = singlePlatformAmount("币种未确认", false, ["元"]);
+  expect(model.result.status).not.toBe("available");
+  expect(detail.groups.flatMap(group => group.rows).find(row => row.label === "新用户")?.value).toMatchObject({ status: "available", raw: 24 });
+  expect(detail.unit).toBe("元");
+});
+
+for (const overallReady of [false, true]) test(`单PID金额${overallReady ? "总体与切片" : "可用切片间"}单位冲突保留明细原值并关闭合并展示`, () => {
+  const { rows, detail } = singlePlatformAmount("元", overallReady, overallReady ? ["USD"] : ["元", "USD"]);
+  expect(detail.unit).toBe("");
+  const values = detail.groups.flatMap(group => group.rows).map(row => row.value);
+  expect(values.some(value => value.status === "available")).toBe(false);
+  expect(values.some(value => value.status !== "available" && value.label === "单位不一致")).toBe(true);
+  expect(rows[0].values[DETAIL_COLUMNS.findIndex(column => column.metric.id === "M058" && column.slice === "新用户")].current).toBe(24);
+});
+
+test("单PID没有可用总体或切片时，详情保留来源明确单位及空结果", () => {
+  const { model, detail } = singlePlatformAmount("USD", false, []);
+  expect(model.result.status).not.toBe("available");
+  expect(detail.unit).toBe("USD");
+  expect(detail.groups.flatMap(group => group.rows).every(row => row.value.status !== "available")).toBe(true);
 });

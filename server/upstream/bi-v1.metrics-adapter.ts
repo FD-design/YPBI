@@ -18,6 +18,7 @@ export type BiV1MetricUnit = z.infer<typeof metricUnitSchema>;
 const requiredMetricUnits: Partial<Record<BiV1MetricCode, BiV1MetricUnit>> = {
   M058: "currency", M061: "ratio", M064: "ratio", M102: "seconds"
 };
+const retentionMetricCodes = new Set<BiV1MetricCode>(["M020", "M021", "M022", "M023"]);
 const metricRowSchema = z.object({
   metricCode: biV1MetricCodeSchema,
   businessDate: z.iso.date().optional(),
@@ -271,7 +272,7 @@ function unavailableRow(row: z.infer<typeof metricRowSchema>, expectedRuleVersio
     || requiredMetricUnits[row.metricCode] && requiredMetricUnits[row.metricCode] !== row.unit
     || !Number.isSafeInteger(row.numerator) || row.numerator < 0
     || !Number.isSafeInteger(row.denominator) || row.denominator < 0
-    || ["M020", "M021", "M022", "M023", "M061", "M064", "M111"].includes(row.metricCode) && row.numerator > row.denominator) return point;
+    || (retentionMetricCodes.has(row.metricCode) || ["M061", "M064", "M111"].includes(row.metricCode)) && row.numerator > row.denominator) return point;
   return { ...point, diagnosticInputs: { numerator: row.numerator, denominator: row.denominator } };
 }
 
@@ -452,6 +453,9 @@ export function aggregateBiV1MetricDays(
           }
           const numerator = safeInteger(row.numerator, `${key} 分子`);
           const denominator = safeInteger(row.denominator, `${key} 分母`);
+          if (retentionMetricCodes.has(row.metricCode) && numerator > denominator) {
+            throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 留存人数超过注册基数`, 502);
+          }
           if (denominator === 0 ? row.value !== null : row.value === null || Math.abs(row.value - numerator / denominator) > 1e-12) {
             throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 数值与分子分母不一致`, 502);
           }

@@ -621,7 +621,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           try {
             const result = await readBiV1MetricDays(client, {
               pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1],
-              metricCodes: [...group.codes],
+              metricCodes: [...group.codes].sort(),
               expectedRuleVersions: VALUE_RULE_VERSIONS,
               dimensions: Object.keys(group.filters) as BiV1MetricDimension[],
               ...(Object.keys(group.filters).length ? { dimensionFilters: group.filters } : {})

@@ -201,6 +201,76 @@ describe("SOURCE_INCOMPLETE 比率诊断输入", () => {
   });
 });
 
+describe("READY 留存人数边界", () => {
+  const codes = ["M020", "M021", "M022", "M023"] as const;
+  const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: [...codes, "M008"] as const };
+
+  test("回访人数超过注册基数时不输出留存率或供M115使用的分子，健康指标保持", async () => {
+    const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([
+      ...codes.map(code => makeRow(code, "ratio", 3 / 2, 3, 2)),
+      makeRow("M008", "count", 2, 2, 0)
+    ]) }) }, query);
+    for (const code of codes) expect(result.days[0].metrics[code]).toEqual({
+      state: "invalid_value", dataStatus: null, value: null, numerator: null, denominator: null, unit: null
+    });
+    expect(result.days[0].metrics.M008).toMatchObject({ state: "available", value: 2, numerator: 2 });
+  });
+
+  test("端别及新增来源切片沿用同一人数边界，非法人数不成为诊断输入", async () => {
+    for (const filters of [
+      { clientPlatform: "android" }, { clientPlatform: "ios" },
+      { sourceType: "natural" }, { sourceType: "internal_channel" }
+    ] as const) {
+      for (const [numerator, denominator] of [[3, 2], [1, 0]]) {
+        const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message(
+          codes.map(code => makeRow(code, "ratio", denominator ? numerator / denominator : null, numerator, denominator, filters))
+        ) }) }, { ...query, metricCodes: codes, dimensionFilters: filters, dimensions: Object.keys(filters) as (keyof BiV1MetricDimensionFilters)[] });
+        for (const code of codes) {
+          const point = result.days[0].metrics[biV1MetricKey(code, filters)];
+          expect(point).toEqual({ state: "invalid_value", dataStatus: null, value: null, numerator: null, denominator: null, unit: null });
+          expect(point.diagnosticInputs).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  test("合法0%、100%和0/0保持原状态，M006/M007继续允许超过100%", async () => {
+    for (const [numerator, denominator] of [[0, 2], [2, 2], [0, 0]]) {
+      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([
+        ...codes.map(code => makeRow(code, "ratio", denominator ? numerator / denominator : null, numerator, denominator)),
+        makeRow("M006", "ratio", 3 / 2, 3, 2), makeRow("M007", "ratio", 3 / 2, 3, 2)
+      ]) }) }, { ...query, metricCodes: [...codes, "M006", "M007"] });
+      for (const code of codes) expect(result.days[0].metrics[code]).toEqual({
+        state: denominator ? "available" : "zero_denominator", dataStatus: "READY", value: denominator ? numerator / denominator : null,
+        numerator, denominator, unit: "ratio"
+      });
+      for (const code of ["M006", "M007"]) expect(result.days[0].metrics[code]).toMatchObject({ state: "available", value: 1.5, numerator: 3, denominator: 2 });
+    }
+  });
+
+  test("非READY留存仍按来源状态处理，不提供非法回访人数", async () => {
+    for (const [dataStatus, state] of [
+      ["PROCESSING", "no_value"], ["NOT_MATURE", "immature"], ["SOURCE_INCOMPLETE", "no_value"], ["FAILED", "source_failure"]
+    ] as const) {
+      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message(
+        codes.map(code => makeRow(code, "ratio", null, 3, 2, {}, dataStatus))
+      ) }) }, { ...query, metricCodes: codes });
+      for (const code of codes) expect(result.days[0].metrics[code]).toEqual({ state, dataStatus, value: null, numerator: null, denominator: null, unit: null });
+    }
+  });
+
+  test("越界人数仅使对应业务日无效，前日的四周期合法结果保持", async () => {
+    const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([
+      ...codes.map(code => makeRow(code, "ratio", 1 / 2, 1, 2)),
+      ...codes.map(code => ({ ...makeRow(code, "ratio", 3 / 2, 3, 2), businessDate: "2026-09-22" }))
+    ]) }) }, { ...query, metricCodes: codes, endDate: "2026-09-22" });
+    for (const code of codes) {
+      expect(result.days[0].metrics[code]).toMatchObject({ state: "available", value: .5, numerator: 1, denominator: 2 });
+      expect(result.days[1].metrics[code]).toMatchObject({ state: "invalid_value", value: null, numerator: null, denominator: null });
+    }
+  });
+});
+
 describe("bi-v1 留存总体与分组状态隔离", () => {
   const codes = ["M020", "M021", "M022", "M023"] as const;
   const scopes: BiV1MetricDimensionFilters[] = [

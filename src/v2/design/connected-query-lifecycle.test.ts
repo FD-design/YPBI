@@ -3,6 +3,7 @@ import * as React from "react";
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "../../../contracts/operating-detail-projection";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { currentDataEnvironmentPreference, setDataEnvironmentPreference } from "../api/dataEnvironmentPreference";
 import { useCohortReading } from "./ConnectedCohorts";
 import { useOperatingLive } from "./useOperatingLive";
 
@@ -65,7 +66,8 @@ function hook<T>(read: () => T) {
 
 const disposals: (() => void)[] = [];
 const originalFetch = globalThis.fetch;
-afterEach(() => { disposals.splice(0).forEach(dispose => dispose()); globalThis.fetch = originalFetch; });
+const originalEnvironment = currentDataEnvironmentPreference();
+afterEach(() => { disposals.splice(0).forEach(dispose => dispose()); globalThis.fetch = originalFetch; setDataEnvironmentPreference(originalEnvironment); });
 const flush = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 const day = (date: string, offset: number) => new Date(Date.parse(date) + offset * 86400000).toISOString().slice(0, 10);
 function payload(query: DailyDashboardQuery, numerator = 8): DailyDashboardSuccess {
@@ -254,4 +256,79 @@ test("经营20PID快照保持三路调度，退出时取消在途且不继续启
   expect(pending.every(item => item.signal.aborted)).toBe(true);
   pending.slice(2).forEach(item => item.succeed(4)); await flush();
   expect(pending).toHaveLength(5);
+});
+
+test("经营快照展示名称和主指标列表变化保留在途队列，20PID各读取一次", async () => {
+  let live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: [...OPERATING_METRIC_IDS],
+    platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
+  let selected = "all";
+  const pending = requests(), rendered = hook(() => useOperatingLive(live, selected));
+  expect(pending).toHaveLength(3);
+  live = { ...live, platforms: live.platforms!.map(platform => ({ ...platform, name: platform.name + "更新" })) };
+  rendered.render(); await flush();
+  expect(pending).toHaveLength(3);
+  expect(pending.every(item => !item.signal.aborted)).toBe(true);
+  expect(rendered.value.rows!.map(row => row.name)).toEqual(live.platforms!.map(platform => platform.name));
+  live = { ...live, metricIds: [...live.metricIds, "M098"] };
+  rendered.render(); await flush();
+  expect(pending).toHaveLength(3);
+  selected = "QA1";
+  rendered.render(); await flush();
+  expect(pending).toHaveLength(3);
+  for (let completed = 0; completed < 20; completed++) {
+    expect(pending.length - completed).toBeLessThanOrEqual(3);
+    pending[completed].succeed(); await flush();
+  }
+  expect(pending.map(item => item.query.pid)).toEqual(live.platforms!.map(platform => platform.pid));
+  expect(pending).toHaveLength(20);
+  expect(pending.every(item => !item.signal.aborted)).toBe(true);
+  expect(pending.every(item => item.query.projection === "operating_snapshot" && item.query.dateRange.join() === "2020-01-03,2020-01-10")).toBe(true);
+  for (const resource of Object.values(rendered.value.resources)) {
+    expect(resource.status).toBe("success");
+    if (resource.status === "success") {
+      expect(resource.data.data.series.map(series => series.metric.id)).toEqual(OPERATING_METRIC_IDS);
+      expect(resource.data.data.series[0].points.map(point => point.date)).toEqual(["2020-01-03", "2020-01-09", "2020-01-10"]);
+    }
+  }
+});
+
+test("经营有序PID范围切换取消旧队列，退出真实读取停止并隔离迟到结果", async () => {
+  const initial: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: [...OPERATING_METRIC_IDS],
+    platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
+  let live: LiveDashboardReading | null = initial;
+  const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3"]);
+  live = { ...initial, platforms: [...initial.platforms!].reverse() };
+  rendered.render(); await flush();
+  expect(pending.slice(0, 3).every(item => item.signal.aborted)).toBe(true);
+  expect(pending.slice(3).map(item => item.query.pid)).toEqual(["QA20", "QA19", "QA18"]);
+  live = { ...live, platforms: live.platforms!.slice(1) };
+  rendered.render(); await flush();
+  expect(pending.slice(3, 6).every(item => item.signal.aborted)).toBe(true);
+  expect(pending.slice(6).map(item => item.query.pid)).toEqual(["QA19", "QA18", "QA17"]);
+  live = null;
+  expect(rendered.render().rows).toBeNull(); await flush();
+  expect(pending.every(item => item.signal.aborted)).toBe(true);
+  pending.forEach(item => item.succeed(4)); await flush();
+  expect(rendered.value.rows).toBeNull();
+  expect(pending).toHaveLength(9);
+});
+
+for (const status of ["loading", "failure"] as const) test(`页头${status}明确正式环境时，经营刷新失败不保留测试环境旧结果`, async () => {
+  setDataEnvironmentPreference("test");
+  let live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, dataEnvironment: "test" };
+  const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  pending.forEach(item => item.succeed(8)); await flush();
+  expect(rendered.value.resources.PH.status).toBe("success");
+  setDataEnvironmentPreference("production");
+  live = { ...live, dataEnvironment: "production", refreshRevision: 1, state: status === "loading" ? { status }
+    : { status, kind: "error", code: "TIMEOUT", message: "正式主查询失败" } };
+  rendered.render(); await flush();
+  expect(pending).toHaveLength(4);
+  expect(rendered.value.resources.PH.status).toBe("loading");
+  expect(rendered.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);
+  pending.slice(2).forEach(item => item.fail()); await flush();
+  expect(rendered.value.resources.PH).toMatchObject({ status: "failure", code: "OPERATING_READ_FAILED" });
+  expect(rendered.value.resources.TT.status).toBe("failure");
+  expect(rendered.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);
 });

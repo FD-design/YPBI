@@ -2,16 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { OPERATING_METRIC_IDS } from "../../../contracts/operating-detail-projection";
 import { fetchDailyDashboard, V2RequestError } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
-import { liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
-import { operatingLiveRows, operatingLiveColumns, operatingLiveColumnMetadataKey, operatingResource, type OperatingResources } from "./operating-live-model";
+import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { operatingLiveRows, operatingLiveColumns, operatingLiveColumnMetadataKey, operatingResource, operatingDataEnvironment, type OperatingResources } from "./operating-live-model";
 
 /** Independent per-PID snapshots; failed or missing results never become fixtures. */
 export function useOperatingLive(live: LiveDashboardReading | null, platform = "all") {
   const [resources, setResources] = useState<OperatingResources>({});
   const platforms = live?.platforms ?? [], date = live?.query.dateRange[1] ?? "";
-  const environment = live ? liveDataEnvironment(live) : undefined;
+  const environment = live ? operatingDataEnvironment(live) : undefined;
   // The route's dataScopeKey remounts on environment changes; provenance arrival is not a new query.
-  const key = JSON.stringify([date, platforms, live?.metricIds]);
+  const key = JSON.stringify([Boolean(live), date, platforms.map(platform => platform.pid)]);
   const revision = live?.refreshRevision ?? 0;
   useEffect(() => {
     if (!live) return;
