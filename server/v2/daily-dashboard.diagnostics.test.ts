@@ -23,7 +23,7 @@ function paymentClient(): Pick<UpstreamClient, "get"> {
   return { get: async (path, params) => {
     if (path === BI_V1_METRICS_API) return emptyMetrics;
     if (path === PAYMENT_RATE_API) {
-      if (params.startTime.startsWith("2020-01-02")) throw new UpstreamError("UPSTREAM_REQUEST_FAILED", "secret-token Cookie=password https://secret.example/?filter=private", 502);
+      if (params.startTime.startsWith("2020-01-02")) throw new UpstreamError("UPSTREAM_FAILED", "secret-token Cookie=password https://secret.example/?filter=private", 502);
       return { msg: { pageData: [], secret: "raw-user-detail" } };
     }
     return { msg: { pageData: [], totalCount: 0, secret: "raw-user-detail" } };
@@ -43,10 +43,14 @@ describe("daily dashboard private source diagnostics", () => {
     expect(payment.readCallCount).toBe(4);
     expect(payment.successfulReadCallCount).toBe(3);
     expect(payment.failedReadCallCount).toBe(1);
+    expect(payment.errorCodeCounts).toEqual({ UPSTREAM_FAILED: 1 });
     for (const source of entry.sources) {
       expect(Number.isFinite(source.durationMs)).toBe(true);
       expect(source.durationMs).toBeGreaterThanOrEqual(0);
       expect(source.readCallCount).toBe(source.successfulReadCallCount + source.failedReadCallCount);
+      expect(source.abandonedReadCallCount).toBe(0);
+      expect(source.budgetExpired).toBe(false);
+      expect(Object.values(source.errorCodeCounts).reduce((sum, count) => sum + count, 0)).toBe(source.failedReadCallCount);
     }
     expect(normalize(result)).toEqual(normalize(await new DailyDashboardService(paymentClient(), now).execute(query)));
     expect(result.data).not.toHaveProperty("sources");
@@ -55,7 +59,7 @@ describe("daily dashboard private source diagnostics", () => {
       expect(serialized).not.toContain(privateValue);
     }
     expect(Object.keys(entry).sort()).toEqual(["boardId", "queryId", "sources"]);
-    for (const source of entry.sources) expect(Object.keys(source).sort()).toEqual(["durationMs", "failedReadCallCount", "readCallCount", "sourceId", "successfulReadCallCount"]);
+    for (const source of entry.sources) expect(Object.keys(source).sort()).toEqual(["abandonedReadCallCount", "budgetExpired", "durationMs", "errorCodeCounts", "failedReadCallCount", "readCallCount", "sourceId", "successfulReadCallCount"]);
   });
 
   test("日志异常不改变已解析的成功和部分失败结果，未注入logger的请求保持原读取", async () => {
@@ -65,6 +69,71 @@ describe("daily dashboard private source diagnostics", () => {
     const withoutLogger = await new DailyDashboardService(paymentClient(), now).execute(query);
     expect(attemptedLogs).toBe(1);
     expect(normalize(result)).toEqual(normalize(withoutLogger));
+  });
+
+  test("同一来源按固定错误码汇总，未知及伪造错误码只记录unknown", async () => {
+    const { entries, logger } = capture();
+    const errors = [
+      new UpstreamError("UPSTREAM_AUTH_FAILED", "secret-token Cookie=password", 401),
+      new UpstreamError("UPSTREAM_TIMEOUT", "https://secret.example/?filter=private", 504),
+      new UpstreamError("private-code secret-token", "raw-user-detail", 502),
+      Object.assign(new Error("raw-user-detail"), { code: "UPSTREAM_AUTH_FAILED" })
+    ];
+    const client: Pick<UpstreamClient, "get"> = { get: async (_path, params) => {
+      throw errors[Number(params.date.slice(-2)) - 1];
+    } };
+    const checkinQuery: DailyDashboardQuery = { ...query, boardId: "5.14" };
+    const result = await new DailyDashboardService(client, now, logger).execute(checkinQuery);
+    expect(entries[0].sources).toHaveLength(1);
+    const source = entries[0].sources[0];
+    expect(source.sourceId).toBe("checkin");
+    expect(source.readCallCount).toBe(4);
+    expect(source.successfulReadCallCount).toBe(0);
+    expect(source.failedReadCallCount).toBe(4);
+    expect(source.errorCodeCounts).toEqual({ UPSTREAM_AUTH_FAILED: 1, UPSTREAM_TIMEOUT: 1, unknown: 2 });
+    expect(source.budgetExpired).toBe(false);
+    expect(normalize(result)).toEqual(normalize(await new DailyDashboardService(client, now).execute(checkinQuery)));
+    const serialized = JSON.stringify(entries);
+    for (const value of ["secret-token", "Cookie", "password", "https://", "filter", "private-code", "raw-user-detail"]) {
+      expect(serialized).not.toContain(value);
+    }
+  });
+
+  test("get正常返回后被业务层处理的校验失败保留原来源状态和读取计数", async () => {
+    const { entries, logger } = capture();
+    const client: Pick<UpstreamClient, "get"> = { get: async () => ({ msg: { secret: "raw-user-detail" } }) };
+    const result = await new DailyDashboardService(client, now, logger).execute({ ...query, boardId: "5.14", dateRange: ["2020-01-01", "2020-01-01"] });
+    expect(result.data.series.find(series => series.metric.id === "M075")!.points[0].state).toBe("source_failure");
+    expect(entries[0].sources).toHaveLength(1);
+    expect(entries[0].sources[0].successfulReadCallCount).toBe(1);
+    expect(entries[0].sources[0].failedReadCallCount).toBe(0);
+    expect(entries[0].sources[0].errorCodeCounts).toEqual({});
+    expect(JSON.stringify(entries)).not.toContain("raw-user-detail");
+  });
+
+  test("来源期限只统计已启动读取的超时，未启动读取及迟到成功分别处理", async () => {
+    const { entries, logger } = capture();
+    const finish: (() => void)[] = [];
+    const client: Pick<UpstreamClient, "get"> = { get: async (_path, params) => new Promise(resolve => {
+      finish.push(() => resolve({ msg: { date: params.date, checkinUserCount: 2 } }));
+    }) };
+    const result = await new DailyDashboardService(client, now, logger, { sourceReadTimeoutMs: 30 }).execute({
+      ...query, boardId: "5.14", dateRange: ["2020-01-01", "2020-01-06"]
+    });
+    expect(finish).toHaveLength(3);
+    expect(entries[0].sources).toHaveLength(1);
+    const source = entries[0].sources[0];
+    expect(source.readCallCount).toBe(3);
+    expect(source.successfulReadCallCount).toBe(0);
+    expect(source.failedReadCallCount).toBe(3);
+    expect(source.abandonedReadCallCount).toBe(3);
+    expect(source.budgetExpired).toBe(true);
+    expect(source.errorCodeCounts).toEqual({ UPSTREAM_TIMEOUT: 3 });
+    expect(result.data.series.find(series => series.metric.id === "M075")!.points.every(point => point.state === "source_failure")).toBe(true);
+    const completedEntry = JSON.stringify(entries);
+    finish.forEach(resolve => resolve());
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(JSON.stringify(entries)).toBe(completedEntry);
   });
 
   test("并行查询独立记录来源计数，未读取的来源不输出", async () => {
@@ -84,6 +153,7 @@ describe("daily dashboard private source diagnostics", () => {
       expect(entry.sources[0].sourceId).toBe("checkin");
       expect(entry.sources[0].readCallCount).toBe(index + 1);
       expect(entry.sources[0].failedReadCallCount).toBe(0);
+      expect(entry.sources[0].errorCodeCounts).toEqual({});
     });
   });
 
@@ -102,6 +172,7 @@ describe("daily dashboard private source diagnostics", () => {
     expect(source.readCallCount).toBe(reads.length);
     const failed = reads.filter(params => params.metricCodes.includes(",") || params.metricCodes === "M113").length;
     expect(source.failedReadCallCount).toBe(failed);
+    expect(source.errorCodeCounts).toEqual({ BI_V1_REQUEST_REJECTED: failed });
     expect(source.successfulReadCallCount).toBe(reads.length - failed);
     const groups = new Map<string, Record<string, string>[]>();
     for (const params of reads) {

@@ -18,6 +18,8 @@ export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRecharg
 export const CHECKIN_OVERVIEW_API = "/api/admin/dataDashboard/overview";
 import { UpstreamError, type UpstreamClient } from "../upstream/client";
 import { toBeijingDate } from "../upstream/date";
+import { sourceReadErrorCode, type SourceReadErrorCodeCounts } from "./source-read-diagnostics";
+import { SourceReadBudget } from "./source-read-budget";
 
 // Candidate projections are isolated from formal release-admission registries.
 const AMOUNT_UNIT = "元";
@@ -413,35 +415,52 @@ type SourceReadDiagnostics = {
   readCallCount: number;
   successfulReadCallCount: number;
   failedReadCallCount: number;
+  abandonedReadCallCount: number;
+  budgetExpired: boolean;
+  errorCodeCounts: SourceReadErrorCodeCounts;
 };
 type DailyDashboardLogger = { info(fields: { queryId: string; boardId: string; sources: SourceReadDiagnostics[] }, message: string): void };
 export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery): Promise<DailyDashboardSuccess> }
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
-  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger) {}
+  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number } = {}) {}
   async execute(query: DailyDashboardQuery): Promise<DailyDashboardV2Success> {
     const fetchedAt = this.now().toISOString();
     const ids = boardMetrics[query.boardId] ?? [];
     if (!ids.length) throw new UpstreamError("DAILY_BOARD_NOT_READY", "该看板尚无可读取的日数据", 422);
     const sourceDiagnostics: SourceReadDiagnostics[] = [];
     const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: Pick<UpstreamClient, "get">) => Promise<T>): Promise<T> => {
-      if (!this.logger) return read(this.client);
       const startedAt = performance.now();
-      const source = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0 };
-      sourceDiagnostics.push(source);
+      const budget = new SourceReadBudget(this.options.sourceReadTimeoutMs ?? 10_000);
+      const source: SourceReadDiagnostics = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, abandonedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} };
+      if (this.logger) sourceDiagnostics.push(source);
       try {
         return await read({ get: async (...args) => {
-          source.readCallCount++;
+          let started = false;
           try {
-            const result = await this.client.get(...args);
-            source.successfulReadCallCount++;
+            const result = await budget.read(() => {
+              started = true;
+              if (this.logger) source.readCallCount++;
+              return this.client.get(...args);
+            });
+            if (this.logger) source.successfulReadCallCount++;
             return result;
           } catch (error) {
-            source.failedReadCallCount++;
+            if (this.logger) {
+              if (started) {
+                source.failedReadCallCount++;
+                const errorCode = sourceReadErrorCode(error);
+                source.errorCodeCounts[errorCode] = (source.errorCodeCounts[errorCode] ?? 0) + 1;
+              } else {
+                source.abandonedReadCallCount++;
+              }
+            }
             throw error;
           }
         } });
       } finally {
+        source.budgetExpired = budget.expired;
+        budget.dispose();
         source.durationMs = Math.max(0, performance.now() - startedAt);
       }
     };
@@ -749,7 +768,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       })
     } });
     try {
-      this.logger?.info({ queryId: result.data.queryId, boardId: query.boardId, sources: sourceDiagnostics.filter(source => source.readCallCount > 0) }, "daily dashboard source reads completed");
+      this.logger?.info({ queryId: result.data.queryId, boardId: query.boardId, sources: sourceDiagnostics.filter(source => source.readCallCount > 0 || source.abandonedReadCallCount > 0) }, "daily dashboard source reads completed");
     } catch { /* Query results remain available when diagnostic logging fails. */ }
     return result;
   }

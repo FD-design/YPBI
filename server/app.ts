@@ -615,7 +615,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     identityProvider,
     metricQueryService: v2MetricQueryService,
     dailyDashboardService: formalDailyReadingEnabled || previewEnabled
-      ? new DailyDashboardService(upstream, undefined, app.log)
+      ? new DailyDashboardService(upstream, undefined, app.log, { sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS })
       : undefined,
     productionDailyDashboardEnabled: formalDailyReadingEnabled,
     dataEnvironmentResolver: {
