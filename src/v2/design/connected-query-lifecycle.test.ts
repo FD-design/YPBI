@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import * as React from "react";
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
+import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "../../../contracts/operating-detail-projection";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { useCohortReading } from "./ConnectedCohorts";
 import { useOperatingLive } from "./useOperatingLive";
@@ -68,6 +69,17 @@ afterEach(() => { disposals.splice(0).forEach(dispose => dispose()); globalThis.
 const flush = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 const day = (date: string, offset: number) => new Date(Date.parse(date) + offset * 86400000).toISOString().slice(0, 10);
 function payload(query: DailyDashboardQuery, numerator = 8): DailyDashboardSuccess {
+  if (query.projection === "operating_snapshot") return { success: true, data: {
+    schemaVersion: "day-dashboard/v2", query, queryId: `${query.pid}:${numerator}`, fetchedAt: "2026-10-10T00:00:00Z",
+    timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: ["bi-v1.metrics"],
+    series: OPERATING_METRIC_IDS.map(id => ({
+      metric: { id, name: id, unit: "%", definition: "生命周期测试定义", authorityVersion: "test-v1", referenceMetricId: id,
+        sourceNote: "隔离生命周期测试", formula: "测试分子 / 测试分母", inputs: [{ key: "numerator", name: "测试分子", unit: "人" }, { key: "denominator", name: "测试分母", unit: "人" }] },
+      points: operatingSnapshotDates(query.dateRange).map(date => ({ date, state: "available", sourceStatus: "READY", value: numerator / 10,
+        inputs: [{ key: "numerator", value: numerator }, { key: "denominator", value: 10 }] })),
+      periodStatistics: { aggregationVersion: "daily-statistics/v1", dateRange: query.dateRange, dayCount: 8, state: "unsupported", values: [], reason: OPERATING_SNAPSHOT_STATISTICS_REASON }
+    }))
+  } };
   return { success: true, data: { schemaVersion: "day-dashboard/v1", query, queryId: `${query.pid}:${numerator}`, fetchedAt: "2026-10-10T00:00:00Z",
     timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: ["bi-v1.metrics"],
     series: [{ metric: { id: "M020", name: "注册用户D1留存率", unit: "%", definition: "测试定义", authorityVersion: "test-v1", referenceMetricId: "M020",
@@ -191,7 +203,15 @@ test("经营分PID独立读取与刷新，主查询失败不阻止恢复且单�
   let live = { ...reading(), query: { ...reading().query, boardId: "5.2" } };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
   expect(pending.map(item => item.query.pid)).toEqual(["PH", "TT"]);
+  expect(pending.every(item => item.query.projection === "operating_snapshot")).toBe(true);
+  expect(pending.map(item => item.query.dateRange)).toEqual([["2020-01-03", "2020-01-10"], ["2020-01-03", "2020-01-10"]]);
   pending.forEach(item => item.succeed(8)); await flush();
+  const initial = rendered.value.resources.PH;
+  expect(initial.status).toBe("success");
+  if (initial.status === "success") {
+    expect(initial.data.data.series.map(series => series.metric.id)).toEqual(OPERATING_METRIC_IDS);
+    expect(initial.data.data.series[0].points.map(point => point.date)).toEqual(["2020-01-03", "2020-01-09", "2020-01-10"]);
+  }
   live = { ...live, refreshRevision: 1, state: { status: "failure", kind: "error", code: "TIMEOUT", message: "主查询失败" } };
   rendered.render(); await flush(); expect(pending).toHaveLength(4);
   pending[2].fail(); pending[3].succeed(4); await flush();
@@ -216,4 +236,22 @@ test("经营日期切换不显示旧日值，旧请求迟到不能覆盖新日�
   expect(rendered.value.resources.PH).toMatchObject({ status: "success", data: { data: { query: { dateRange: ["2020-01-04", "2020-01-11"] } } } });
   const ph = rendered.value.resources.PH;
   expect(ph.status === "success" && ph.data.data.series[0].points.every(point => point.value === .4)).toBe(true);
+});
+
+test("经营20PID快照保持三路调度，退出时取消在途且不继续启动后续平台", async () => {
+  const live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: [...OPERATING_METRIC_IDS],
+    platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
+  const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3"]);
+  pending[0].succeed(); await flush();
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4"]);
+  pending[1].fail(); await flush();
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5"]);
+  expect(pending.every(item => item.query.projection === "operating_snapshot")).toBe(true);
+  expect(rendered.value.resources.QA1.status).toBe("success");
+  expect(rendered.value.resources.QA2.status).toBe("failure");
+  rendered.dispose();
+  expect(pending.every(item => item.signal.aborted)).toBe(true);
+  pending.slice(2).forEach(item => item.succeed(4)); await flush();
+  expect(pending).toHaveLength(5);
 });

@@ -6,15 +6,194 @@ import {
   fetchDataPreviewStatus,
   fetchDataSourceStatus,
   loginMaintenance,
+  logoutMaintenance,
   testDataSource,
   updateDataSourceToken
 } from "./adminDataSources";
 
 const originalFetch = globalThis.fetch;
+const originalSetTimeout = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
 const CSRF_TOKEN = "fake-csrf-token-for-admin-tests";
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.setTimeout = originalSetTimeout;
+  globalThis.clearTimeout = originalClearTimeout;
+});
+
+function virtualClock() {
+  let now = 0, nextId = 1;
+  const timers = new Map<number, { due: number; callback: () => void }>();
+  const delays: number[] = [];
+  const cleared: number[] = [];
+  globalThis.setTimeout = ((callback: () => void, delay = 0) => {
+    const id = nextId++;
+    delays.push(delay);
+    timers.set(id, { due: now + delay, callback });
+    return id;
+  }) as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((id: number) => {
+    cleared.push(id);
+    timers.delete(id);
+  }) as typeof globalThis.clearTimeout;
+  return {
+    delays, cleared,
+    get activeCount() { return timers.size; },
+    advance(milliseconds: number) {
+      const target = now + milliseconds;
+      while (true) {
+        const next = [...timers.entries()].filter(([, timer]) => timer.due <= target).sort((left, right) => left[1].due - right[1].due)[0];
+        if (!next) break;
+        now = next[1].due;
+        timers.delete(next[0]);
+        next[1].callback();
+      }
+      now = target;
+    }
+  };
+}
+
+function pendingFetch() {
+  let signal: AbortSignal | undefined;
+  let finish!: (response: Response) => void;
+  globalThis.fetch = ((_input, init) => new Promise<Response>((resolve, reject) => {
+    signal = init?.signal ?? undefined;
+    finish = resolve;
+    if (signal?.aborted) reject(new DOMException("request cancelled", "AbortError"));
+    else signal?.addEventListener("abort", () => reject(new DOMException("request cancelled", "AbortError")), { once: true });
+  })) as typeof fetch;
+  return { finish: (response: Response) => finish(response), get signal() { return signal; } };
+}
+
+describe("只读凭证探针期限与维护请求边界", () => {
+  for (const candidate of [false, true]) test(`${candidate ? "候选" : "当前"}凭证的20秒正常探针不被维护客户端提前取消`, async () => {
+    const clock = virtualClock();
+    const request = pendingFetch();
+    const data = { site: "secondary", valid: true, checkedAt: "2026-10-14T08:00:00.000Z" };
+    const outcome = testDataSource("secondary", CSRF_TOKEN, candidate ? "fake-candidate-token-0002" : undefined)
+      .then(value => ({ success: true, value }), error => ({ success: false, error }));
+    clock.advance(20_000);
+    request.finish(jsonResponse({ success: true, data }));
+    expect(await outcome).toEqual({ success: true, value: data });
+    expect(clock.delays).toEqual([75_000]);
+    expect(clock.activeCount).toBe(0);
+    expect(clock.cleared).toHaveLength(1);
+  });
+
+  test("挂起探针在75秒仍返回原维护超时码并清理计时器", async () => {
+    const clock = virtualClock();
+    const request = pendingFetch();
+    const outcome = testDataSource("secondary", CSRF_TOKEN).catch(error => error);
+    clock.advance(74_999);
+    expect(request.signal?.aborted).toBe(false);
+    clock.advance(1);
+    expect(await outcome).toMatchObject({ code: "ADMIN_REQUEST_TIMEOUT", kind: "error", status: 0 });
+    expect(clock.activeCount).toBe(0);
+    expect(clock.cleared).toHaveLength(1);
+  });
+
+  test("探针JSON读取仍受75秒期限约束", async () => {
+    const clock = virtualClock();
+    let reading = false;
+    globalThis.fetch = (async (_input, init) => {
+      const response = new Response("", { status: 200 });
+      response.json = () => {
+        reading = true;
+        return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("body cancelled", "AbortError")), { once: true }));
+      };
+      return response;
+    }) as typeof fetch;
+    const outcome = testDataSource("secondary", CSRF_TOKEN).catch(error => error);
+    await Promise.resolve();
+    expect(reading).toBe(true);
+    clock.advance(75_000);
+    expect(await outcome).toMatchObject({ code: "ADMIN_REQUEST_TIMEOUT", kind: "error", status: 0 });
+    expect(clock.activeCount).toBe(0);
+    expect(clock.cleared).toHaveLength(1);
+  });
+
+  for (const [status, code] of [[504, "UPSTREAM_TIMEOUT"], [401, "UPSTREAM_AUTH_FAILED"]] as const)
+    test(`探针保留HTTP${status}上游分类、错误码与请求编号`, async () => {
+      const clock = virtualClock();
+      globalThis.fetch = (async () => jsonResponse({ success: false, error: { code, message: "fixture upstream failure", requestId: "fixture-probe-request" } }, status)) as typeof fetch;
+      await expect(testDataSource("secondary", CSRF_TOKEN)).rejects.toMatchObject({ code, kind: "upstream", status, requestId: "fixture-probe-request" });
+      expect(clock.delays).toEqual([75_000]);
+      expect(clock.activeCount).toBe(0);
+      expect(clock.cleared).toHaveLength(1);
+    });
+
+  test("登录、保存、状态与测试环境操作全部保留原15秒期限", async () => {
+    const clock = virtualClock();
+    globalThis.fetch = (async input => {
+      const path = input.toString();
+      if (path === "/api/bi/admin/data-sources/status") return jsonResponse({ success: true, data: statuses });
+      if (path === "/api/bi/admin/auth/login") return jsonResponse({ success: true, data: { expiresAt: "2026-10-29T08:00:00.000Z" } });
+      if (path === "/api/bi/admin/auth/logout") return jsonResponse({ success: true, data: { loggedOut: true } });
+      if (path === "/api/bi/admin/data-sources/token") return jsonResponse({ success: true, data: statuses[0] });
+      if (path === "/api/bi/admin/data-preview/status") return jsonResponse({ success: true, data: { enabled: true, active: false, userName: "fixture-test-user", expiresAt: null } });
+      if (path === "/api/bi/admin/data-preview/activate") return jsonResponse({ success: true, data: { mode: "test", userName: "fixture-test-user", expiresAt: "2026-10-15T08:00:00.000Z", checkedAt: "2026-10-14T08:00:00.000Z" } });
+      if (path === "/api/bi/admin/data-preview/deactivate") return jsonResponse({ success: true, data: { mode: "production" } });
+      throw new Error("Unexpected maintenance fixture operation");
+    }) as typeof fetch;
+    await fetchDataSourceStatus();
+    await loginMaintenance("fake-password-long-enough", CSRF_TOKEN);
+    await logoutMaintenance(CSRF_TOKEN);
+    await updateDataSourceToken("primary", "fake-candidate-token-0002", CSRF_TOKEN);
+    await fetchDataPreviewStatus();
+    await activateDataPreview("fake-preview-token-0001", CSRF_TOKEN);
+    await deactivateDataPreview(CSRF_TOKEN);
+    expect(clock.delays).toEqual(Array(7).fill(15_000));
+    expect(clock.activeCount).toBe(0);
+    expect(clock.cleared).toHaveLength(7);
+  });
+
+  test("其他维护请求在15秒仍有界失败", async () => {
+    const clock = virtualClock();
+    pendingFetch();
+    const outcome = loginMaintenance("fake-password-long-enough", CSRF_TOKEN).catch(error => error);
+    clock.advance(15_000);
+    expect(await outcome).toMatchObject({ code: "ADMIN_REQUEST_TIMEOUT", kind: "error", status: 0 });
+    expect(clock.activeCount).toBe(0);
+    expect(clock.cleared).toHaveLength(1);
+  });
+
+  test("调用方取消挂起读取保留AbortError并清理维护计时器", async () => {
+    const clock = virtualClock();
+    const request = pendingFetch();
+    const controller = new AbortController();
+    const outcome = fetchDataSourceStatus(controller.signal).catch(error => error);
+    controller.abort();
+    const failure = await outcome;
+    expect(failure).toBeInstanceOf(DOMException);
+    expect(failure.name).toBe("AbortError");
+    expect(request.signal?.aborted).toBe(true);
+    expect(clock.activeCount).toBe(0);
+    expect(clock.cleared).toHaveLength(1);
+  });
+
+  test("调用方取消JSON读取保留AbortError而不改为超时", async () => {
+    const clock = virtualClock();
+    let reading = false;
+    globalThis.fetch = (async (_input, init) => {
+      const response = new Response("", { status: 200 });
+      response.json = () => {
+        reading = true;
+        return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("body cancelled", "AbortError")), { once: true }));
+      };
+      return response;
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const outcome = fetchDataSourceStatus(controller.signal).catch(error => error);
+    await Promise.resolve();
+    expect(reading).toBe(true);
+    controller.abort();
+    const failure = await outcome;
+    expect(failure).toBeInstanceOf(DOMException);
+    expect(failure.name).toBe("AbortError");
+    expect(clock.activeCount).toBe(0);
+    expect(clock.cleared).toHaveLength(1);
+  });
 });
 
 function jsonResponse(payload: unknown, status = 200) {

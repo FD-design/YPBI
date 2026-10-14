@@ -4,6 +4,10 @@ import { notifyAuthenticationRequired } from "./authEvents";
 export type CredentialSite = "primary" | "secondary";
 export type AdminFailureKind = "login_required" | "disabled" | "locked" | "insecure" | "proxy_misconfigured" | "validation" | "upstream" | "error";
 
+const ADMIN_REQUEST_TIMEOUT_MS = 15_000;
+// Cover the server's allowed 60-second probe plus the existing maintenance request window.
+const CREDENTIAL_PROBE_TIMEOUT_MS = 60_000 + ADMIN_REQUEST_TIMEOUT_MS;
+
 const credentialSiteSchema = z.enum(["primary", "secondary"]);
 const tokenHintSchema = z.string().max(8).refine(
   (value) => value === "未配置" || /^••••\S{4}$/u.test(value),
@@ -129,7 +133,7 @@ function invalidResponse(status: number) {
   });
 }
 
-async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: RequestInit = {}): Promise<T> {
+async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: RequestInit = {}, timeoutMs = ADMIN_REQUEST_TIMEOUT_MS): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("accept", "application/json");
   if (init.body !== undefined) headers.set("content-type", "application/json");
@@ -138,7 +142,7 @@ async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: R
   const forwardAbort = () => { callerAborted = true; controller.abort(); };
   if (init.signal?.aborted) forwardAbort();
   else init.signal?.addEventListener("abort", forwardAbort, { once: true });
-  const timer = globalThis.setTimeout(() => controller.abort(), 15_000);
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(path, {
       ...init,
@@ -219,7 +223,7 @@ export async function testDataSource(site: CredentialSite, csrfToken: string, to
     method: "POST",
     headers: { "x-csrf-token": csrfToken },
     body: JSON.stringify(token === undefined ? { site } : { site, token })
-  });
+  }, CREDENTIAL_PROBE_TIMEOUT_MS);
   if (payload.data.site !== site) throw invalidResponse(200);
   return payload.data;
 }

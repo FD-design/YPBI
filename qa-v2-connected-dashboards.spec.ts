@@ -3,12 +3,13 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { DailyDashboardSuccess } from "./contracts/daily-dashboard";
 import type { DailyDashboardQuery } from "./contracts/daily-dashboard";
+import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "./contracts/operating-detail-projection";
 
 test.use({ channel: "chrome", viewport: { width: 1440, height: 1000 } });
 const base = process.env.YPBI_BASE_URL ?? "http://127.0.0.1:5173";
 // Use the server's Bun runtime to load its generated JSON metadata without
 // changing production imports for the Node-based browser test runner.
-const generated = JSON.parse(execFileSync("bun", ["-e", `
+const generated = JSON.parse(execFileSync("bun", ["--no-env-file", "-e", `
   import { DailyDashboardService, dailyDashboardCatalog } from './server/v2/daily-dashboard.service';
   const catalog = dailyDashboardCatalog(true), results = {};
   const service = new DailyDashboardService({ get: async () => ({ code: 200, msg: { pageData: [], totalCount: 0 } }) });
@@ -58,7 +59,9 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
       const template = generated.results[query.boardId] as DailyDashboardSuccess;
       const { acquisitionGroups: _acquisitionGroups, playbackGroups: _playbackGroups, ...legacyData } = template.data as DailyDashboardSuccess["data"] & { acquisitionGroups?: unknown; playbackGroups?: unknown };
       const typeStatistics = opts.typeStatistics ? registrationTypeStatistics(query, rows) : null;
-      body = { ...template, data: { ...legacyData, schemaVersion: typeStatistics ? "day-dashboard/v2" : "day-dashboard/v1", query, series: template.data.series.map(series => ({
+      const snapshot = query.projection === "operating_snapshot", dates = snapshot ? operatingSnapshotDates(query.dateRange) : null;
+      const series = snapshot ? OPERATING_METRIC_IDS.map(id => template.data.series.find(series => series.metric.id === id)!) : template.data.series;
+      body = { ...template, data: { ...legacyData, schemaVersion: typeStatistics || snapshot ? "day-dashboard/v2" : "day-dashboard/v1", query, series: series.map(series => ({
         metric: series.metric, points: Array.from({ length: count }, (_, index) => {
           const date = new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10);
           const row = rows.find(item => item.sumDate === date) as Record<string, unknown> | undefined;
@@ -67,8 +70,9 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
           const numerator = inputs[0].value, denominator = inputs[1]?.value;
           const state = !row ? "no_record" : inputs.some(input=>input.value===null) ? "no_value" : denominator === 0 ? "zero_denominator" : "available";
           return { date, inputs, state, value: state !== "available" ? null : denominator == null ? numerator : numerator! / denominator };
-        }),
-        ...(typeStatistics ? { periodStatistics: typeStatistics[series.metric.id] ?? { aggregationVersion: "daily-statistics/v1", dateRange: query.dateRange, dayCount: count, state: "unsupported", values: [], reason: "该隔离样例仅提供获客类型周期统计" } } : {})
+        }).filter(point => !dates || dates.includes(point.date)),
+        ...(snapshot ? { periodStatistics: { aggregationVersion: "daily-statistics/v1", dateRange: query.dateRange, dayCount: count, state: "unsupported", values: [], reason: OPERATING_SNAPSHOT_STATISTICS_REASON } }
+          : typeStatistics ? { periodStatistics: typeStatistics[series.metric.id] ?? { aggregationVersion: "daily-statistics/v1", dateRange: query.dateRange, dayCount: count, state: "unsupported", values: [], reason: "该隔离样例仅提供获客类型周期统计" } } : {})
       })) } };
     } else return route.fulfill({ status: 404, json: { success: false, error: { code: "NOT_FOUND", message: "测试中未配置接口", requestId: "qa" } } });
     return route.fulfill({ status: 200, json: body });

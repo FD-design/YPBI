@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "./operating-detail-projection";
 
 export const DAILY_DASHBOARD_VERSION = "day-dashboard/v2" as const;
 export const DAILY_STATISTICS_VERSION = "daily-statistics/v1" as const;
@@ -7,10 +8,12 @@ export const DAILY_DASHBOARD_MAX_SERIES = 256;
 export const dailyDashboardQuerySchema = z.object({
   boardId: z.string().min(1).max(32),
   pid: z.string().min(1).max(32),
-  dateRange: z.tuple([z.iso.date(), z.iso.date()])
+  dateRange: z.tuple([z.iso.date(), z.iso.date()]),
+  projection: z.literal("operating_snapshot").optional()
 }).strict().superRefine((query, ctx) => {
   const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
   if (days < 1 || days > 366) ctx.addIssue({ code: "custom", path: ["dateRange"], message: "单次支持1至366个业务日" });
+  if (query.projection && (query.boardId !== "5.2" || days !== 8)) ctx.addIssue({ code: "custom", path: ["projection"], message: "经营快照仅适用于核心经营看板的当日至上周同日范围" });
 });
 export type DailyDashboardQuery = z.infer<typeof dailyDashboardQuerySchema>;
 
@@ -201,13 +204,24 @@ const dailyDashboardDataFields = {
 };
 const dailyDashboardV1DataSchema = z.object({ ...dailyDashboardDataFields,
   schemaVersion: z.literal("day-dashboard/v1"), series: z.array(dailySeriesSchema).min(1).max(DAILY_DASHBOARD_MAX_SERIES)
-}).strict();
+}).strict().refine(data => !data.query.projection, "经营快照使用day-dashboard/v2响应");
 const dailyDashboardV2DataSchema = z.object({ ...dailyDashboardDataFields,
   schemaVersion: z.literal(DAILY_DASHBOARD_VERSION),
   acquisitionGroups: dailyAcquisitionGroupsSchema.optional(),
   playbackGroups: dailyPlaybackGroupsSchema.optional(),
   series: z.array(dailySeriesSchema.extend({ periodStatistics: dailyPeriodStatisticsSchema })).min(1).max(DAILY_DASHBOARD_MAX_SERIES)
 }).strict().superRefine((data, ctx) => {
+  if (data.query.projection) {
+    const expectedDates = operatingSnapshotDates(data.query.dateRange);
+    if (data.acquisitionGroups || data.playbackGroups) ctx.addIssue({ code: "custom", message: "经营快照不包含专题动态分组" });
+    if (data.series.length !== OPERATING_METRIC_IDS.length || data.series.some((series, index) => series.metric.id !== OPERATING_METRIC_IDS[index])) ctx.addIssue({ code: "custom", message: "经营快照必须包含完整有序的93列投影" });
+    for (const series of data.series) {
+      if (series.points.length !== expectedDates.length || series.points.some((point, index) => point.date !== expectedDates[index])) ctx.addIssue({ code: "custom", message: "经营快照仅返回当日、昨日和上周同日" });
+      const statistics = series.periodStatistics;
+      if (statistics.state !== "unsupported" || statistics.values.length || statistics.reason !== OPERATING_SNAPSHOT_STATISTICS_REASON
+        || statistics.dayCount !== 8 || statistics.dateRange.some((date, index) => date !== data.query.dateRange[index])) ctx.addIssue({ code: "custom", message: "经营快照不能用于连续周期统计" });
+    }
+  }
   if (data.acquisitionGroups && data.query.boardId !== "5.7") ctx.addIssue({ code: "custom", path: ["acquisitionGroups"], message: "动态获客分组仅适用于获客看板" });
   if (data.playbackGroups && data.query.boardId !== "5.12") ctx.addIssue({ code: "custom", path: ["playbackGroups"], message: "视频类型分组仅适用于播放看板" });
   if (data.acquisitionGroups && data.query.dateRange[0] !== data.query.dateRange[1]
@@ -222,7 +236,10 @@ export type DailyDashboardSuccess = z.infer<typeof dailyDashboardSuccessSchema>;
 
 export function dailyDashboardMatchesQuery(result: DailyDashboardSuccess, query: DailyDashboardQuery, metricIds: readonly string[]) {
   const data = result.data;
-  if (data.query.boardId !== query.boardId || data.query.pid !== query.pid || data.query.dateRange.some((date, index) => date !== query.dateRange[index])) return false;
+  if (data.query.boardId !== query.boardId || data.query.pid !== query.pid || data.query.projection !== query.projection || data.query.dateRange.some((date, index) => date !== query.dateRange[index])) return false;
+  if (query.projection && (data.schemaVersion !== DAILY_DASHBOARD_VERSION || query.boardId !== "5.2"
+    || Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0]) !== 7 * 86_400_000
+    || metricIds.length !== OPERATING_METRIC_IDS.length || metricIds.some((id, index) => id !== OPERATING_METRIC_IDS[index]))) return false;
   if (data.series.length !== metricIds.length || data.series.some((s, index) => s.metric.id !== metricIds[index])) return false;
   const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
   if (data.schemaVersion === DAILY_DASHBOARD_VERSION && data.playbackGroups) {
@@ -248,8 +265,11 @@ export function dailyDashboardMatchesQuery(result: DailyDashboardSuccess, query:
   if (data.schemaVersion === DAILY_DASHBOARD_VERSION && data.series.some(series =>
     series.periodStatistics.dayCount !== days || series.periodStatistics.dateRange.some((date, index) => date !== query.dateRange[index])
   )) return false;
-  return data.series.every(series => series.points.length === days && series.points.every((point, i) =>
-    point.date === new Date(Date.parse(query.dateRange[0]) + i * 86400000).toISOString().slice(0, 10)
+  const expectedDates = query.projection ? operatingSnapshotDates(query.dateRange) : Array.from({ length: days }, (_, index) => new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10));
+  if (query.projection && data.schemaVersion === DAILY_DASHBOARD_VERSION && data.series.some(series => series.periodStatistics.state !== "unsupported"
+    || series.periodStatistics.values.length || series.periodStatistics.reason !== OPERATING_SNAPSHOT_STATISTICS_REASON)) return false;
+  return data.series.every(series => series.points.length === expectedDates.length && series.points.every((point, i) =>
+    point.date === expectedDates[i]
     && point.inputs.length === series.metric.inputs.length
     && point.inputs.every((input, index) => input.key === series.metric.inputs[index].key)
   ));

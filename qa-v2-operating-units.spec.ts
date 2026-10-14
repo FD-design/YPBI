@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dailyDashboardMatchesQuery, dailyDashboardV2SuccessSchema, type DailyDashboardQuery, type DailyDashboardV2Success } from "./contracts/daily-dashboard";
+import { OPERATING_METRIC_IDS } from "./contracts/operating-detail-projection";
 
 test.use({ channel: "chrome", viewport: { width: 1440, height: 1000 } });
 const base = process.env.YPBI_BASE_URL ?? "http://127.0.0.1:5197";
@@ -14,11 +15,13 @@ const generated = JSON.parse(execFileSync(bun, ["--no-env-file", "-e", `
   const service = new DailyDashboardService({ get: async () => ({ code: 200, msg: { pageData: [], totalCount: 0, totalData: [] } }) }, () => new Date('2026-10-14T00:00:00Z'));
   const results = {};
   for (const pid of ['PH', 'TT']) for (const start of ['2026-09-01', '2026-09-02']) {
-    const query = { boardId: '5.2', pid, dateRange: [start, '2026-09-08'] };
-    results[JSON.stringify(query)] = await service.execute(query);
+    for (const projection of start === '2026-09-01' ? [undefined, 'operating_snapshot'] : [undefined]) {
+      const query = { boardId: '5.2', pid, dateRange: [start, '2026-09-08'], ...(projection ? {projection} : {}) };
+      results[JSON.stringify(query)] = await service.execute(query);
+    }
   }
   process.stdout.write(JSON.stringify({ catalog: dailyDashboardCatalog(true), results }));
-`], { encoding: "utf8" })) as { catalog: { success: true; data: { items: { id: string; metricIds: string[] }[] } }; results: Record<string, DailyDashboardV2Success> };
+`], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })) as { catalog: { success: true; data: { items: { id: string; metricIds: string[] }[] } }; results: Record<string, DailyDashboardV2Success> };
 const metricIds = generated.catalog.data.items.find(board => board.id === "5.2")!.metricIds;
 
 async function fixtures(page: Page, conflicting = false) {
@@ -49,16 +52,16 @@ async function fixtures(page: Page, conflicting = false) {
     amount.metric.unit = unit;
     amount.metric.inputs.forEach(input => { input.unit = unit; });
     amount.points.forEach(point => Object.assign(point, { state: "available", sourceStatus: "READY", value: amountValue, inputs: amount.metric.inputs.map(input => ({ key: input.key, value: amountValue })) }));
-    amount.periodStatistics = { ...amount.periodStatistics, state: "available", reason: null, values: [{ kind: "period_sum", value: amountValue * amount.points.length }, { kind: "daily_average", value: amountValue }] };
+    if (!query.projection) amount.periodStatistics = { ...amount.periodStatistics, state: "available", reason: null, values: [{ kind: "period_sum", value: amountValue * amount.points.length }, { kind: "daily_average", value: amountValue }] };
     const people = result.data.series.find(series => series.metric.id === "M059")!;
     people.points.forEach(point => Object.assign(point, { state: "available", sourceStatus: "READY", value: 0, inputs: people.metric.inputs.map(input => ({ key: input.key, value: 0 })) }));
-    people.periodStatistics = { ...people.periodStatistics, state: "available", reason: null, values: [{ kind: "daily_average", value: 0 }] };
+    if (!query.projection) people.periodStatistics = { ...people.periodStatistics, state: "available", reason: null, values: [{ kind: "daily_average", value: 0 }] };
     const processing = result.data.series.find(series => series.metric.id === "M058.new")!;
     processing.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "PROCESSING", value: null, inputs: processing.metric.inputs.map(input => ({ key: input.key, value: null })) }));
     const retention = result.data.series.find(series => series.metric.id === "M020.natural")!;
     retention.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: retention.metric.inputs.map((input, i) => ({ key: input.key, value: i === 0 ? 1 : 2 })) }));
     dailyDashboardV2SuccessSchema.parse(result);
-    expect(dailyDashboardMatchesQuery(result, query, metricIds)).toBe(true);
+    expect(dailyDashboardMatchesQuery(result, query, query.projection ? OPERATING_METRIC_IDS : metricIds)).toBe(true);
     return route.fulfill({ status: 200, json: result });
   });
   return calls;

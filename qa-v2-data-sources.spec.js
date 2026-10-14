@@ -145,6 +145,35 @@ async function installMaintenanceFixtures(page, options = {}) {
   };
 }
 
+test("当前连接的20秒正常探针保持等待并展示真实成功，不误报维护超时", async ({ page }) => {
+  const issuedAt = new Date("2026-10-14T08:00:00.000Z");
+  await page.clock.install({ time: new Date(issuedAt.getTime() - 1000) });
+  await page.clock.pauseAt(issuedAt);
+  await installMaintenanceFixtures(page, { authorized: true });
+  let pendingRoute;
+  let finish;
+  await page.route("**/api/bi/admin/data-sources/test", route => {
+    pendingRoute = route;
+    return new Promise(resolve => { finish = resolve; });
+  });
+  await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
+  const secondary = page.locator(".v2-source-card").filter({ has: page.getByRole("heading", { name: "站2", exact: true }) });
+  await secondary.getByRole("button", { name: "测试当前连接", exact: true }).click();
+  try {
+    await expect.poll(() => Boolean(pendingRoute)).toBe(true);
+    expect(pendingRoute.request().postDataJSON()).toEqual({ site: "secondary" });
+    await page.clock.fastForward(20_000);
+    await expect(secondary.getByRole("button", { name: "正在测试", exact: true })).toBeDisabled();
+    await expect(secondary).not.toContainText("维护服务响应超时");
+    await pendingRoute.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { site: "secondary", valid: true, checkedAt: "2026-10-14T08:00:20.000Z" } }) });
+    finish();
+    await expect(secondary).toContainText("当前凭证探针通过");
+    await expect(secondary.getByRole("button", { name: "测试当前连接", exact: true })).toBeEnabled();
+  } finally {
+    finish?.();
+  }
+});
+
 test("临时测试 Token 只创建当前会话并可明确切回正式数据", async ({ page }) => {
   const fixture = await installMaintenanceFixtures(page, { authorized: true });
   await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });

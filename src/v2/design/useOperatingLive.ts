@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { OPERATING_METRIC_IDS } from "../../../contracts/operating-detail-projection";
 import { fetchDailyDashboard, V2RequestError } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
@@ -24,7 +25,7 @@ export function useOperatingLive(live: LiveDashboardReading | null, platform = "
       while (next < platforms.length && !controller.signal.aborted) {
         const platform = platforms[next++];
         try {
-          const data = await fetchDailyDashboard({ boardId: "5.2", pid: platform.pid, dateRange: [shiftDate(date, -7), date] }, live.metricIds, controller.signal);
+          const data = await fetchDailyDashboard({ boardId: "5.2", pid: platform.pid, dateRange: [shiftDate(date, -7), date], projection: "operating_snapshot" }, OPERATING_METRIC_IDS, controller.signal);
           if (!controller.signal.aborted) setResources(current => ({ ...current, [platform.pid]: { status: "success", data, refreshing: false, refreshError: null } }));
         } catch (error) {
           if (controller.signal.aborted) return;

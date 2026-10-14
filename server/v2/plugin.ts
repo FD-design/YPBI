@@ -29,6 +29,7 @@ import { V2MetricQueryError } from "./metric-query.service";
 import { bindClientRequestAbort } from "../http/client-request-abort";
 import { dailyDashboardCatalog, dailyDashboardMatchesMapping, type DailyDashboardExecutor } from "./daily-dashboard.service";
 import { dailyDashboardQuerySchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery } from "../../contracts/daily-dashboard";
+import { OPERATING_METRIC_IDS } from "../../contracts/operating-detail-projection";
 import { runWithUpstreamRequestProfile, type UpstreamRequestProfile } from "../upstream/request-profile";
 
 export interface V2MetricQueryExecutor {
@@ -289,7 +290,8 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
     if (!board.metricIds.length) return sendV2Error(request, reply, 422, "DAILY_BOARD_NOT_READY", "该看板尚无可读取的数据");
     try {
       const result = dailyDashboardSuccessSchema.safeParse(await runInEnvironment(context, () => options.dailyDashboardService!.execute(query.data)));
-      if (!result.success || !dailyDashboardMatchesQuery(result.data, query.data, board.metricIds) || !dailyDashboardMatchesMapping(result.data)) {
+      const expectedMetricIds = query.data.projection ? OPERATING_METRIC_IDS : board.metricIds;
+      if (!result.success || !dailyDashboardMatchesQuery(result.data, query.data, expectedMetricIds) || !dailyDashboardMatchesMapping(result.data)) {
         request.log.warn({ outcome: "response_contract_conflict", durationMs: Date.now() - startedAt }, "daily dashboard query rejected");
         return sendV2Error(request, reply, 502, "DAILY_SOURCE_CONFLICT", "数据结构或范围异常，未显示本次结果");
       }
