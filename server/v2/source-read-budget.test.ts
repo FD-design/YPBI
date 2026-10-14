@@ -11,6 +11,60 @@ const deferred = <T>() => {
 };
 
 describe("private source read budget", () => {
+  test("单次读取预先取消时不启动工作，也不取消同域预算", async () => {
+    const budget = new SourceReadBudget(1000), read = new AbortController();
+    read.abort();
+    let started = 0;
+    try {
+      await expect(budget.read(async () => ++started, read.signal)).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+      expect(started).toBe(0);
+      expect(getEventListeners(read.signal, "abort")).toHaveLength(0);
+      expect(budget.signal.aborted).toBe(false);
+      expect(budget.expired).toBe(false);
+      expect(await budget.read(async () => 2)).toBe(2);
+    } finally { budget.dispose(); }
+  });
+
+  test("已无用途的单次读取立即结束，其他日期和共享健康消费者继续", async () => {
+    const budget = new SourceReadBudget(1000), read = new AbortController(), shared = deferred<number>();
+    try {
+      const cancelled = budget.read(() => shared.promise, read.signal);
+      const healthy = budget.read(() => shared.promise);
+      expect(getEventListeners(read.signal, "abort")).toHaveLength(1);
+      read.abort();
+      await expect(cancelled).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+      expect(getEventListeners(read.signal, "abort")).toHaveLength(0);
+      expect(budget.signal.aborted).toBe(false);
+      expect(budget.expired).toBe(false);
+      shared.resolve(42);
+      expect(await healthy).toBe(42);
+      expect(await budget.read(async () => 0)).toBe(0);
+    } finally { budget.dispose(); }
+  });
+
+  for (const outcome of ["success", "failure", "sync_failure", "expire", "dispose"] as const)
+    test(`单次读取${outcome}清理取消监听，保留原错误和预算语义`, async () => {
+      const budget = new SourceReadBudget(outcome === "expire" ? 15 : 1000), read = new AbortController();
+      const pending = deferred<number>(), original = new Error("isolated source failure");
+      try {
+        const result = budget.read(() => {
+          if (outcome === "sync_failure") throw original;
+          return pending.promise;
+        }, read.signal);
+        if (outcome === "success") pending.resolve(0);
+        if (outcome === "failure") pending.reject(original);
+        if (outcome === "dispose") budget.dispose();
+        if (outcome === "success") expect(await result).toBe(0);
+        else if (outcome === "failure" || outcome === "sync_failure") await expect(result).rejects.toBe(original);
+        else await expect(result).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+        expect(getEventListeners(read.signal, "abort")).toHaveLength(0);
+        expect(budget.expired).toBe(outcome === "expire");
+        read.abort();
+        if (outcome !== "sync_failure") pending.reject(new Error("late isolated failure"));
+        await Promise.resolve();
+      } finally { budget.dispose(); }
+    });
+
   test("外部查询已取消时不启动读取、不登记监听且不判来源预算到期", async () => {
     const controller = new AbortController(); controller.abort();
     const budget = new SourceReadBudget(1000, controller.signal);

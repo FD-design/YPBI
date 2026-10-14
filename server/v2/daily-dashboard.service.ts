@@ -225,6 +225,24 @@ const periodStatisticKinds: Partial<Record<CandidateId, readonly DailyPeriodStat
   "M094.new": ["daily_average"], "M094.navigation.new": ["daily_average"], "M094.total.new": ["daily_average"]
 };
 type DailyPoint = DailyDashboardV2Success["data"]["series"][number]["points"][number];
+type PointSourceSelection =
+  | { kind: "derived"; sources: DailyPoint[] }
+  | { kind: "modern"; point: BiV1MetricDay["metrics"][string]; legacyFallback: boolean }
+  | { kind: "legacy" }
+  | { kind: "modern_missing" };
+
+function selectPointSource(mapping: CandidateMapping, point: BiV1MetricDay["metrics"][string] | undefined, fallbackSources: () => DailyPoint[]): PointSourceSelection {
+  if (mapping.fallbackFrom && !(point?.dataStatus === "READY" && point.unit === "ratio"
+    && (point.state === "available" || point.state === "zero_denominator"))) {
+    const sources = fallbackSources();
+    if (sources.every(source => source.sourceStatus === "READY" && source.state === "available" && source.value !== null)) {
+      return { kind: "derived", sources };
+    }
+  }
+  if (point) return { kind: "modern", point, legacyFallback: !mapping.biV1Only && (!point.dataStatus || point.dataStatus === "SOURCE_INCOMPLETE") };
+  return { kind: mapping.biV1Only ? "modern_missing" : "legacy" };
+}
+
 function derivedPoint(mapping: CandidateMapping, date: string, sources: DailyPoint[]): DailyPoint {
   const inputs = mapping.fields.map((key, index) => ({ key, value: sources[index].state === "available" && sources[index].value !== null
     ? sources[index].value! * (mapping.derivedInputMultipliers?.[index] ?? 1) : null }));
@@ -421,6 +439,7 @@ type SourceReadDiagnostics = {
   readCallCount: number;
   successfulReadCallCount: number;
   failedReadCallCount: number;
+  cancelledReadCallCount?: number;
   abandonedReadCallCount: number;
   budgetExpired: boolean;
   errorCodeCounts: SourceReadErrorCodeCounts;
@@ -450,16 +469,21 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             const result = await budget.read(() => {
               started = true;
               if (this.logger) source.readCallCount++;
-              return this.client.get(args[0], args[1], args[2], budget.signal);
-            });
+              const signal = args[3] ? AbortSignal.any([budget.signal, args[3]]) : budget.signal;
+              return this.client.get(args[0], args[1], args[2], signal);
+            }, args[3]);
             if (this.logger) source.successfulReadCallCount++;
             return result;
           } catch (error) {
             if (this.logger) {
               if (started) {
-                source.failedReadCallCount++;
-                const errorCode = sourceReadErrorCode(error);
-                source.errorCodeCounts[errorCode] = (source.errorCodeCounts[errorCode] ?? 0) + 1;
+                if (args[3]?.aborted && !budget.signal.aborted) {
+                  source.cancelledReadCallCount = (source.cancelledReadCallCount ?? 0) + 1;
+                } else {
+                  source.failedReadCallCount++;
+                  const errorCode = sourceReadErrorCode(error);
+                  source.errorCodeCounts[errorCode] = (source.errorCodeCounts[errorCode] ?? 0) + 1;
+                }
               } else {
                 source.abandonedReadCallCount++;
               }
@@ -514,6 +538,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const dates = operatingSnapshot ? operatingSnapshotDates(query.dateRange) : Array.from({ length: days }, (_, index) => new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10));
     const channelDays = new Map<string, Record<string, unknown>>();
     const channelFailures = new Set<string>();
+    const channelControllers = new Map<string, AbortController>();
     const needsChannel = sourceIds.some(id => mappings[id].channel);
     const needsPayment = sourceIds.some(id => mappings[id].payment);
     const paymentDays = new Map<string, Record<string, unknown>>(), paymentFailures = new Set<string>();
@@ -537,10 +562,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const worker = async () => {
         while (next < dates.length) {
           const date = dates[next++];
+          const controller = operatingSnapshot ? new AbortController() : undefined;
+          if (controller) channelControllers.set(date, controller);
           try {
             const result = z.object({ msg: z.object({ pageData: z.array(rowSchema), totalData: z.array(z.record(z.string(), z.unknown())).max(1) }).loose() }).loose().parse(await client.get(CHANNEL_V2_API, {
               pid: query.pid, page: "1", count: "1", sumDateBegin: date + " 00:00:00", sumDateEnd: date + " 23:59:59"
-            }));
+            }, undefined, controller?.signal));
             if (result.msg.pageData.some(row => row.pid !== query.pid || toBeijingDate(row.sumDate) !== date)) throw badSource();
             assertScopeEcho(result.msg, query.pid, date);
             if (result.msg.totalData[0]) {
@@ -662,8 +689,6 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }
     });
     const acquisitionTask = readSource("acquisition", async (client) => query.boardId === "5.7" ? readBiV1AcquisitionGroups(client, query, acquisitionMetric) : undefined);
-    const [acquisitionGroups] = await Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, channelTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
-    if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     const pointCache = new Map<string, DailyPoint>();
     const pointFor = (id: CandidateId, date: string): DailyPoint => {
       const key = `${id}|${date}`;
@@ -672,6 +697,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const point = projectPoint(id, date);
       pointCache.set(key, point);
       return point;
+    };
+    const pointSourceFor = (id: CandidateId, date: string) => {
+      const mapping = mappings[id];
+      const day = (id === "M018" ? monthlyDays : biV1MetricDays).get(date);
+      const modern = mapping.biV1Metric ? day?.metrics[biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions)] : undefined;
+      return selectPointSource(mapping, modern, () => mapping.fallbackFrom!.map(source => pointFor(source, date)));
     };
     const projectPoint = (id: CandidateId, date: string): DailyPoint => {
         const mapping = mappings[id];
@@ -691,16 +722,11 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           };
         }
         const biV1Day = (id === "M018" ? monthlyDays : biV1MetricDays).get(date);
-        const biV1Point = mapping.biV1Metric ? biV1Day?.metrics[biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions)] : undefined;
-        if (mapping.fallbackFrom && !(biV1Point?.dataStatus === "READY" && biV1Point.unit === "ratio"
-          && (biV1Point.state === "available" || biV1Point.state === "zero_denominator"))) {
-          const sources = mapping.fallbackFrom.map(source => pointFor(source, date));
-          if (sources.every(point => point.sourceStatus === "READY" && point.state === "available" && point.value !== null)) {
-            return derivedPoint(mapping, date, sources);
-          }
-        }
-        if (biV1Point) {
-          if (!mapping.biV1Only && (!biV1Point.dataStatus || biV1Point.dataStatus === "SOURCE_INCOMPLETE")) {
+        const selection = pointSourceFor(id, date);
+        if (selection.kind === "derived") return derivedPoint(mapping, date, selection.sources);
+        if (selection.kind === "modern") {
+          const biV1Point = selection.point;
+          if (selection.legacyFallback) {
             const legacyPoint = projectLegacyPoint(id, date);
             if (legacyPoint.state === "available"
               || mapping.legacyFallback === "available_or_zero_denominator" && legacyPoint.state === "zero_denominator"
@@ -733,7 +759,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             ...(biV1Point.dataStatus ? { sourceStatus: biV1Point.dataStatus } : {})
           };
         }
-        if (mapping.biV1Only) return { date, value: null, state: biV1Day ? "no_record" : "source_failure", inputs: mapping.fields.map(key => ({ key, value: null })) };
+        if (selection.kind === "modern_missing") return { date, value: null, state: biV1Day ? "no_record" : "source_failure", inputs: mapping.fields.map(key => ({ key, value: null })) };
         return projectLegacyPoint(id, date);
     };
     const projectLegacyPoint = (id: CandidateId, date: string): DailyPoint => {
@@ -769,6 +795,19 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         if (mapping.unit === "%" && !mapping.allowAboveOne && denominator !== undefined && denominator !== null && numerator > denominator) return { date, value: null, state: "invalid_value", inputs };
         return { date, value: (denominator == null ? numerator : numerator / denominator) / (mapping.resultDivisor ?? 1), state: "available", inputs };
     };
+    const nonChannelTask = Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
+    const channelDependencyTask = operatingSnapshot ? nonChannelTask.then(() => {
+      for (const date of dates) {
+        const needsLegacy = sourceIds.some(id => {
+          if (!mappings[id].channel) return false;
+          const selection = pointSourceFor(id, date);
+          return selection.kind === "legacy" || selection.kind === "modern" && selection.legacyFallback;
+        });
+        if (!needsLegacy) channelControllers.get(date)?.abort();
+      }
+    }) : undefined;
+    const [[acquisitionGroups]] = await Promise.all([nonChannelTask, channelTask, channelDependencyTask]);
+    if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     const result = dailyDashboardV2SuccessSchema.parse({ success: true, data: {
       schemaVersion: DAILY_DASHBOARD_VERSION, query, queryId: randomUUID(), fetchedAt,
       timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: sourceApis(ids),

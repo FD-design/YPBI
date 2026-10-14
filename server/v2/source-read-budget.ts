@@ -33,19 +33,21 @@ export class SourceReadBudget {
     for (const cancel of this.pendingReads) cancel();
   }
 
-  read<T>(start: () => Promise<T>): Promise<T> {
+  read<T>(start: () => Promise<T>, readSignal?: AbortSignal): Promise<T> {
     if (!this.disposed && performance.now() >= this.deadline) this.expire();
-    if (this.disposed || this.didExpire) return Promise.reject(this.failure());
+    if (this.disposed || this.didExpire || readSignal?.aborted) return Promise.reject(this.failure());
     return new Promise<T>((resolve, reject) => {
       let settled = false;
       const finish = (deliver: () => void) => {
         if (settled) return;
         settled = true;
         this.pendingReads.delete(onAbort);
+        readSignal?.removeEventListener("abort", onAbort);
         deliver();
       };
       const onAbort = () => finish(() => reject(this.failure()));
       this.pendingReads.add(onAbort);
+      readSignal?.addEventListener("abort", onAbort, { once: true });
       try {
         // Both handlers remain attached after expiry to consume late rejections.
         start().then(
