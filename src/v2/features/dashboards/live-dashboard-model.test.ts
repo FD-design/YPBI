@@ -179,19 +179,22 @@ test("经营摘要支持真实日期，旧日期资源不能冒充新日期",asy
   expect(models.find(m=>m.metric.id==="M016")!.result.status).toBe("loading");
   expect(rows[0].values[0].current).toBeNull();
   const all=operatingLiveSummary(live,resources,rows,"all");
-  expect(all.every(model=>model.result.status==="unsupported")).toBe(true);
+  expect(all.every(model=>model.result.status==="loading")).toBe(true);
   expect(all.every(model=>model.metric.aggregationLabel.includes("2026-09-09"))).toBe(true);
 });
 
-test("真实经营明细的未映射列不回退演示值，全部平台也不冒充大盘结果",async()=>{
-  const result=await data([100,200]),live=reading(result);live.query=result.data.query;
+test("真实经营明细的未映射列不回退演示值，全部平台按有效行合计",async()=>{
+  const result=await data([100,200],["2026-08-30","2026-09-06"]),live=reading(result);live.query=result.data.query;
   const resources={PH:{status:"success" as const,data:result,refreshing:false,refreshError:null}},rows=operatingLiveRows(live,resources);
   const mau=rows[0].values[DETAIL_COLUMNS.findIndex(column=>column.metric.id==="M018")];
   expect(mau).toMatchObject({current:null,previousDay:null,previousWeek:null,state:"unsupported"});
   const exported=operatingLiveExportRows(rows,operatingLiveColumns(live),result.data.query.dateRange[1]);
   expect(exported.flat()).not.toContain("演示数据");
   expect(exported.flat()).toContain("待接口支持");
-  expect(operatingLiveSummary(live,resources,rows,"all").every(model=>model.result.status==="unsupported")).toBe(true);
+  const all = operatingLiveSummary(live,resources,rows,"all");
+  expect(all.find(model=>model.metric.id==="M016")!.result).toMatchObject({ status: "available", value: { raw: 200 } });
+  expect(all.filter(model=>!["M016","M081"].includes(model.metric.id)).every(model=>model.result.status==="unsupported")).toBe(true);
+  expect(all.every(model=>model.metric.definitionLabel.includes("未跨PID去重"))).toBe(true);
 });
 
 test("经营下载保留逐周期实际输入与0，不把演示字段纳入真实计算表",async()=>{

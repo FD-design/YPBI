@@ -21,8 +21,8 @@ const boards = catalog.data.items;
 const url = (id = "5.2", extra = "") => `${base}/dashboards/public?board=${id}&pid=PH&start=2026-09-02&end=2026-09-08${extra}`;
 const card = (page: Page, name: string) => page.locator(".dashboard-metric-card").filter({ has: page.getByRole("link", { name, exact: true }) }).first();
 
-async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean; emptyCurrent?: boolean; zero?: boolean; zeroTypes?: boolean; statistics?: boolean; scopedDimensions?: boolean; typeStatistics?: boolean } = {}) {
-  const control = { fail: false, failPrevious: false, calls: [] as DailyDashboardQuery[] };
+async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean; emptyCurrent?: boolean; zero?: boolean; zeroTypes?: boolean; statistics?: boolean; scopedDimensions?: boolean; typeStatistics?: boolean; amountOverallProcessing?: boolean } = {}) {
+  const control = { fail: false, failPrevious: false, failOperating: false, calls: [] as DailyDashboardQuery[] };
   await page.route("**/api/bi/v2/**", async route => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown;
@@ -33,7 +33,8 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
       const query = route.request().postDataJSON() as DailyDashboardQuery;
       control.calls.push(query);
       if (opts.statistics) return route.fulfill({ status: 200, json: generated.periodResult });
-      if (control.fail || control.failPrevious && query.dateRange[1] < "2026-09-02") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "上游超时，请重试", requestId: "qa-timeout" } } });
+      if (control.fail || control.failOperating && (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 === 7
+        || control.failPrevious && query.dateRange[1] < "2026-09-02") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "上游超时，请重试", requestId: "qa-timeout" } } });
       const count = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
       const rows = Array.from({ length: count }, (_, index) => {
         const date = new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10), n = Number(date.slice(-2)), factor = query.pid === "FBI" ? 10 : 1;
@@ -62,6 +63,7 @@ async function fixtures(page: Page, opts: { export?: boolean; emptyEnd?: boolean
           const date = new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10);
           const row = rows.find(item => item.sumDate === date) as Record<string, unknown> | undefined;
           const inputs = series.metric.inputs.map(input => ({ key: input.key, value: row && row[input.key] != null ? Number(row[input.key]) : null }));
+          if (opts.amountOverallProcessing && series.metric.id === "M058") return { date, inputs: inputs.map(input => ({ ...input, value: null })), state: "no_value", sourceStatus: "PROCESSING", value: null };
           const numerator = inputs[0].value, denominator = inputs[1]?.value;
           const state = !row ? "no_record" : inputs.some(input=>input.value===null) ? "no_value" : denominator === 0 ? "zero_denominator" : "available";
           return { date, inputs, state, value: state !== "available" ? null : denominator == null ? numerator : numerator! / denominator };
@@ -640,16 +642,54 @@ test("独立注册日期读取相应批次与对比期，不覆盖主指标日�
   await expect(retention.locator("tbody")).not.toContainText("2026-09-08");
 });
 
+test("经营真实失败保留错误编号，重试实际查询且不触发演示恢复", async({page})=>{
+  const control = await fixtures(page);
+  control.failOperating = true;
+  await page.goto(url());
+  const local = page.locator(".core-review__detail"), summary = local.getByRole("group", { name: "经营明细纯数值卡" });
+  await expect(summary).toContainText("V2_UPSTREAM_TIMEOUT");
+  await expect(summary).toContainText("qa-timeout");
+  await expect(local.locator("tbody tr")).toHaveCount(2);
+  await expect(local.locator("tbody")).toContainText("读取失败");
+  const before = control.calls.length;
+  control.failOperating = false;
+  await summary.getByRole("button", { name: "重试查询", exact: true }).first().click();
+  await expect.poll(() => control.calls.length).toBeGreaterThan(before);
+  await expect(summary.locator(".dashboard-metric-card").first().locator(".dashboard-metric-card__value")).toContainText("1,188");
+  await expect(summary).not.toContainText("qa-timeout");
+  await expect(local.locator(".data-origin-badge--demo")).toHaveCount(0);
+});
+
+test("全部平台金额总体未就绪时，已就绪新用户拆解仍用元而非演示USD", async({page})=>{
+  await fixtures(page, { amountOverallProcessing: true });
+  await page.goto(url());
+  const local = page.locator(".core-review__detail");
+  await expect(local.getByRole("button", { name: /^经营明细平台：全部平台$/ })).toBeVisible();
+  await local.getByRole("button", { name: /^总充值金额，按/ }).click();
+  const dialog = page.getByRole("dialog", { name: "总充值金额 · 维度拆解", exact: true });
+  await expect(dialog).toContainText("来源处理中");
+  const group = dialog.getByRole("region", { name: "新用户范围", exact: true });
+  await expect(group).toContainText("单位：元");
+  await expect(group.locator("small")).toHaveText("元");
+  await expect(dialog).not.toContainText("USD");
+});
+
 test("真实经营明细不混入演示来源，下载保留全部计算输入", async({page})=>{
   await fixtures(page,{export:true});
   await page.goto(url());
   const local=page.locator(".core-review__detail");
-  await expect(local.getByRole("button",{name:"经营明细平台：Pornhub",exact:true})).toBeVisible();
-  await expect(local.locator(".dashboard-metric-card").first().locator(".dashboard-metric-card__value")).toContainText("108");
+  await expect(local.getByRole("button",{name:"经营明细平台：全部平台",exact:true})).toBeVisible();
+  await expect(local.locator("tbody tr")).toHaveCount(2);
+  await expect(local.locator(".dashboard-metric-card").first().locator(".dashboard-metric-card__value")).toContainText("1,188");
+  await expect(local).toContainText("未跨PID去重");
   await expect(local.locator(".data-origin-badge--demo")).toHaveCount(0);
-  await local.getByRole("button",{name:"经营明细平台：Pornhub",exact:true}).click();
-  await page.getByRole("option",{name:"全部平台",exact:true}).click();
-  await expect(local).toContainText("暂不支持全部平台汇总");
+  await local.getByRole("button",{name:"导出经营明细",exact:true}).click();
+  const allDialog=page.getByRole("dialog",{name:"导出经营明细",exact:true});
+  const allEvent=page.waitForEvent("download");
+  await allDialog.getByRole("button",{name:"下载 XLSX",exact:true}).click();
+  const allXml=readFileSync((await (await allEvent).path())!,"utf8");
+  for(const text of ["1188","未跨PID去重","M081:platform-sum","同指标输入合计","小红书"]) expect(allXml).toContain(text);
+  expect(allXml).not.toContain("上游未提供独立去重结果");
   await expect(local.locator(".data-origin-badge--demo")).toHaveCount(0);
   await local.getByRole("button",{name:"经营明细平台：全部平台",exact:true}).click();
   await page.getByRole("option",{name:"Pornhub",exact:true}).click();

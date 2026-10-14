@@ -62,7 +62,7 @@ import { AdvertisingOverview, advertisingSheet } from "./AdvertisingOverview";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { liveMetricModel, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { useOperatingLive } from "./useOperatingLive";
-import { operatingLiveSummary, operatingLiveExportRows, operatingLiveCalculationRows, OPERATING_LIVE_IDS } from "./operating-live-model";
+import { operatingLiveSummary, operatingLiveColumnSummary, operatingLiveExportRows, operatingLiveCalculationRows, OPERATING_LIVE_IDS } from "./operating-live-model";
 
 type ComparisonMode = "previous" | "week" | "month" | "year" | "none";
 
@@ -402,7 +402,7 @@ function CoreOverviewDesignFixture() {
   const [activeChain, setActiveChain] = useState<ChainKey>("content");
   const [sort, setSort] = useState({ columnIndex: 0, direction: "desc" as "asc" | "desc" });
   const [detailComparison, setDetailComparison] = useState<DetailComparisonMode>("none");
-  const [detailPlatform, setDetailPlatform] = useState(live?.query.pid ?? "all");
+  const [detailPlatform, setDetailPlatform] = useState("all");
   const [adAudience,setAdAudience]=useState("all");
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [locatedColumn, setLocatedColumn] = useState("");
@@ -420,7 +420,6 @@ function CoreOverviewDesignFixture() {
   useEffect(() => setBreakdownId(null), [detailPlatform, appliedFilters.end]);
   useEffect(() => {
     if (live?.query.pid) {
-      setDetailPlatform(live.query.pid);
       setSelectedDetail(null);
     }
   }, [live?.query.pid]);
@@ -494,10 +493,10 @@ function CoreOverviewDesignFixture() {
   const renderMetricCards = (models: typeof metrics, variant: "compact" | "value" = "compact") => models.map((model) => {
     const metricId = model.metric.id;
     const liveDetail = Boolean(live && variant === "value");
-    const detailConnected = Boolean(variant === "value" && live && detailPlatform !== "all" && live.metricIds.includes(OPERATING_LIVE_IDS[metricId + ":overall"]));
+    const detailConnected = Boolean(variant === "value" && live && live.metricIds.includes(OPERATING_LIVE_IDS[metricId + ":overall"]));
     const origin = liveDetail ? detailConnected ? "pending" : null : "demo";
     const sourceMessage = detailConnected
-      ? "当前为同一平台、数据日的真实日汇总，待验数。计算输入见同口径数据表。"
+      ? detailPlatform === "all" ? "当前为同一数据日各平台结果合计，不跨PID去重；部分结果明确显示覆盖范围，待验数。" : "当前为同一平台、数据日的真实日汇总，待验数。计算输入见同口径数据表。"
       : liveDetail
         ? "当前真实数据模式下，该范围暂未接入或不支持；页面不会使用演示数据替代。"
         : "当前为本地演示数据。真实指标查询与分析跳转尚未接入。";
@@ -509,22 +508,23 @@ function CoreOverviewDesignFixture() {
       breakdownDimensions={operatingDimensionLabel(metricId)}
       analysisHref={`/analysis/metrics/${metricId}`}
       onOpenAnalysis={() => setReading({ title: model.metric.name, content: <><p>{model.metric.definitionLabel}</p><p>{sourceMessage}</p></> })}
-      onOpenDefinition={() => setReading({ title: `${model.metric.name} · 指标说明`, content: <><p>{model.metric.definitionLabel}</p>{model.result.status==="available"&&model.result.calculation&&<CalculationEvidence basis={model.result.calculation}/>}</> })}
+      onOpenDefinition={() => setReading({ title: `${model.metric.name} · 指标说明`, content: <><p>{model.metric.definitionLabel}</p>{model.result.calculation&&<CalculationEvidence basis={model.result.calculation}/>}</> })}
       onOpenComparison={() => setReading({ title: `${model.metric.name} · 周期对比`, content: model.result.status === "available" && model.result.comparison
         ? <ComparisonDetails comparison={model.result.comparison} onEmphasis={false} />
         : <p>当前条件没有可查看的对比结果。</p> })}
       onOpenTrendPoint={(_, point, series) => setReading({ title: `${model.metric.name} · 趋势详情`, content: <><p>{`${series === "current" ? "当前期" : "对比期"}${point.label} · ${point.actualDate}：${point.value?.display ?? point.stateLabel}。`}</p>{point.calculation&&<CalculationEvidence basis={point.calculation}/>}</> })}
-      onRetry={() => setRecovered(ids => [...ids, metricId])}
+      onRetry={liveDetail ? live!.retry : () => setRecovered(ids => [...ids, metricId])}
+      retryLabel={liveDetail ? "重试查询" : undefined}
     /></DataOriginProvider>;
   });
 
   const exportSheets = (detailOnly = false): WorkbookSheet[] => {
     if (live && detailOnly) return [
-      { name: "00_导出说明", rows: [...liveExportEnvironmentRows(live), ["数据日", detailDate], ["平台", detailScopeLabel], ["来源", "逐字段区分待验数与待接口支持；不含演示数值"], ["完整性", "未知"], ["数据水位", "未返回"], ["金额", "真实金额采用服务端返回单位，保留接口数值；各列单独标明单位，不跨PID汇总"], ["大盘摘要", detailPlatform === "all" ? "上游未提供独立去重结果，数值留空" : "同一平台日值"]] },
+      { name: "00_导出说明", rows: [...liveExportEnvironmentRows(live), ["数据日", detailDate], ["平台", detailScopeLabel], ["来源", "逐字段区分待验数与待接口支持；不含演示数值"], ["完整性", "逐指标保留可用平台覆盖范围"], ["数据水位", "未返回"], ["金额", "各平台明细保留接口单位；同单位金额可合计，不再次换算"], ["平台摘要", detailPlatform === "all" ? "人数、次数、金额按各平台合计，未跨PID去重；比率、人均按同指标输入合计；部分结果按覆盖范围标记" : "同一平台日值"]] },
       { name: "01_经营明细", rows: operatingLiveExportRows(sortedRows, detailColumns, detailDate) },
       { name: "02_数值摘要", rows: metricRows(detailModels, id => detailColumns.find(c => c.metric.id === id && !c.slice)?.unit ?? "人") },
       { name: "03_字段说明", rows: [["指标", "单位", "数据来源", "定义"], ...detailColumns.map(column => [column.metric.name, column.unit, live.metricIds.includes(OPERATING_LIVE_IDS[detailColumnKey(column)]) ? "待验数" : "待接口支持", column.metric.definition])] },
-      { name: "04_计算输入", rows: operatingLiveCalculationRows(sortedRows, detailColumns) }
+      { name: "04_计算输入", rows: operatingLiveCalculationRows(sortedRows, detailColumns, detailPlatform === "all" ? detailModels : []) }
     ];
     const wideRows = operatingDetailExportRows(sortedRows, appliedFilters.end);
     const coreUnit = (id: string) => summaryColumn(id)?.unit ?? "人";
@@ -533,7 +533,7 @@ function CoreOverviewDesignFixture() {
       ["数据性质", "合成演示数据，非正式业务结果"], ["统计日期", detailOnly ? appliedFilters.end : dateRangeLabel(appliedFilters)],
       ["明细数据日", appliedFilters.end], ["昨日日期", previousDate], ["上周同日日期", previousWeekDate], ["明细业务平台", detailScopeLabel], ["明细范围", "所选范围结束日的单日快照"],
       ["数值单位", "百分比按 0–100 输出；人均广告点击为次/人；ARPU、ARPPU为USD/人；端别比值以iOS为1，其他单位见字段说明"], ["导出范围", `全部已筛选行、${DETAIL_COLUMNS.length}个业务列及10项数值摘要，不受可视区域和卡片收起状态裁剪`],
-      ["大盘汇总", "独立查询结果，不对各 PID 人数相加"]
+      ["平台摘要", "各平台同日结果合计，未跨PID去重；比率、人均按同指标输入合计，缺失不补0"]
     ] };
     const detail: WorkbookSheet = { name: "01_经营明细", rows: wideRows };
     const states: WorkbookSheet = { name: "99_数据状态与限制", rows: [
@@ -682,7 +682,7 @@ function CoreOverviewDesignFixture() {
           groups={[...new Set(detailColumns.map(c => c.group))].map(group => ({ label: group, options: detailColumns.filter(c => c.group === group).map(c => ({ value: detailColumnKey(c), label: c.metric.name, meta: `${c.sourceLabel ? `日报：${c.sourceLabel} · ` : ""}${c.unit}` })) }))}
           onChange={locateColumn} />
       </div>
-      <p className="core-review__detail-context">{detailPlatform === "all" ? "数值卡为独立大盘结果，明细列出各业务平台，不对平台人数相加。" : `${detailScopeLabel} · 数值卡与下方同一平台明细一致。`} 注册留存按数据日注册用户观察，各周期观察结束前显示“未成熟”。</p>
+      <p className="core-review__detail-context">{detailPlatform === "all" ? "数值卡为各平台合计，未跨PID去重；比率按同指标分子、分母合计后计算，部分结果显示覆盖范围。" : `${detailScopeLabel} · 数值卡与下方同一平台明细一致。`} 注册留存按数据日注册用户观察，各周期观察结束前显示“未成熟”。</p>
       <div ref={detailScroll} className="core-review__comparison-scroll" tabIndex={0} role="region" aria-label="业务平台经营指标横向比较表">
         <table className="core-review__comparison-table">
           <caption>{live ? "授权平台的当日快照；来源与未返回状态逐列展示" : "固定设计演示数据；正式页面动态返回所有有权限且有真实结果的业务平台"}</caption>
@@ -739,7 +739,8 @@ function CoreOverviewDesignFixture() {
       setSelectedDetail(null);
       window.requestAnimationFrame(() => restoreReadingFocus(trigger));
     }} />}
-    {breakdownId && detailModels.some(model => model.metric.id === breakdownId) && <MetricBreakdown model={operatingDetailBreakdown(detailModels.find(model => model.metric.id === breakdownId)!, detailRows, detailPlatform, detailDate)} onClose={() => setBreakdownId(null)} />}
+    {breakdownId && detailModels.some(model => model.metric.id === breakdownId) && <MetricBreakdown model={operatingDetailBreakdown(detailModels.find(model => model.metric.id === breakdownId)!, detailRows, detailPlatform, detailDate,
+      live ? column => operatingLiveColumnSummary(live, operating.resources, detailRows, column) : undefined)} onClose={() => setBreakdownId(null)} />}
     {reading && <MetricReadingDialog {...reading} onClose={() => setReading(null)} />}
     {notice && <Toast notice={notice} onClose={() => setNotice(null)} />}
   </div></CorePeriod.Provider>;

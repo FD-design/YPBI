@@ -18,6 +18,7 @@ import { notifyAuthenticationRequired } from "./authEvents";
 import { dailyDashboardCatalogSchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery, type DailyDashboardQuery } from "../../../contracts/daily-dashboard";
 import { dataEnvironmentHeaders } from "./dataEnvironmentPreference";
 import { recordDailyDashboardEnvironment } from "./daily-dashboard-environment";
+import { reportInvalidResponse } from "./response-format-diagnostics";
 
 export type V2FailureKind = "identity_unavailable" | "unauthenticated" | "forbidden" | "error";
 
@@ -85,16 +86,25 @@ async function parseResponse<T>(response: Response, successSchema: z.ZodType<T>,
     payload = await response.json();
   } catch {
     signal?.throwIfAborted();
+    reportInvalidResponse(response.status, "json_parse");
     throw invalidResponse(response.status);
   }
   signal?.throwIfAborted();
   if (response.ok) {
     const parsedSuccess = successSchema.safeParse(payload);
-    if (!parsedSuccess.success) throw invalidResponse(response.status);
+    if (!parsedSuccess.success) {
+      signal?.throwIfAborted();
+      reportInvalidResponse(response.status, "success_schema", parsedSuccess.error.issues);
+      throw invalidResponse(response.status);
+    }
     return parsedSuccess.data;
   }
   const parsedProblem = v2ApiErrorSchema.safeParse(payload);
-  if (!parsedProblem.success) throw invalidResponse(response.status);
+  if (!parsedProblem.success) {
+    signal?.throwIfAborted();
+    reportInvalidResponse(response.status, "error_schema", parsedProblem.error.issues);
+    throw invalidResponse(response.status);
+  }
   const problem = parsedProblem.data;
   const code = problem.error.code;
   throw new V2RequestError(problem.error.message, {
@@ -126,7 +136,11 @@ export async function fetchDailyDashboard(query: DailyDashboardQuery, metricIds:
   const response = await fetch("/api/bi/v2/queries/dashboards/daily-reading", { method: "POST", signal, cache: "no-store", credentials: "same-origin",
     headers, body: JSON.stringify(query) });
   const result = await parseResponse(response, dailyDashboardSuccessSchema, signal);
-  if (!dailyDashboardMatchesQuery(result, query, metricIds)) throw invalidResponse(response.status);
+  if (!dailyDashboardMatchesQuery(result, query, metricIds)) {
+    signal?.throwIfAborted();
+    reportInvalidResponse(response.status, "query_match");
+    throw invalidResponse(response.status);
+  }
   return recordDailyDashboardEnvironment(result, environment);
 }
 

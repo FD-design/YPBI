@@ -72,14 +72,15 @@ describe("经营明细单日快照", () => {
       else expect(["immature", "unsupported"]).toContain(model.result.status);
     }
   });
-  test("大盘为独立结果，不相加 PID 人数；注册日尚未成熟", () => {
+  test("经营全部平台按行合计，不跨PID去重；注册日尚未成熟", () => {
     const models = operatingSummaryModels(rows, "all", date);
     const dau = models.find(m => m.metric.id === "M016")!;
     expect(dau.result.status).toBe("available");
-    if (dau.result.status === "available") expect(dau.result.value.raw).not.toBe(rows.reduce((sum,r) => sum + r.values[0].current!, 0));
+    if (dau.result.status === "available") expect(dau.result.value.raw).toBe(rows.reduce((sum,r) => sum + r.values[0].current!, 0));
+    expect(dau.metric.definitionLabel).toContain("未跨PID去重");
     expect(models.find(m => m.metric.id === "M020")!.result.status).toBe("immature");
   });
-  test("大盘单日付费率由同快照付费与活跃人数组成，不采用独立随机比例", () => {
+  test("经营全部平台付费率使用同日平台输入合计，不平均比率", () => {
     for (const day of ["2026-09-08", "2026-09-07", "2026-08-31"]) {
       const models = operatingSummaryModels(operatingDetailRows(day), "all", day);
       const active = models.find(m => m.metric.id === "M016")!.result;
@@ -150,7 +151,7 @@ describe("经营明细单日快照", () => {
         if(c.kind==="count")expect(Number.isInteger(value)).toBe(true);
         if(c.kind==="ratio"){expect(value).toBeGreaterThanOrEqual(0);expect(value).toBeLessThanOrEqual(1);}
       });
-      expect(operatingSummaryModels(changed,"all",day).find(m=>m.metric.id==="M020")!.result.status).toBe("available");
+      expect(operatingSummaryModels(changed,"all",day).find(m=>m.metric.id==="M020")!.result).toMatchObject({ status: "no_values", label: "计算输入异常或缺失" });
     }
   });
   test("原始日报 A:BJ 全量可追溯，58业务字段各出现一次，保留15额外列", () => {

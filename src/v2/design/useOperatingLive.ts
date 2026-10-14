@@ -32,8 +32,8 @@ export function useOperatingLive(live: LiveDashboardReading | null) {
           setResources(current => {
             const prior = operatingResource(current[platform.pid], platform.pid, date, environment);
             return { ...current, [platform.pid]: prior?.status === "success" && failure.kind === "error"
-              ? { ...prior, refreshing: false, refreshError: { message: failure.message, code: failure.code } }
-              : { status: "failure", kind: failure.kind, code: failure.code, message: failure.message } };
+              ? { ...prior, refreshing: false, refreshError: { message: failure.message, code: failure.code, requestId: failure.requestId } }
+              : { status: "failure", kind: failure.kind, code: failure.code, message: failure.message, requestId: failure.requestId } };
           });
         }
       }

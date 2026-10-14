@@ -136,7 +136,7 @@ test("摘要展开收起、新增拆解与搜索定位不裁剪宽表", async ({
   const local = section(page);
   await local.getByRole('button', {name:'展开全部 10 项',exact:true}).click();
   await expect(local.locator('.dashboard-metric-card.is-value')).toHaveCount(10);
-  await expect(local.locator('.is-value').filter({has:page.getByRole('button',{name:/^活跃用户-付费转化率，按/})}).locator('.dashboard-metric-card__value strong')).toHaveText('1.40');
+  await expect(local.locator('.is-value').filter({has:page.getByRole('button',{name:/^活跃用户-付费转化率，按/})}).locator('.dashboard-metric-card__value strong')).toHaveText('1.02');
   for (const width of [1280, 1024, 390]) {
     await page.setViewportSize({width,height:950});
     await expect(local.getByRole('button',{name:/^定位经营明细指标列/})).toContainText('搜索并定位指标列');

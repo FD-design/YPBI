@@ -10,6 +10,7 @@ import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 import { formatMetricNumber, metricNumberFormatOptions } from "../../components/metric-number-format";
 import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
 import { isMonthlyMetric, liveMonthlySeriesRows } from "../features/dashboards/live-monthly-reading";
+import { operatingPlatformSummary, type AggregateSummaryEntry } from "./operating-platform-summary";
 
 export const OPERATING_LIVE_IDS: Readonly<Record<string, string>> = {
   "M102:overall":"M102",
@@ -95,28 +96,39 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
   });
 }
 export function operatingLiveSummary(live: LiveDashboardReading, resources: OperatingResources, rows: DetailRow[], platform: string) {
-  const date = live.query.dateRange[1], resource = operatingResource(resources[platform], platform, date);
-  // Cross-PID people and ratios cannot be derived by summing platform rows. In a
-  // live session the all-platform choice must stay unavailable until upstream
-  // supplies an independent de-duplicated result; it must never fall back to a
-  // dated demonstration snapshot.
-  if (platform === "all") return OPERATING_SUMMARY_IDS.map(metricId => {
-    const column = summaryColumn(metricId);
-    return {
-      metric: { id: metricId, name: column.metric.name, definitionLabel: column.metric.definition, aggregationLabel: `${date} · 全部平台` },
-      result: { status: "unsupported" as const, label: "暂不支持全部平台汇总", contextLabel: date, retryable: false,
-        message: "真实数据模式下不合并多个 PID；请选择单个平台查看，或等待上游提供独立去重的大盘结果。" }
-    };
-  });
+  const date = live.query.dateRange[1], resource = operatingResource(resources[platform], platform, date, liveDataEnvironment(live));
+  if (platform === "all") return operatingPlatformSummary(date, Object.fromEntries(OPERATING_SUMMARY_IDS.map(id =>
+    [id, operatingSummaryEntries(live, resources, rows, summaryColumn(id))])));
   return OPERATING_SUMMARY_IDS.map(metricId => {
     const column = summaryColumn(metricId), value = rows.find(row => row.pid === platform)?.values[DETAIL_COLUMNS.indexOf(column)];
     const original: DashboardMetricCardModel = { metric: { id:metricId, name:column.metric.name, definitionLabel:column.metric.definition, aggregationLabel:date }, result: value?.current != null ? { status:"available",completeness:"unknown",refresh:{status:"idle"},value:{raw:value.current,display:formatMetricNumber(value.current*(column.kind==="ratio"?100:1),"zh-CN",column.kind==="currency"||column.kind==="average"?metricNumberFormatOptions(value.current,column.unit):{maximumFractionDigits:2}),unit:column.unit},comparison:null,trendKind:"line",trend:{current:[],comparison:null},validationLabel:"演示数据",watermarkLabel:"" } : {status:"unsupported",label:"待接口支持",contextLabel:date,retryable:false} };
     const id = OPERATING_LIVE_IDS[original.metric.id + ":overall"];
-    if (platform === "all" || !live.metricIds.includes(id)) return original;
+    if (!live.metricIds.includes(id)) return original;
     const result = liveMetricModel({ ...original, metric: { ...original.metric, id } }, { ...live, query: { ...live.query, pid: platform, dateRange: [date, date] }, comparison: undefined,
       platformName: rows.find(row => row.pid === platform)?.name ?? platform, state: resource ?? { status: "loading" } });
     return { ...result, metric: { ...result.metric, id: original.metric.id } };
   });
+}
+
+function operatingSummaryEntries(live: LiveDashboardReading, resources: OperatingResources, rows: DetailRow[], column: DetailColumn): AggregateSummaryEntry[] {
+  const date = live.query.dateRange[1], id = OPERATING_LIVE_IDS[detailColumnKey(column)];
+  return (live.platforms ?? rows.map(({ pid, name }) => ({ pid, name }))).map(platform => {
+    const resource = operatingResource(resources[platform.pid], platform.pid, date, liveDataEnvironment(live));
+    const series = resource?.status === "success" && live.metricIds.includes(id) ? resource.data.data.series.find(series => series.metric.id === id) : undefined;
+    const point = series?.points.find(point => point.date === date) ?? null;
+    return { ...platform, metric: series ? { ...series.metric, id: column.metric.id } : null, point,
+      completeness: resource?.status === "success" ? resource.data.data.completeness : "unknown",
+      refresh: resource?.status === "success" ? resource.refreshError
+        ? { status: "failed" as const, source: "page" as const, retryable: true, ...resource.refreshError }
+        : resource.refreshing ? { status: "refreshing" as const, source: "page" as const } : { status: "idle" as const } : undefined,
+      unavailable: resource?.status === "failure" ? { status: "failed" as const, contextLabel: date, label: "读取失败", retryable: true, message: resource.message, code: resource.code, requestId: resource.requestId }
+        : !resource || resource.status === "loading" ? { status: "loading" as const, contextLabel: date, label: "读取中", retryable: false }
+          : !live.metricIds.includes(id) ? { status: "unsupported" as const, contextLabel: date, label: "待接口支持", retryable: false } : undefined };
+  });
+}
+
+export function operatingLiveColumnSummary(live: LiveDashboardReading, resources: OperatingResources, rows: DetailRow[], column: DetailColumn) {
+  return operatingPlatformSummary(live.query.dateRange[1], { [column.metric.id]: operatingSummaryEntries(live, resources, rows, column) }, { metricIds: [column.metric.id] })[0];
 }
 export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn[], date: string) {
   const periods = ["current", "previousDay", "previousWeek"] as const;
@@ -141,10 +153,10 @@ export function operatingLiveExportRows(rows: DetailRow[], columns: DetailColumn
     }))])];
 }
 
-export function operatingLiveCalculationRows(rows: DetailRow[], columns: DetailColumn[]) {
+export function operatingLiveCalculationRows(rows: DetailRow[], columns: DetailColumn[], summaries: DashboardMetricCardModel[] = []) {
   const periods = [["current", "当日"], ["previousDay", "昨日"], ["previousWeek", "上周同日"]] as const;
   const hasReferences = rows.some(row => row.values.some(value => periods.some(([period]) => value.evidence?.[period].referenceRatio)));
-  return [["PID", "业务平台", "指标", "列键", "周期", "实际日期", "计算公式", "输入指标", "输入值", "输入单位", "状态", "查询时间", "刷新状态", "来源口径", ...(hasReferences ? ["参考比率（%）", "参考说明"] : [])],
+  const result = [["PID", "业务平台", "指标", "列键", "周期", "实际日期", "计算公式", "输入指标", "输入值", "输入单位", "状态", "查询时间", "刷新状态", "来源口径", ...(hasReferences ? ["参考比率（%）", "参考说明"] : [])],
     ...rows.flatMap(row => row.values.flatMap((value, index) => periods.flatMap(([period, label]) => {
       if (isMonthlyMetric(columns[index].metric.id) && period !== "current") return [];
       const evidence = value.evidence?.[period];
@@ -154,4 +166,13 @@ export function operatingLiveCalculationRows(rows: DetailRow[], columns: DetailC
         input.name, input.value, input.unit, "待验数 · " + evidence.label, evidence.fetchedAt, evidence.stale ? "上次查询结果" : "本次查询结果", evidence.sourceNote ?? "",
         ...(hasReferences ? [evidence.referenceRatio ? evidence.referenceRatio.value * 100 : null, evidence.referenceRatio?.label ?? null] : [])]);
     })))];
+  for (const model of summaries) {
+    const value = model.result, basis = value.calculation;
+    const inputs = basis ? [basis.numerator, basis.denominator] : [{ name: "可用平台结果合计", value: value.status === "available" ? value.value.raw : null, unit: value.status === "available" ? value.value.unit : "" }];
+    const status = value.status === "available" ? value.completeness === "partial" ? "待验数 · 部分平台合计" : "待验数 · 各平台合计" : value.label ?? value.status;
+    result.push(...inputs.map(input => ["all", "各平台合计（未跨PID去重）", model.metric.name, `${model.metric.id}:platform-sum`, "当日平台合计", model.metric.aggregationLabel,
+      basis?.formula ?? "可用平台同单位结果相加", input.name, input.value, input.unit, status, null,
+      value.status === "available" && value.refresh.status !== "idle" ? "保留上次查询结果" : "本次查询投影", model.metric.definitionLabel, ...(hasReferences ? [null, null] : [])]));
+  }
+  return result;
 }
