@@ -39,6 +39,7 @@ describe("日看板请求环境快照", () => {
     }) as typeof fetch;
 
     const pending = fetchDailyDashboard(query, ["M001"]);
+    await Promise.resolve();
     expect(observedHeaders?.get("x-ypbi-data-environment")).toBe("test");
     expect(observedBody).toEqual(query);
     setDataEnvironmentPreference("production");
@@ -75,6 +76,7 @@ describe("日看板请求环境快照", () => {
     const testRequest = fetchDailyDashboard(query, ["M001"]);
     setDataEnvironmentPreference("production");
     const productionRequest = fetchDailyDashboard(query, ["M001"]);
+    await Promise.resolve();
     expect(pending.map(request => request.environment)).toEqual(["test", "production"]);
     pending[1].resolve(jsonResponse());
     const production = await productionRequest;

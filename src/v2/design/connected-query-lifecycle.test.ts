@@ -65,9 +65,16 @@ function hook<T>(read: () => T) {
 }
 
 const disposals: (() => void)[] = [];
+const requestCleanups = new Set<() => void>();
 const originalFetch = globalThis.fetch;
 const originalEnvironment = currentDataEnvironmentPreference();
-afterEach(() => { disposals.splice(0).forEach(dispose => dispose()); globalThis.fetch = originalFetch; setDataEnvironmentPreference(originalEnvironment); });
+afterEach(async () => {
+  disposals.splice(0).forEach(dispose => dispose());
+  requestCleanups.forEach(cleanup => cleanup());
+  await flush();
+  globalThis.fetch = originalFetch;
+  setDataEnvironmentPreference(originalEnvironment);
+});
 const flush = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 const day = (date: string, offset: number) => new Date(Date.parse(date) + offset * 86400000).toISOString().slice(0, 10);
 function payload(query: DailyDashboardQuery, numerator = 8): DailyDashboardSuccess {
@@ -98,13 +105,33 @@ function reading(): LiveDashboardReading {
     refreshRevision: 0, retry() {}, canExport: true,
     controls: { date: null, scope: null, comparison: null, dirty: false, acceptsSharedRange: () => true, apply() {}, export() {} } };
 }
-function requests() {
+function requests({ ignoreAbort = false }: { ignoreAbort?: boolean } = {}) {
   const pending: { query: DailyDashboardQuery; signal: AbortSignal; succeed: (value?: number) => void; fail: () => void }[] = [];
   globalThis.fetch = (async (url, options) => {
     expect(url).toBe("/api/bi/v2/queries/dashboards/daily-reading");
     const query = JSON.parse(String(options!.body)) as DailyDashboardQuery;
-    return new Promise<Response>((resolve, reject) => pending.push({ query, signal: options!.signal as AbortSignal,
-      succeed: (value = 8) => resolve(Response.json(payload(query, value))), fail: () => reject(new Error("isolated timeout")) }));
+    const signal = options!.signal as AbortSignal;
+    return new Promise<Response>((resolve, reject) => {
+      let settled = false;
+      const settle = (complete: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        requestCleanups.delete(cleanup);
+        complete();
+      };
+      const abort = () => settle(() => reject(signal.reason));
+      const cleanup = () => settle(() => reject(signal.reason ?? new DOMException("Test request disposed", "AbortError")));
+      requestCleanups.add(cleanup);
+      if (!ignoreAbort) {
+        if (signal.aborted) { abort(); return; }
+        signal.addEventListener("abort", abort, { once: true });
+      }
+      pending.push({ query, signal,
+        succeed: (value = 8) => settle(() => resolve(Response.json(payload(query, value)))),
+        fail: () => settle(() => reject(new Error("isolated timeout")))
+      });
+    });
   }) as typeof fetch;
   return pending;
 }
@@ -114,6 +141,7 @@ const range = { start: "2020-01-01", end: "2020-01-01" };
 test("独立注册两期初次查询及整页重试不等待主查询成功", async () => {
   let live = reading();
   const pending = requests(), rendered = hook(() => useCohortReading(live, range)!);
+  await Promise.resolve();
   expect(pending.map(item => item.query.dateRange)).toEqual([["2020-01-01", "2020-01-01"], ["2019-12-31", "2019-12-31"]]);
   pending.forEach(item => item.fail()); await flush();
   expect(rendered.value.state.status).toBe("failure");
@@ -128,6 +156,7 @@ test("独立注册两期初次查询及整页重试不等待主查询成功", as
 test("同范围刷新失败保留两期旧值，主查询新结果不触发额外请求", async () => {
   let live = reading();
   const pending = requests(), rendered = hook(() => useCohortReading(live, range)!);
+  await Promise.resolve();
   pending.forEach(item => item.succeed()); await flush();
   live = { ...live, refreshRevision: 1, state: success(live.query, 9) }; rendered.render(); await flush();
   expect(pending).toHaveLength(4);
@@ -146,6 +175,7 @@ test("主查询刷新失败保留相同queryId时，独立两期仍按整页刷�
   const main = success(live.query);
   live = { ...live, state: main };
   const pending = requests(), rendered = hook(() => useCohortReading(live, range)!);
+  await Promise.resolve();
   pending.forEach(item => item.fail()); await flush();
   live = { ...live, refreshRevision: 1, state: { ...main, refreshing: true } };
   rendered.render(); await flush();
@@ -177,7 +207,8 @@ test("注册期等于主范围时复用主请求，转为独立范围时只请�
 
 test("PID/注册日期切换立即屏蔽旧值并隔离迟到响应", async () => {
   let live = reading(), selected = range;
-  const pending = requests(), rendered = hook(() => useCohortReading(live, selected)!);
+  const pending = requests({ ignoreAbort: true }), rendered = hook(() => useCohortReading(live, selected)!);
+  await Promise.resolve();
   pending.forEach(item => item.succeed(8)); await flush();
   rendered.value.retry(); await flush();
   live = { ...live, query: { ...live.query, pid: "TT" }, refreshRevision: 1 };
@@ -193,6 +224,7 @@ test("PID/注册日期切换立即屏蔽旧值并隔离迟到响应", async () =
 test("独立注册期启用对比只补比较请求，关闭时取消比较不重查当前期", async () => {
   let live = { ...reading(), comparison: undefined } as LiveDashboardReading;
   const pending = requests(), rendered = hook(() => useCohortReading(live, range)!);
+  await Promise.resolve();
   expect(pending).toHaveLength(1); pending[0].succeed(); await flush();
   live = { ...live, comparison: reading().comparison }; rendered.render(); await flush();
   expect(pending).toHaveLength(2);
@@ -204,6 +236,7 @@ test("独立注册期启用对比只补比较请求，关闭时取消比较不�
 test("经营分PID独立读取与刷新，主查询失败不阻止恢复且单组失败保留旧值", async () => {
   let live = { ...reading(), query: { ...reading().query, boardId: "5.2" } };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  await Promise.resolve();
   expect(pending.map(item => item.query.pid)).toEqual(["PH", "TT"]);
   expect(pending.every(item => item.query.projection === "operating_snapshot")).toBe(true);
   expect(pending.map(item => item.query.dateRange)).toEqual([["2020-01-03", "2020-01-10"], ["2020-01-03", "2020-01-10"]]);
@@ -227,7 +260,8 @@ test("经营分PID独立读取与刷新，主查询失败不阻止恢复且单�
 
 test("经营日期切换不显示旧日值，旧请求迟到不能覆盖新日期", async () => {
   let live = { ...reading(), query: { ...reading().query, boardId: "5.2" } };
-  const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  const pending = requests({ ignoreAbort: true }), rendered = hook(() => useOperatingLive(live));
+  await Promise.resolve();
   pending.forEach(item => item.succeed(8)); await flush();
   live = { ...live, refreshRevision: 1 }; rendered.render(); await flush();
   live = { ...live, query: { ...live.query, dateRange: ["2020-01-11", "2020-01-11"] } };
@@ -244,6 +278,7 @@ test("经营20PID快照保持六路有界调度，退出时取消在途且不继
   const live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: [...OPERATING_METRIC_IDS],
     platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  await Promise.resolve();
   expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6"]);
   pending[0].succeed(); await flush();
   expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6", "QA7"]);
@@ -263,6 +298,7 @@ test("经营快照展示名称和主指标列表变化保留在途队列，20PID
     platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
   let selected = "all";
   const pending = requests(), rendered = hook(() => useOperatingLive(live, selected));
+  await Promise.resolve();
   expect(pending).toHaveLength(6);
   live = { ...live, platforms: live.platforms!.map(platform => ({ ...platform, name: platform.name + "更新" })) };
   rendered.render(); await flush();
@@ -296,15 +332,18 @@ test("经营有序PID范围切换取消旧队列，退出真实读取停止并�
   const initial: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: [...OPERATING_METRIC_IDS],
     platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
   let live: LiveDashboardReading | null = initial;
-  const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  const pending = requests({ ignoreAbort: true }), rendered = hook(() => useOperatingLive(live));
+  await Promise.resolve();
   expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6"]);
   live = { ...initial, platforms: [...initial.platforms!].reverse() };
   rendered.render(); await flush();
   expect(pending.slice(0, 6).every(item => item.signal.aborted)).toBe(true);
+  pending.slice(0, 6).forEach(item => item.succeed(4)); await flush();
   expect(pending.slice(6).map(item => item.query.pid)).toEqual(["QA20", "QA19", "QA18", "QA17", "QA16", "QA15"]);
   live = { ...live, platforms: live.platforms!.slice(1) };
   rendered.render(); await flush();
   expect(pending.slice(6, 12).every(item => item.signal.aborted)).toBe(true);
+  pending.slice(6, 12).forEach(item => item.succeed(4)); await flush();
   expect(pending.slice(12).map(item => item.query.pid)).toEqual(["QA19", "QA18", "QA17", "QA16", "QA15", "QA14"]);
   live = null;
   expect(rendered.render().rows).toBeNull(); await flush();
@@ -318,6 +357,7 @@ for (const status of ["loading", "failure"] as const) test(`页头${status}明�
   setDataEnvironmentPreference("test");
   let live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, dataEnvironment: "test" };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
+  await Promise.resolve();
   pending.forEach(item => item.succeed(8)); await flush();
   expect(rendered.value.resources.PH.status).toBe("success");
   setDataEnvironmentPreference("production");

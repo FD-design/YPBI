@@ -19,6 +19,9 @@ import { dailyDashboardCatalogSchema, dailyDashboardSuccessSchema, dailyDashboar
 import { dataEnvironmentHeaders } from "./dataEnvironmentPreference";
 import { recordDailyDashboardEnvironment } from "./daily-dashboard-environment";
 import { reportInvalidResponse } from "./response-format-diagnostics";
+import { DailyReadingWorkQueue } from "./daily-reading-work-queue";
+
+const dailyReadingWorkQueue = new DailyReadingWorkQueue();
 
 export type V2FailureKind = "identity_unavailable" | "unauthenticated" | "forbidden" | "error";
 
@@ -133,15 +136,18 @@ export async function fetchReadableDashboards(signal?: AbortSignal) {
 export async function fetchDailyDashboard(query: DailyDashboardQuery, metricIds: readonly string[], signal?: AbortSignal) {
   const headers = dataEnvironmentHeaders({ "content-type": "application/json", accept: "application/json" });
   const environment = headers.get("x-ypbi-data-environment") === "test" ? "test" : "production";
-  const response = await fetch("/api/bi/v2/queries/dashboards/daily-reading", { method: "POST", signal, cache: "no-store", credentials: "same-origin",
-    headers, body: JSON.stringify(query) });
-  const result = await parseResponse(response, dailyDashboardSuccessSchema, signal);
-  if (!dailyDashboardMatchesQuery(result, query, metricIds)) {
-    signal?.throwIfAborted();
-    reportInvalidResponse(response.status, "query_match");
-    throw invalidResponse(response.status);
-  }
-  return recordDailyDashboardEnvironment(result, environment);
+  const requestQuery: DailyDashboardQuery = { ...query, dateRange: [...query.dateRange] };
+  const expectedMetricIds = [...metricIds], body = JSON.stringify(requestQuery);
+  return dailyReadingWorkQueue.run(async () => {
+    const response = await fetch("/api/bi/v2/queries/dashboards/daily-reading", { method: "POST", signal, cache: "no-store", credentials: "same-origin", headers, body });
+    const result = await parseResponse(response, dailyDashboardSuccessSchema, signal);
+    if (!dailyDashboardMatchesQuery(result, requestQuery, expectedMetricIds)) {
+      signal?.throwIfAborted();
+      reportInvalidResponse(response.status, "query_match");
+      throw invalidResponse(response.status);
+    }
+    return recordDailyDashboardEnvironment(result, environment);
+  }, { priority: requestQuery.projection === "operating_snapshot" ? "snapshot" : "foreground", signal });
 }
 
 export async function fetchMetricDefinitions(signal?: AbortSignal) {
