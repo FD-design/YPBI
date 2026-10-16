@@ -13,7 +13,7 @@ import { CalculationEvidence } from "./CalculationEvidence";
 import { ComparisonDetails } from "./ComparisonDetails";
 import { availablePeriodStatistics, periodStatisticLabel } from "./live-period-statistics";
 import { isRegistrationRetentionMetric, readableRegistrationCohortSeries } from "./registration-cohort";
-import { retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
+import { calculationInputValues, retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
 import { isMonthlyMetric, liveMonthlySeriesRows, monthlyComparisonReason } from "./live-monthly-reading";
 const readableSeries = (series: LiveSeries) => readableRegistrationCohortSeries(safeDiagnosticSeries(series));
 
@@ -45,7 +45,7 @@ export function LiveSeriesExport({ series, result, stale = false, comparison, co
     const cells = [["周期", "平台", monthly ? "自然月与实际查询范围（非数据水位）" : "日期", ...series.metric.inputs.map(input => `${input.name}（${input.unit}）`), `结果（${series.metric.unit === "%" ? "原始比值" : series.metric.unit}）`, "状态", "验数", "完整性", "查询时间", "刷新状态", "对比状态", "计算口径", "来源口径", ...(hasReference ? ["参考比率（%）", "参考说明"] : [])],
       ...periods.flatMap(period => {
         const rows = monthly ? liveMonthlySeriesRows(period.series, period.result).map(row => ({ point: row.point, date: row.label })) : period.series.points.map(point => ({ point, date: point.date }));
-        return rows.map(({ point, date }) => { const reference = retentionReferenceRatio(period.series.metric, point); return [period.label, period.result.data.query.pid, date, ...point.inputs.map(input => input.value ?? ""), point.value ?? "", monthly && point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(point, period.series.metric), "待验数", "未知", period.result.data.fetchedAt, stale ? "包含上次结果" : "本次结果", comparisonStatus, period.series.metric.formula ?? "", period.series.metric.sourceNote ?? "", ...(hasReference ? [reference ? reference.value * 100 : "", reference?.label ?? ""] : [])]; });
+        return rows.map(({ point, date }) => { const reference = retentionReferenceRatio(period.series.metric, point); return [period.label, period.result.data.query.pid, date, ...calculationInputValues(period.series.metric, point).map(value => value ?? ""), point.value ?? "", monthly && point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(point, period.series.metric), "待验数", "未知", period.result.data.fetchedAt, stale ? "包含上次结果" : "本次结果", comparisonStatus, period.series.metric.formula ?? "", period.series.metric.sourceNote ?? "", ...(hasReference ? [reference ? reference.value * 100 : "", reference?.label ?? ""] : [])]; });
       }),
       ...periods.flatMap(period => (availablePeriodStatistics(period.series, period.result)?.values ?? []).map(item => [period.label + "·" + periodStatisticLabel(item.kind), period.result.data.query.pid, period.result.data.query.dateRange.join(" 至 "), ...series.metric.inputs.map(() => ""), item.value, "已返回", "待验数", "未知", period.result.data.fetchedAt, stale ? "包含上次结果" : "本次结果", comparisonStatus, period.series.metric.formula ?? "", period.series.metric.sourceNote ?? "", ...(hasReference ? ["", ""] : [])])),
       ...dayReferences.map(point => [point.label + "基准", result.data.query.pid, point.date, ...series.metric.inputs.map(input => point.inputs.find(item => item.key === input.key)?.value ?? ""), point.value ?? "", point.reason ?? "该日未返回", "待验数", "未知", point.fetchedAt, point.freshness ?? "本次结果", comparisonStatus, series.metric.formula ?? "", series.metric.sourceNote ?? "", ...(hasReference ? ["", ""] : [])])];

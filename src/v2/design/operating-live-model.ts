@@ -10,7 +10,7 @@ import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, detailColumnKey, 
 import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
 import type { DetailRow, DetailValue } from "./operating-detail-snapshot";
 import { formatMetricNumber, metricNumberFormatOptions } from "../../components/metric-number-format";
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
+import { calculationInputValues, diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
 import { isMonthlyMetric, liveMonthlySeriesRows } from "../features/dashboards/live-monthly-reading";
 import { operatingPlatformSummary, type AggregateSummaryEntry } from "./operating-platform-summary";
 
@@ -86,10 +86,11 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
         const value = point(day);
         const diagnostic = series && diagnosticRatioInputs(series.metric, value);
         const reference = !unitConflict && series && retentionReferenceRatio(series.metric, value);
+        const inputValues = series ? calculationInputValues(series.metric, value) : [];
         return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : unitConflict && readable(value) ? "invalid_value" : value?.state === "available" && !readable(value) ? "no_value" : value?.state ?? "no_value",
           label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : unitConflict && readable(value) ? "单位不一致" : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : value ? livePointStateLabel(value) : "字段未返回",
           fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: resource?.status === "success" && Boolean(resource.refreshError),
-          inputs: series?.metric.inputs.map(input => ({ ...input, value: readable(value) || diagnostic ? value?.inputs.find(value => value.key === input.key)?.value ?? null : null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote,
+          inputs: series?.metric.inputs.map((input, index) => ({ ...input, value: inputValues[index] ?? null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote,
           ...(reference ? { referenceRatio: reference } : {}) };
       };
       if (isMonthlyMetric(id)) {

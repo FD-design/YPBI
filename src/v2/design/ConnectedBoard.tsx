@@ -23,7 +23,7 @@ import { validDemoRange } from "./extended-board-model";
 import { previousDailyQuery, supplementaryDailyQuery } from "../features/dashboards/daily-reference-plan";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
 import { playbackDiagnosisBoardSheets } from "./live-playback-groups";
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
+import { calculationInputValues, diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
 import { acquisitionGroupBoardSheets } from "./live-acquisition-groups";
 import { isMonthlyMetric, liveMonthlySeriesRows } from "../features/dashboards/live-monthly-reading";
 
@@ -39,7 +39,7 @@ export function connectedBoardMetricSheet(series: DailyDashboardSuccess["data"][
       const diagnostic = diagnosticRatioInputs(series.metric, point);
       const reference = retentionReferenceRatio(series.metric, point);
       return [date, readable && point.state === "available" ? point.value : null,
-        ...series.metric.inputs.map(input => readable || diagnostic ? point.inputs.find(value => value.key === input.key)?.value ?? null : null),
+        ...calculationInputValues(series.metric, point),
         diagnostic ? DIAGNOSTIC_INPUTS_LABEL : monthly && point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(point), result.data.fetchedAt, stale ? "上次查询结果" : "本次查询结果", ...(hasReference ? [reference ? reference.value * 100 : null, reference?.label ?? null] : []), ...(monthly ? ["实际查询截止不是来源数据水位"] : [])];
     })
   ] };

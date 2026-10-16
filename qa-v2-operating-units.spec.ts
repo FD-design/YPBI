@@ -24,7 +24,7 @@ const generated = JSON.parse(execFileSync(bun, ["--no-env-file", "-e", `
 `], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })) as { catalog: { success: true; data: { items: { id: string; metricIds: string[] }[] } }; results: Record<string, DailyDashboardV2Success> };
 const metricIds = generated.catalog.data.items.find(board => board.id === "5.2")!.metricIds;
 
-async function fixtures(page: Page, conflicting = false, sliceOnly = false, statusSuite = false) {
+async function fixtures(page: Page, conflicting = false, sliceOnly = false, statusSuite = false, partialDerived = false) {
   const calls: DailyDashboardQuery[] = [];
   await page.route("**/*", async route => {
     const address = new URL(route.request().url());
@@ -43,7 +43,7 @@ async function fixtures(page: Page, conflicting = false, sliceOnly = false, stat
     if (!path.endsWith("/queries/dashboards/daily-reading")) return route.fulfill({ status: 404, json: { success: false, error: { code: "NOT_FOUND", message: "隔离验收未配置此读取", requestId: "qa-operating-units" } } });
     const query = route.request().postDataJSON() as DailyDashboardQuery;
     calls.push(query);
-    if (!conflicting && !sliceOnly && query.pid === "PH") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "隔离验收来源读取失败", requestId: "qa-primary-failed" } } });
+    if (!conflicting && !sliceOnly && !partialDerived && query.pid === "PH") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "隔离验收来源读取失败", requestId: "qa-primary-failed" } } });
     const result = structuredClone(generated.results[JSON.stringify(query)]);
     if (!result) throw new Error(`隔离验收未登记查询范围：${JSON.stringify(query)}`);
     const amount = result.data.series.find(series => series.metric.id === "M058")!;
@@ -87,6 +87,19 @@ async function fixtures(page: Page, conflicting = false, sliceOnly = false, stat
       Object.assign(point, { state: "available", sourceStatus: "READY", value: 0,
         inputs: monthly.metric.inputs.map(input => ({ key: input.key, value: 0 })),
         monthlyMetadata: { month: "2026-09", cutoffDate: "2026-09-30", isComplete: true } });
+    }
+    if (partialDerived) {
+      for (const id of ["M058", "M058.new", "M058.nature", "M058.internal", "M102"]) {
+        const series = result.data.series.find(s => s.metric.id === id)!;
+        series.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+          inputs: series.metric.inputs.map(input => ({ key: input.key, value: null })) }));
+        if (!query.projection) series.periodStatistics = { ...series.periodStatistics, state: "incomplete", values: [], reason: "隔离验收来源不完整" };
+      }
+      for (const [id, denominator] of [["M087", 6], ["M088", 10], ["M067", 5], ["M067.new", 3]] as const) {
+        const series = result.data.series.find(s => s.metric.id === id)!;
+        series.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
+          inputs: series.metric.inputs.map((input, index) => ({ key: input.key, value: index === 0 ? null : denominator })) }));
+      }
     }
     dailyDashboardV2SuccessSchema.parse(result);
     expect(dailyDashboardMatchesQuery(result, query, query.projection ? OPERATING_METRIC_IDS : metricIds)).toBe(true);
@@ -227,4 +240,42 @@ test("新版来源状态分别展示，月活保留0与实际截至，93列和�
   }
   await monthly.scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath("backend-aligned-states-monthly.png") });
+});
+
+test("金额来源不完整时93列保留空值，详情和实际XLSX分别保留有效分母", async ({ page }, info) => {
+  await fixtures(page, false, false, false, true); await page.goto(url);
+  await expect(local(page).locator('thead th[data-column-key]')).toHaveCount(93);
+  for (const [key, name, denominator] of [
+    ["M087:overall", "活跃用户人均充值金额（ARPU）", 6],
+    ["M088:overall", "新增用户人均充值金额（ARPU）", 10],
+    ["M067:overall", "付费用户人均充值金额（ARPPU）", 5],
+    ["M067:新用户", "付费用户人均充值金额（ARPPU）（新用户）", 3]
+  ] as const) {
+    await expect(cell(page, "Pornhub", key)).toHaveText("来源不完整");
+    const trigger = row(page, "Pornhub").locator(`td[data-column-key="${key}"] button.core-review__detail-trigger`);
+    await trigger.scrollIntoViewIfNeeded(); await trigger.click();
+    const detail = page.getByRole("dialog", { name, exact: true });
+    await expect(detail.locator("tbody tr").first().locator("td").nth(1)).toContainText(`${denominator} 人`);
+    await expect(detail.locator("tbody tr").first().locator("td").nth(1)).toContainText("— 元");
+    await expect(detail.locator("tbody tr").first()).toContainText("来源不完整");
+    if (key === "M087:overall") await page.screenshot({ path: info.outputPath("partial-derived-inputs-detail.png") });
+    await page.keyboard.press("Escape");
+  }
+  await local(page).getByRole("button", { name: "导出经营明细", exact: true }).click();
+  const completed = page.waitForEvent("download");
+  await page.getByRole("dialog", { name: "导出经营明细", exact: true }).getByRole("button", { name: "下载 XLSX", exact: true }).click();
+  const file = await completed, buffer = readFileSync((await file.path())!);
+  const main = readSheet(buffer, "01_经营明细"), ph = main.find(values => values[2] === "PH")!;
+  const inputs = readSheet(buffer, "04_计算输入");
+  for (const [key, name, denominator] of [
+    ["M087:overall", "活跃用户人均充值金额（ARPU）", 6], ["M088:overall", "新增用户人均充值金额（ARPU）", 10],
+    ["M067:overall", "付费用户人均充值金额（ARPPU）", 5], ["M067:新用户", "付费用户人均充值金额（ARPPU）（新用户）", 3]
+  ] as const) {
+    const valueIndex = main[0].indexOf(`${name}｜当日（元/人）`);
+    expect(valueIndex).toBeGreaterThan(2); expect(ph[valueIndex]).toBeNull();
+    const actual = inputs.filter(values => values[0] === "PH" && values[3] === key && values[4] === "当日");
+    expect(actual).toHaveLength(2);
+    expect(actual.map(values => values[8])).toEqual([null, denominator]);
+    expect(actual.every(values => String(values[10]).includes("来源不完整"))).toBe(true);
+  }
 });

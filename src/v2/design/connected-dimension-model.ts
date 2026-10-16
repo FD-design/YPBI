@@ -3,7 +3,7 @@ import { liveExportEnvironmentRows } from "../features/dashboards/LiveDashboardC
 import { liveCalculation, livePointStateLabel, type LiveDashboardReading, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import type { WorkbookSheet } from "./preview-workbook";
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "../features/dashboards/diagnostic-inputs";
+import { calculationInputValues, diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "../features/dashboards/diagnostic-inputs";
 
 export function connectedDimensionSeries(live: LiveDashboardReading, id: string, before = false) {
   const period = before ? live.comparison : live;
@@ -15,7 +15,8 @@ export function connectedDimensionSeries(live: LiveDashboardReading, id: string,
   const source = matches.length === 1 ? safeDiagnosticSeries(matches[0]) : undefined;
   return source && { ...source, points: source.points.filter(point => point.date >= period.query.dateRange[0] && point.date <= period.query.dateRange[1]).map(point => {
     const usable = (!point.sourceStatus || point.sourceStatus === "READY") && (point.state === "available" || point.state === "zero_denominator");
-    return usable || diagnosticRatioInputs(source.metric, point) ? point : { ...point, value: null, inputs: point.inputs.map(input => ({ ...input, value: null })) };
+    const inputs = calculationInputValues(source.metric, point);
+    return usable || diagnosticRatioInputs(source.metric, point) ? point : { ...point, value: null, inputs: point.inputs.map((input, index) => ({ ...input, value: inputs[index] ?? null })) };
   }) };
 }
 

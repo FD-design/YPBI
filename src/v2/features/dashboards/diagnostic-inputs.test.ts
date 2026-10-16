@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { DailyPoint } from "../../../../contracts/daily-dashboard";
-import { diagnosticRatioInputs, retentionReferenceRatio, RETENTION_REFERENCE_LABEL } from "./diagnostic-inputs";
+import { calculationInputValues, diagnosticRatioInputs, retentionReferenceRatio, RETENTION_REFERENCE_LABEL, safeDiagnosticSeries } from "./diagnostic-inputs";
 
 const metric = (id = "M020.android") => ({ id, unit: "%", inputs: [{ key: "retained" }, { key: "registered" }] });
 const point = (numerator: number | null = 1, denominator: number | null = 2, overrides: Partial<DailyPoint> = {}): DailyPoint => ({
@@ -95,4 +95,78 @@ test("参考计算保留原数据对象、输入、正式空值及不可读状�
   assert.equal(source.value, null);
   assert.equal(source.state, "no_value");
   assert.equal(source.sourceStatus, "SOURCE_INCOMPLETE");
+});
+
+const derivedMetric = (id = "M087") => ({ id, unit: id === "M098" ? "分钟/人" : "元/人",
+  inputs: [{ key: "amount", unit: id === "M098" ? "秒" : "元" }, { key: "people", unit: "人" }] });
+const derivedPoint = (numerator: number | null = null, denominator: number | null = 6, overrides: Partial<DailyPoint> = {}): DailyPoint => ({
+  ...point(), inputs: [{ key: "amount", value: numerator }, { key: "people", value: denominator }], ...overrides
+});
+
+for (const [id, denominator] of [["M087", 6], ["M088", 10], ["M067", 5], ["M067.new", 3], ["M098", 5]] as const) {
+  test(`${id}派生结果缺失时独立保留实际分母${denominator}，不产生正式或参考结果`, () => {
+    const metadata = derivedMetric(id), source = derivedPoint(null, denominator), before = structuredClone(source);
+    assert.deepEqual(calculationInputValues(metadata, source), [null, denominator]);
+    assert.equal(diagnosticRatioInputs(metadata, source), null);
+    assert.equal(retentionReferenceRatio(metadata, source), null);
+    assert.deepEqual(source, before);
+  });
+}
+
+test("派生输入真实0与合法金额小数保留，缺失的另一项继续为空", () => {
+  for (const inputs of [[null, 0], [0, null], [162.02, null]] as const) {
+    assert.deepEqual(calculationInputValues(derivedMetric(), derivedPoint(...inputs)), inputs);
+  }
+});
+
+test("派生结果的来源状态分别保留，输入展示不把未就绪结果变为READY", () => {
+  for (const [sourceStatus, state] of [["PROCESSING", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
+    const source = derivedPoint(null, 6, { sourceStatus, state });
+    assert.deepEqual(calculationInputValues(derivedMetric(), source), [null, 6]);
+    assert.equal(source.value, null);
+    assert.equal(source.sourceStatus, sourceStatus);
+    assert.equal(source.state, state);
+  }
+  assert.deepEqual(calculationInputValues(derivedMetric(), derivedPoint(null, 6, { sourceStatus: "FAILED" })), [null, null]);
+});
+
+test("完整非READY派生输入、脏结果、错误身份或单位均不放宽为可展示输入", () => {
+  assert.deepEqual(calculationInputValues(derivedMetric(), derivedPoint(162.02, 6)), [null, null]);
+  for (const overrides of [{ value: 1 }, { state: "available" as const },
+    { inputs: [{ key: "people", value: null }, { key: "amount", value: 6 }] },
+    { inputs: [{ key: "amount", value: null }, { key: "amount", value: 6 }] }]) {
+    assert.deepEqual(calculationInputValues(derivedMetric(), derivedPoint(null, 6, overrides)), [null, null]);
+  }
+  for (const metadata of [{ ...derivedMetric(), unit: "USD/人" },
+    { ...derivedMetric(), inputs: [{ key: "amount", unit: "USD" }, { key: "people", unit: "人" }] },
+    { ...derivedMetric(), inputs: [{ key: "amount", unit: "元" }, { key: "people", unit: "次" }] }]) {
+    assert.deepEqual(calculationInputValues(metadata, derivedPoint()), [null, null]);
+  }
+});
+
+test("部分派生输入逐项拒绝负数、非有限值和非法人数，普通非READY数字继续隐藏", () => {
+  for (const denominator of [-1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.deepEqual(calculationInputValues(derivedMetric(), derivedPoint(null, denominator)), [null, null]);
+  }
+  for (const numerator of [-1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.deepEqual(calculationInputValues(derivedMetric(), derivedPoint(numerator, null)), [null, null]);
+  }
+  for (const id of ["M058", "M102", "M061", "M020.android", "M067.old", "M098.new"]) {
+    assert.deepEqual(calculationInputValues(derivedMetric(id), derivedPoint()), [null, null]);
+  }
+});
+
+test("共享安全序列保留派生单项输入且保持正式空值，原完整D1参考规则不变", () => {
+  const metadata = { ...derivedMetric(), name: "活跃ARPU", definition: "同日同群", referenceMetricId: "M087", authorityVersion: "fixture", formula: "金额 ÷ 人数", sourceNote: null,
+    inputs: derivedMetric().inputs.map(input => ({ ...input, name: input.key })) };
+  const source = { metric: metadata, points: [derivedPoint()] }, before = structuredClone(source);
+  const safe = safeDiagnosticSeries(source);
+  assert.deepEqual(safe.points[0].inputs.map(input => input.value), [null, 6]);
+  assert.equal(safe.points[0].value, null);
+  assert.equal(safe.points[0].state, "no_value");
+  assert.deepEqual(source, before);
+  assert.deepEqual(calculationInputValues(metric(), point(null, 2)), [null, null]);
+  assert.equal(retentionReferenceRatio(metric(), point(null, 2)), null);
+  assert.deepEqual(calculationInputValues(metric(), point(1, 2)), [1, 2]);
+  assert.equal(retentionReferenceRatio(metric(), point(1, 2))?.value, .5);
 });

@@ -5,7 +5,7 @@ import { availablePeriodStatistics, periodStatisticLabel } from "../features/das
 import { REGISTRATION_RETENTION_WINDOWS, registrationCohortMetricId, registrationCohortScopeLabel, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
 import { connectedCohortExportRows } from "./ConnectedCohorts";
 import type { WorkbookSheet as ExportSheet } from "./preview-workbook";
-import { diagnosticRatioInputs } from "../features/dashboards/diagnostic-inputs";
+import { calculationInputValues } from "../features/dashboards/diagnostic-inputs";
 import { isMonthlyMetric, liveMonthlySeriesRows } from "../features/dashboards/live-monthly-reading";
 
 const isCohortSeries = (id: string) => /^M(?:02[0-3]|115)(?:\.|$)/.test(id);
@@ -58,7 +58,7 @@ export function connectedTopicExportSheets(live: LiveDashboardValue, cohortLive:
       return { name: period.name + "-" + series.metric.name, rows: [
         [monthly ? "自然月与实际查询范围" : "日期", "结果（" + (series.metric.unit === "%" ? "原始比值" : series.metric.unit) + "）", ...series.metric.inputs.map(input => input.name + "（" + input.unit + "）"), "状态", "查询时间", "刷新状态", ...(monthly ? ["范围说明"] : [])],
         ...records.map(({ point, date }) => [date, hasUsableInputs(point) ? point.value : null,
-          ...point.inputs.map(input => hasUsableInputs(point) || diagnosticRatioInputs(series.metric, point) ? input.value : null), monthly && point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(point, series.metric), period.result.data.fetchedAt,
+          ...calculationInputValues(series.metric, point), monthly && point.state === "no_record" ? "本月未返回记录" : livePointStateLabel(point, series.metric), period.result.data.fetchedAt,
           period.stale ? "上次查询结果" : "本次查询结果", ...(monthly ? ["实际查询截止不是来源数据水位"] : [])])
       ] };
     })),

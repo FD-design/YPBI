@@ -8,9 +8,18 @@ import { downloadPreviewWorkbook } from "./preview-workbook";
 const ids = (dimension?:PaymentDimension, group?:string) => dimension==="product" ? {amount:group==="vip"?"M065":"M066",users:"",arppu:""} : dimension==="stage" ? {amount:"M058."+group,users:"M059."+group,arppu:"M067."+group} : {amount:"M058",users:"M059",arppu:"M067"};
 export const connectedPaymentUnit = (live: LiveDashboardReading, measure: "amount" | "users" | "arppu" = "amount") => liveMetricUnit(live, ids()[measure]) ?? "";
 export function connectedPaymentSnapshot(live:LiveDashboardReading, dimension?:PaymentDimension, group?:string, date=live.query.dateRange[1], before=false) {
-  const source=before?live.comparison?.state:live.state, result=source?.status==="success"&&source.data?.data.query.pid===live.query.pid?source.data:null, mapping=ids(dimension,group);
+  const period=before?live.comparison:live,source=period?.state, result=source?.status==="success"&&source.data?.data.query.pid===live.query.pid?source.data:null, mapping=ids(dimension,group);
   const read=(id:string)=>result?.data.series.find(series=>series.metric.id===id)?.points.find(point=>point.date===date)?.value??null;
-  return {amount:read(mapping.amount),users:read(mapping.users),arppu:read(mapping.arppu)};
+  const state=(id:string)=>{
+    if(!id||!live.metricIds.includes(id))return "切片待接入";
+    if(!period)return "未启用对比";
+    if(source?.status==="loading")return "读取中";
+    if(source?.status==="failure")return "读取失败";
+    const series=result?.data.series.find(series=>series.metric.id===id),point=series?.points.find(point=>point.date===date);
+    return point?livePointStateLabel(point,series!.metric):series?"当日未返回记录":"字段未返回";
+  };
+  return {amount:read(mapping.amount),users:read(mapping.users),arppu:read(mapping.arppu),
+    states:{amount:state(mapping.amount),users:state(mapping.users),arppu:state(mapping.arppu)}};
 }
 export function connectedPaymentPoints(live:LiveDashboardReading, dimension:PaymentDimension, measure:"amount"|"users"|"arppu"|"share"):GroupedTrendPoint[] {
   const data=live.state.status==="success"?live.state.data:null, baseline=live.comparison?.state.status==="success"?live.comparison.state.data:null;
@@ -24,7 +33,7 @@ export function connectedPaymentPoints(live:LiveDashboardReading, dimension:Paym
       overallBasis:measure==="arppu"&&overallSeries&&overallPoint?liveCalculation(overallSeries,overallPoint):measure==="share"?{numerator:{name:"总充值金额",value:total.amount,unit:amountUnit},denominator:{name:"总充值金额",value:total.amount,unit:amountUnit},formula:"总充值金额 ÷ 总充值金额 × 100%",scope:date+" · 待验数",result:complete?"100.00%":"—",percentage:true}:undefined,
       shares:measure==="amount"&&complete?Object.fromEntries(groups.map((group,i)=>[group.id,rows[i].amount!/total.amount!])):undefined,
       values:Object.fromEntries(groups.map((group,i)=>[group.id,measure==="share"?complete?rows[i].amount!/total.amount!:null:rows[i][measure]])),
-      states:Object.fromEntries(groups.map(group=>{const id=ids(dimension,group.id)[measure==="share"?"amount":measure],point=source?.data.series.find(s=>s.metric.id===id)?.points.find(p=>p.date===date);return[group.id,!live.metricIds.includes(id)?"切片待接入":point?livePointStateLabel(point):"读取中"];})),
+      states:Object.fromEntries(groups.map((group,index)=>[group.id,rows[index].states[measure==="share"?"amount":measure]])),
       basis:measure==="arppu"?Object.fromEntries(groups.flatMap(group=>{const series=source?.data.series.find(s=>s.metric.id===ids(dimension,group.id).arppu),point=series?.points.find(p=>p.date===date),basis=series&&point?liveCalculation(series,point):undefined;return basis?[[group.id,basis]]:[];})):measure==="share"?Object.fromEntries(groups.map((group,i)=>[group.id,{numerator:{name:group.label+"充值金额",value:rows[i].amount,unit:amountUnit},denominator:{name:"总充值金额",value:total.amount,unit:amountUnit},formula:"分类充值金额 ÷ 总充值金额 × 100%",scope:date+" · 待验数",result:complete?(rows[i].amount!/total.amount!*100).toFixed(2)+"%":"—",percentage:true}])):undefined};
   };
   return (data?.data.series[0].points??[]).map((point,i)=>{const before=baseline?.data.series[0].points[i]?.date;return{date:point.date,...snapshot(point.date),comparison:before?{date:before,...snapshot(before,true)}:undefined};});

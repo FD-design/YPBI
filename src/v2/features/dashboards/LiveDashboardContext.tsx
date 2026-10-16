@@ -7,7 +7,7 @@ import type { DateRangeValue } from "../../../components/ui/date-range-model";
 import { dailyMetricReading, dailyReferenceDates, periodMetricReading, type DailyReadingPoint } from "./daily-reading-model";
 import { livePeriodReadingStatistics } from "./live-period-statistics";
 import { isRegistrationRetentionMetric, isReadableRegistrationCohortPoint, readableRegistrationCohortSeries, registrationMetricScopeLabel } from "./registration-cohort";
-import { diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
+import { calculationInputValues, diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "./diagnostic-inputs";
 import { formatMetricNumber, metricNumberFormatOptions } from "../../../components/metric-number-format";
 import { isMonthlyMetric, liveMonthlySeriesRows, monthlyComparisonReason } from "./live-monthly-reading";
 import { dailyDashboardEnvironment, dataEnvironmentLabel } from "../../api/daily-dashboard-environment";
@@ -63,7 +63,8 @@ export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][
   const diagnostic = diagnosticRatioInputs(series.metric, point);
   const reference = referencePresentation ? retentionReferenceRatio(series.metric, point) : null;
   const readable = (!point.sourceStatus || point.sourceStatus === "READY") && (!isRegistrationRetentionMetric(series.metric.id) || isReadableRegistrationCohortPoint(point));
-  const inputs = series.metric.inputs.map((input, index) => ({ name: input.name, unit: input.unit, value: readable || diagnostic ? point.inputs[index].value : null }));
+  const inputValues = calculationInputValues(series.metric, point);
+  const inputs = series.metric.inputs.map((input, index) => ({ name: input.name, unit: input.unit, value: inputValues[index] ?? null }));
   return { numerator: inputs[0], denominator: inputs[1], formula: series.metric.formula ?? "", scope: `${point.date} · ${isRegistrationRetentionMetric(series.metric.id) ? "注册日 · " + registrationMetricScopeLabel(series.metric.id) : "业务日"} · 待验数${diagnostic ? " · " + (reference?.label ?? DIAGNOSTIC_INPUTS_LABEL) : ""}`, percentage: series.metric.unit === "%", result: reference ? `${liveValue(reference.value, "%")} % · ${reference.label}` : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : liveValue(readable ? point.value : null, series.metric.unit) + " " + series.metric.unit };
 }
 function trendValue(point: LiveSeries["points"][number] | undefined, unit: string) {
@@ -222,7 +223,7 @@ function liveIntervalMetricModel(original: DashboardMetricCardModel, live: LiveD
   if (cohort && result.calculation && eligible.length) result.calculation.scope = `${live.query.dateRange.join(" 至 ")} · 注册日 · ${registrationMetricScopeLabel(original.metric.id)} · 仅汇总已结束观察且已返回的批次 · 待验数`;
   if (cohort && comparison?.status === "available") comparison.detail = "当前注册批次与上一等长周期对应批次的加权留存结果；逐批次数据见明细。";
   if (last.value === null) return { metric, result: { status: last.state === "source_failure" ? "failed" : last.state === "no_record" ? "no_records" : "no_values", contextLabel: last.date, label: livePointStateLabel(last), message: `主值 — · ${last.date}。期间其他日期见趋势和明细。`, retryable: last.state === "source_failure",
-    calculation: diagnosticRatioInputs(series.metric, last) ? result.calculation : undefined,
+    calculation: calculationInputValues(series.metric, last).some(value => value !== null) ? result.calculation : undefined,
     history: observed || priorObserved ? result : undefined } };
   return { metric, result };
 }
