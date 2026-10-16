@@ -8,7 +8,7 @@ import { previewFavorites, setPreviewFavorite } from "./preview-favorites";
 import { downloadPreviewWorkbook, type WorkbookSheet } from "./preview-workbook";
 import { liveExportEnvironmentRows, liveDataEnvironment } from "../features/dashboards/LiveDashboardContext";
 import { metricRows } from "./topic-preview-export";
-import { DETAIL_COLUMNS, DETAIL_ROWS, detailColumnKey, operatingDetailRows, operatingSummaryModels, operatingDetailExportRows, operatingValueLabel, selectOperatingRows, operatingDetailBreakdown, type DetailRow, type DetailColumn } from "./operating-detail-snapshot";
+import { DETAIL_COLUMNS, DETAIL_ROWS, detailColumnKey, operatingDetailRows, operatingSummaryModels, operatingDetailExportRows, operatingValueLabel, selectOperatingRows, resolveOperatingDetail, operatingDetailBreakdown, type OperatingDetailSelection, type DetailRow, type DetailColumn } from "./operating-detail-snapshot";
 import { retentionTargetDate } from "./operating-detail-snapshot";
 import { operatingColumnDocumentation, summaryColumn } from "./operating-detail-columns";
 import { MetricBreakdown } from "../features/dashboards/MetricBreakdown";
@@ -315,7 +315,8 @@ function ChainCard({ panel, hidden, onOpenDefinition, showComparison }: {
 }
 
 type DetailComparisonMode = "none" | "previousDay" | "previousWeek";
-interface SelectedDetail { row: DetailRow; column: DetailColumn; columnIndex: number; trigger: HTMLButtonElement; }
+interface SelectedDetail extends OperatingDetailSelection { trigger: HTMLButtonElement; }
+type DetailTarget = Omit<SelectedDetail, "scopeKey">;
 
 function DetailMetricCell({ row, column, columnIndex, currentDate, previousDate, previousWeekDate, comparisonMode, onOpen }: {
   row: DetailRow;
@@ -325,7 +326,7 @@ function DetailMetricCell({ row, column, columnIndex, currentDate, previousDate,
   previousWeekDate: string;
   currentDate: string;
   comparisonMode: DetailComparisonMode;
-  onOpen: (detail: SelectedDetail) => void;
+  onOpen: (detail: DetailTarget) => void;
 }) {
   const value = row.values[columnIndex];
   const previousChange = detailChange(value.current, value.previousDay, column.kind);
@@ -346,7 +347,7 @@ function DetailMetricCell({ row, column, columnIndex, currentDate, previousDate,
     <DetailComparisonLines current={value.current} baseline={value.previousWeek} baselineLabel={weekLabel} kind={column.kind} unit={column.unit} label="较上周同日" date={previousWeekDate} onEmphasis /></>}
   </div>;
   return <td className="is-number" data-column-key={detailColumnKey(column)}><FloatingHint className="core-review__cell-hint" content={tooltip}>
-    <button type="button" className="core-review__detail-trigger" aria-label={explanation} onClick={(event) => onOpen({ row, column, columnIndex, trigger: event.currentTarget })}>
+    <button type="button" className="core-review__detail-trigger" aria-label={explanation} onClick={(event) => onOpen({ pid: row.pid, columnKey: detailColumnKey(column), trigger: event.currentTarget })}>
       <b className={value.state ? "is-unavailable" : undefined}>{value.evidence?.current.referenceRatio ? formatDetailValue(value.evidence.current.referenceRatio.value, "ratio") : currentLabel}</b>
       {value.evidence?.current.referenceRatio && <small>{value.evidence.current.referenceRatio.label}</small>}
       {comparisonMode !== "none" && value.state !== "unsupported" && <small className="core-review__selected-change ui-metric-comparison"><ChangeValue direction={selectedChange?.direction ?? null}>{monthly ? "不适用日比较" : selectedChange?.display ?? "不可比"}</ChangeValue></small>}
@@ -366,7 +367,7 @@ function DetailComparisonLines({ current, baseline, baselineLabel, kind, unit, l
   </span>;
 }
 
-function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: SelectedDetail; date: string; live: boolean; onClose: () => void }) {
+function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: NonNullable<ReturnType<typeof resolveOperatingDetail>>; date: string; live: boolean; onClose: () => void }) {
   const value = detail.row.values[detail.columnIndex];
   const monthly = detail.column.metric.id === "M018";
   const hasReferences = Object.values(value.evidence ?? {}).some(evidence => evidence.referenceRatio);
@@ -418,11 +419,6 @@ function CoreOverviewDesignFixture() {
   const [selectedDetail, setSelectedDetail] = useState<SelectedDetail | null>(null);
   const [breakdownId, setBreakdownId] = useState<string | null>(null);
   useEffect(() => setBreakdownId(null), [detailPlatform, appliedFilters.end]);
-  useEffect(() => {
-    if (live?.query.pid) {
-      setSelectedDetail(null);
-    }
-  }, [live?.query.pid]);
   const metrics = useMemo(() => coreDailyCards(mode, appliedFilters, appliedFilters.comparison !== "none").map(model => recovered.includes(model.metric.id) ? coreDailyCards("normal", appliedFilters, appliedFilters.comparison !== "none").find(item => item.metric.id === model.metric.id)! : model), [appliedFilters, mode, recovered]);
   const hasPendingFilters = !sameFilters(filters, appliedFilters);
   const detailDate = live?.query.dateRange[1] ?? appliedFilters.end;
@@ -440,7 +436,16 @@ function CoreOverviewDesignFixture() {
     const result = leftValue - rightValue;
     return sort.direction === "asc" ? result : -result;
   }), [sort, detailRows, detailPlatform]);
-
+  // Environment and account changes remount this page through dataScopeKey.
+  // Result provenance, metadata and refresh IDs may arrive within the same scope.
+  const detailScopeKey = JSON.stringify(live
+    ? ["live", live.query.boardId, live.query.pid, live.query.dateRange, [...live.metricIds].sort(), detailPlatform]
+    : ["demo", mode, appliedFilters.start, appliedFilters.end, detailPlatform]);
+  const resolvedDetail = useMemo(() => resolveOperatingDetail(selectedDetail, detailScopeKey, sortedRows, detailColumns), [selectedDetail, detailScopeKey, sortedRows, detailColumns]);
+  useEffect(() => {
+    if (selectedDetail && !resolvedDetail) setSelectedDetail(null);
+  }, [selectedDetail, resolvedDetail]);
+  const openDetail = (target: DetailTarget) => setSelectedDetail({ ...target, scopeKey: detailScopeKey });
 
   const reviewAction = (message: string) => setNotice(message);
 
@@ -723,7 +728,7 @@ function CoreOverviewDesignFixture() {
               previousWeekDate={previousWeekDate}
               currentDate={detailDate}
               comparisonMode={detailComparison}
-              onOpen={setSelectedDetail}
+              onOpen={openDetail}
             />)}
           </tr>)}</tbody>
         </table>
@@ -734,7 +739,7 @@ function CoreOverviewDesignFixture() {
       </footer>
     </section>
 
-    {selectedDetail && <DetailSnapshotDialog detail={selectedDetail} date={detailDate} live={Boolean(live)} onClose={() => {
+    {resolvedDetail && selectedDetail && <DetailSnapshotDialog detail={resolvedDetail} date={detailDate} live={Boolean(live)} onClose={() => {
       const trigger = selectedDetail.trigger;
       setSelectedDetail(null);
       window.requestAnimationFrame(() => restoreReadingFocus(trigger));

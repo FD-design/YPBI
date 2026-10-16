@@ -1,11 +1,79 @@
 import { describe, expect, test } from "bun:test";
-import { DETAIL_COLUMNS, detailColumnKey, operatingDetailRows, operatingSummaryModels, selectOperatingRows, operatingDetailExportRows, operatingValueLabel, operatingDetailBreakdown } from "./operating-detail-snapshot";
+import { DETAIL_COLUMNS, detailColumnKey, operatingDetailRows, operatingSummaryModels, selectOperatingRows, resolveOperatingDetail, operatingDetailExportRows, operatingValueLabel, operatingDetailBreakdown, type DetailRow, type DetailValue } from "./operating-detail-snapshot";
 import { OPERATING_BREAKDOWNS, galleryBreakdown } from "./operating-breakdown-preview";
 import { operatingColumnDocumentation, OPERATING_SUMMARY_IDS } from "./operating-detail-columns";
 import { retentionTargetDate } from "./operating-detail-snapshot";
 import { OPERATING_LIVE_IDS, operatingLiveColumns, operatingLiveExportRows, operatingLiveRows } from "./operating-live-model";
 import { DailyDashboardService } from "../../../server/v2/daily-dashboard.service";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+
+describe("经营明细详情绑定当前查询单元格", () => {
+  const scopeKey = "same-query";
+  const columns = DETAIL_COLUMNS.slice(0, 2);
+  const selection = { scopeKey, pid: "PH", columnKey: detailColumnKey(columns[0]) };
+  const row = (values: DetailValue[], pid = "PH"): DetailRow => ({ pid, name: pid, state: "部分", productMode: null, promotionStatus: null, values });
+  const cell = (current: number | null): DetailValue => ({ current, previousDay: null, previousWeek: null });
+
+  test("读取完成后解析最新数值、三期计算输入和元数据，不保存打开时快照", () => {
+    const loading = row([cell(null), cell(null)]);
+    expect(resolveOperatingDetail(selection, scopeKey, [loading], columns)?.row).toBe(loading);
+    const evidence = { state: "available", label: "READY", date: "2020-01-01", fetchedAt: "2026-10-16T03:00:00Z", stale: false,
+      inputs: [{ name: "当前输入", value: 6, unit: "人" }], formula: null };
+    const value = { ...cell(6), previousDay: 5, previousWeek: 4, evidence: { current: evidence, previousDay: { ...evidence, date: "2019-12-31" }, previousWeek: { ...evidence, date: "2019-12-25" } } };
+    const latest = row([value, cell(2)]);
+    const latestColumns = columns.map(column => ({ ...column, unit: "来源返回单位", metric: { ...column.metric, definition: "来源返回定义" } }));
+    const detail = resolveOperatingDetail(selection, scopeKey, [latest], latestColumns)!;
+    expect(detail.row).toBe(latest);
+    expect(detail.row.values[detail.columnIndex]).toBe(value);
+    expect(detail.column).toBe(latestColumns[0]);
+    expect(loading.values[0].current).toBeNull();
+    expect(selection).toEqual({ scopeKey, pid: "PH", columnKey: detailColumnKey(columns[0]) });
+  });
+
+  test("按PID与稳定列键定位，不受平台顺序或列顺序变化影响", () => {
+    const other = row([cell(99), cell(98)], "TT");
+    const current = row([cell(2), cell(6)]);
+    const detail = resolveOperatingDetail(selection, scopeKey, [other, current], [columns[1], columns[0]])!;
+    expect(detail.row).toBe(current);
+    expect(detail.columnIndex).toBe(1);
+    expect(detail.row.values[detail.columnIndex].current).toBe(6);
+  });
+
+  test("保留真实零值、空值、来源处理中/不完整、失败、未成熟和参考输入", () => {
+    for (const state of ["available", "source_processing", "source_incomplete", "source_failure", "immature", "no_record"]) {
+      const evidence = { state, label: state, date: "2020-01-01", fetchedAt: null, stale: false, formula: null,
+        inputs: [{ name: "有效分母", unit: "人", value: 6 }] };
+      const value = { ...cell(state === "available" ? 0 : null), evidence: { current: evidence, previousDay: evidence, previousWeek: evidence } };
+      const detail = resolveOperatingDetail(selection, scopeKey, [row([value, cell(null)])], columns)!;
+      expect(detail.row.values[detail.columnIndex]).toBe(value);
+      expect(value.current).toBe(state === "available" ? 0 : null);
+      expect(value.evidence.current.inputs[0].value).toBe(6);
+    }
+  });
+
+  test("新的查询范围立即屏蔽旧详情", () => {
+    expect(resolveOperatingDetail(selection, "another-query", [row([cell(6)])], columns)).toBeNull();
+  });
+
+  test("未选择、平台移除、列移除或单元格缺失时关闭，不读取相邻值", () => {
+    const current = row([cell(6), cell(2)]);
+    expect(resolveOperatingDetail(null, scopeKey, [current], columns)).toBeNull();
+    expect(resolveOperatingDetail(selection, scopeKey, [row([cell(99)], "TT")], columns)).toBeNull();
+    expect(resolveOperatingDetail(selection, scopeKey, [current], [columns[1]])).toBeNull();
+    expect(resolveOperatingDetail(selection, scopeKey, [row([])], columns)).toBeNull();
+  });
+
+  test("93列中每个分维和留存周期都解析对应当前单元格，保持原数组不变", () => {
+    const rows = operatingDetailRows("2026-09-08");
+    for (const sourceRow of rows) for (const [columnIndex, column] of DETAIL_COLUMNS.entries()) {
+      const detail = resolveOperatingDetail({ scopeKey, pid: sourceRow.pid, columnKey: detailColumnKey(column) }, scopeKey, rows, DETAIL_COLUMNS)!;
+      expect(detail).toEqual({ row: sourceRow, column, columnIndex });
+      expect(detail.row.values[columnIndex]).toBe(sourceRow.values[columnIndex]);
+    }
+    expect(DETAIL_COLUMNS).toHaveLength(93);
+    expect(rows).toHaveLength(4);
+  });
+});
 
 describe("经营明细单日快照", () => {
   const date = "2026-09-08";

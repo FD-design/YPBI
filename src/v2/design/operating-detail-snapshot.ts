@@ -3,7 +3,7 @@ import { dashboardNoRecordLabels, type DashboardMetricCardModel } from "../featu
 import { formatDetailValue } from "./operating-detail-presentation";
 import { operatingBreakdownModel } from "./operating-breakdown-preview";
 import type { DetailEvidence } from "./operating-live-model";
-import { DETAIL_COLUMNS, OPERATING_SUMMARY_IDS, summaryColumn, breakdownColumn, operatingPendingReason, type DetailColumn } from "./operating-detail-columns";
+import { DETAIL_COLUMNS, detailColumnKey, OPERATING_SUMMARY_IDS, summaryColumn, breakdownColumn, operatingPendingReason, type DetailColumn } from "./operating-detail-columns";
 import { formatMetricNumber, metricNumberFormatOptions } from "../../components/metric-number-format";
 import { operatingPlatformSummary, type AggregateSummaryEntry } from "./operating-platform-summary";
 export { DETAIL_COLUMNS, detailColumnKey, type DetailColumn } from "./operating-detail-columns";
@@ -23,6 +23,22 @@ export interface DetailRow {
   productMode: string | null;
   promotionStatus: string | null;
   values: DetailValue[];
+}
+
+export interface OperatingDetailSelection {
+  scopeKey: string;
+  pid: string;
+  columnKey: string;
+}
+
+/** Resolve the selected cell from the current snapshot, never from the opening value. */
+export function resolveOperatingDetail(selection: OperatingDetailSelection | null, scopeKey: string, rows: readonly DetailRow[], columns: readonly DetailColumn[]) {
+  if (!selection || selection.scopeKey !== scopeKey) return null;
+  const row = rows.find(row => row.pid === selection.pid);
+  const columnIndex = columns.findIndex(column => detailColumnKey(column) === selection.columnKey);
+  const column = columns[columnIndex];
+  if (!row || !column || !row.values[columnIndex]) return null;
+  return { row, column, columnIndex };
 }
 
 const FIXTURE_IDS = ["M016", "M008", "M026", "M102", "M059", "M058", "M081", "M036", "M020", "M061", "M090"];
