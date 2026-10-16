@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { UpstreamError, type UpstreamClient } from "./client";
-import { monthlyQueryScopes } from "../../contracts/monthly-query-scope";
+import {
+  monthlyMetricMetadataSchema,
+  monthlyQueryScopes,
+  type MonthlyMetricMetadata,
+  type MonthlyQueryScope
+} from "../../contracts/monthly-query-scope";
 import {
   queryBiV1Metrics,
   type BiV1MetricDataStatus,
@@ -16,6 +21,7 @@ export interface BiV1MonthlyMetricDay extends BiV1MetricDay {
   /** Inclusive query bounds for internal verification, separate from upstream data watermarks. */
   queryStart?: string;
   queryEnd?: string;
+  monthlyMetadata?: MonthlyMetricMetadata;
 }
 
 function shiftedDate(date: string, days: number) {
@@ -39,6 +45,22 @@ function monthlyPoint(message: BiV1MetricMessage): BiV1MetricPoint {
     return emptyPoint("invalid_value");
   }
   return { state: "available", dataStatus: "READY", value: row.value, numerator: row.value, denominator: 0, unit: "count" };
+}
+
+function monthlyMetadata(message: BiV1MetricMessage, scope: MonthlyQueryScope, today: string): MonthlyMetricMetadata | undefined {
+  if (message.rows.length !== 1) return undefined;
+  const row = message.rows[0];
+  const fields = ["month", "cutoffDate", "isComplete"] as const;
+  const supplied = fields.filter(field => row[field] !== undefined);
+  if (!supplied.length) return undefined;
+  const metadata = monthlyMetricMetadataSchema.safeParse(Object.fromEntries(supplied.map(field => [field, row[field]])));
+  if (!metadata.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "月活来源元数据无效", 502);
+  if (metadata.data.month !== undefined && metadata.data.month !== scope.month
+    || metadata.data.cutoffDate !== undefined && metadata.data.cutoffDate !== scope.queryEnd
+    || metadata.data.isComplete !== undefined && metadata.data.isComplete !== (scope.month < today.slice(0, 7))) {
+    throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "月活统计截止日或月份状态与请求自然月不一致", 502);
+  }
+  return metadata.data;
 }
 
 /**
@@ -86,7 +108,9 @@ export async function readBiV1MonthlyMetricDays(
       });
       // Summary rows may omit businessDate. The shared request adapter validates
       // any supplied date, PID, metric and dimension against this month's scope.
+      const metadata = monthlyMetadata(message, scope, today);
       anchor.metrics.M018 = monthlyPoint(message);
+      if (metadata) anchor.monthlyMetadata = metadata;
     } catch (error) {
       if (!(error instanceof UpstreamError)) throw error;
       anchor.metrics.M018 = emptyPoint("source_failure");

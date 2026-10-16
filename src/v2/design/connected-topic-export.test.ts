@@ -161,7 +161,7 @@ describe("真实留存专题整页月活导出", () => {
     ]);
   });
 
-  for (const [sourceStatus, state, label] of [["PROCESSING", "no_value", "计算中"], ["SOURCE_INCOMPLETE", "no_value", "数据接入中"], ["NOT_MATURE", "immature", "待成熟"], ["FAILED", "source_failure", "数据异常"]] as const) {
+  for (const [sourceStatus, state, label] of [["PROCESSING", "no_value", "计算中"], ["SOURCE_INCOMPLETE", "no_value", "来源不完整"], ["NOT_MATURE", "immature", "待成熟"], ["FAILED", "source_failure", "加工失败"]] as const) {
     test(`月活${sourceStatus}只保留所属月与状态，清空残留结果和计算输入`, () => {
       const live = monthlyReading(["2020-01-12", "2020-01-17"], { "2020-01-17": 987654 });
       if (live.state.status !== "success") throw new Error("expected successful fixture");

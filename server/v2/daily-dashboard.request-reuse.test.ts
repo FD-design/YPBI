@@ -43,7 +43,7 @@ function fixture(invalidRetention = false, holdReads = false) {
           ...(url.pathname === BI_V1_PLAYBACK_API ? { videoType: "short_video" } : {}) },
           numerator, denominator, value: ratio ? numerator / denominator : numerator,
           unit: metricCode === "M058" ? "currency" : metricCode === "M102" ? "seconds" : metricCode === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
-          dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-v1"
+          dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-rmb-v2"
             : metricCode === "M102" ? "foreground-watch-duration-v1" : ["M034", "M036"].includes(metricCode) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "in-memory-v1" };
       }));
       // The playback numerator has its independent count projection.

@@ -66,7 +66,7 @@ test("支付总体ARPPU与占比保留计算依据；不完整分类不闭合",a
   const result=await new DailyDashboardService({get:async(path,params)=>{
     if(path === "/api/admin/bi/v1/metrics")return{code:200,msg:{...emptyMetrics.msg,rows:params.dimensionFilters?[]:[
       {metricCode:"M058",value:100,unit:"currency"},{metricCode:"M059",value:10,unit:"count"}
-    ].filter(row=>params.metricCodes.split(",").includes(row.metricCode)).map(row=>({...row,businessDate:query.dateRange[0],dimensions:{pid:"PH"},numerator:row.value,denominator:0,dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:row.metricCode==="M058"?"paid-order-value-v1":"payment-ui-fixture-v1"}))}};
+    ].filter(row=>params.metricCodes.split(",").includes(row.metricCode)).map(row=>({...row,businessDate:query.dateRange[0],dimensions:{pid:"PH"},numerator:row.value,denominator:0,dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:row.metricCode==="M058"?"paid-order-value-rmb-v2":"payment-ui-fixture-v1"}))}};
     return path.endsWith("pDaySum")?{msg:{pageData:[{pid:"PH",sumDate:query.dateRange[0],diamondChargeAmt:999,totalChargeUserCount:99}],totalCount:1}}:path.includes("channelStatByTypeV2")?{msg:{pageData:[],totalData:[{vipChargeAmt:70,goldChargeAmt:30}]}}:{data:[],msg:{pageData:[]}};
   }}).execute({...query,boardId:"5.10"});
   const live=reading(result);live.query=result.data.query;live.metricIds=result.data.series.map(s=>s.metric.id);
@@ -170,7 +170,7 @@ test("所选日期从准确日点读取，不能把序列最后一天标成其�
 });
 test("分源失败可重试，不能转成普通缺值",async()=>{
   const live=reading(await new DailyDashboardService({get:async()=>{throw Error("unavailable");}}).execute(query));
-  expect(liveMetricModel(original(),live).result).toMatchObject({status:"failed",retryable:true,label:"来源读取失败"});
+  expect(liveMetricModel(original(),live).result).toMatchObject({status:"failed",retryable:true,label:"读取失败"});
 });
 test("经营摘要支持真实日期，旧日期资源不能冒充新日期",async()=>{
   const result=await data([100,200]),live=reading(result);live.metricIds=Object.values(OPERATING_LIVE_IDS);live.query={...query,dateRange:["2026-09-09","2026-09-09"]};
@@ -213,7 +213,7 @@ test("经营下载保留逐周期实际输入与0，不把演示字段纳入真�
 test("总体缺失时真实金额切片仍用元，不沿用演示USD",async()=>{
   const date="2026-09-09",r=await new DailyDashboardService({get:async(path,params)=>{
     if(path === "/api/admin/bi/v1/metrics")return{code:200,msg:{...emptyMetrics.msg,rows:params.metricCodes.split(",").includes("M058")&&params.dimensionFilters&&JSON.parse(params.dimensionFilters).userCohort==="new"?[{
-      metricCode:"M058",businessDate:date,dimensions:{pid:"PH",userCohort:"new"},value:30,numerator:30,denominator:0,unit:"currency",dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:"paid-order-value-v1"
+      metricCode:"M058",businessDate:date,dimensions:{pid:"PH",userCohort:"new"},value:30,numerator:30,denominator:0,unit:"currency",dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:"paid-order-value-rmb-v2"
     }]:[]}};
     return path.endsWith("pDaySum")?{msg:{pageData:[{pid:"PH",sumDate:date,diamondChargeAmt:999,newUserDiamondChargeAmt:999}],totalCount:1}}:{msg:{pageData:[],totalData:[],totalCount:0},data:[]};
   }}).execute({...query,dateRange:["2026-09-02",date]});

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { UpstreamClient } from "./client";
+import { legacyChannelDateParams } from "./channel-date";
 
 export const CHANNEL_DETAIL_API = "/api/admin/statistics/channel/channelDetail";
 export const CHANNEL_AB_API = "/api/admin/statistics/channel/abLandPage";
@@ -13,7 +14,7 @@ export class ChannelAdapter {
   constructor(private readonly client: UpstreamClient) {}
 
   async details(query: ChannelQuery) {
-    const payload = await this.client.get(CHANNEL_DETAIL_API, { page: String(query.page), count: String(query.pageSize), isDiscount: "false", pid: query.platformId, sumDateBegin: `${query.dateRange[0]} 00:00:00`, sumDateEnd: `${query.dateRange[1]} 23:59:59` });
+    const payload = await this.client.get(CHANNEL_DETAIL_API, { page: String(query.page), count: String(query.pageSize), isDiscount: "false", pid: query.platformId, ...legacyChannelDateParams(query.dateRange) });
     const envelope = pagedSchema.parse(payload);
     return { total: envelope.msg.totalCount, rows: envelope.msg.pageData.map((row) => {
       const loginUsers = numberValue(row.loginUserCount);
@@ -29,7 +30,8 @@ export class ChannelAdapter {
   }
 
   async abLanding(query: ChannelQuery) {
-    const payload = await this.client.get(CHANNEL_AB_API, { pid: query.platformId, templateA: query.templateA ?? "default", templateB: query.templateB ?? "default", regNumMin: "0", regNumMax: "1000000", page: String(query.page), count: String(query.pageSize), sumDateStart: `${query.dateRange[0]} 00:00:00`, sumDateEnd: `${query.dateRange[1]} 23:59:59` });
+    const dates = legacyChannelDateParams(query.dateRange);
+    const payload = await this.client.get(CHANNEL_AB_API, { pid: query.platformId, templateA: query.templateA ?? "default", templateB: query.templateB ?? "default", regNumMin: "0", regNumMax: "1000000", page: String(query.page), count: String(query.pageSize), sumDateStart: dates.sumDateBegin, sumDateEnd: dates.sumDateEnd });
     const envelope = pagedSchema.parse(payload);
     return { total: envelope.msg.totalCount, rows: envelope.msg.pageData };
   }

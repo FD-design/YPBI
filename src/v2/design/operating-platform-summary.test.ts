@@ -92,7 +92,7 @@ test("零分母不能绕过失败来源或未就绪状态", () => {
   expect(summary("M020", [failed]).result.status).toBe("failed");
   const incomplete = entry("M020", "A", null, [0, 0]);
   incomplete.point!.sourceStatus = "SOURCE_INCOMPLETE";
-  expect(summary("M020", [incomplete]).result).toMatchObject({ status: "no_values", label: "来源不完整，仅供核对" });
+  expect(summary("M020", [incomplete]).result).toMatchObject({ status: "no_values", label: "来源不完整" });
 });
 
 for (const [status, expected] of [["PROCESSING", "not_produced"], ["NOT_MATURE", "immature"], ["SOURCE_INCOMPLETE", "no_values"], ["FAILED", "failed"]] as const) {

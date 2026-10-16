@@ -52,12 +52,12 @@ test("缺失日点保持中性，来源处理状态和失败语义保持", () =>
   expect(liveObservation(live, "M016", "2026-09-06")).toMatchObject({ value: null, state: "该日未返回" });
   expect(liveDailyPoint(live, "M016", "2026-09-06")).toMatchObject({ state: "no_value", reason: "该日未返回" });
   const point = { ...series.points[2], state: "no_value" as const };
-  for (const [sourceStatus, label] of [["PROCESSING", "计算中"], ["NOT_MATURE", "待成熟"], ["SOURCE_INCOMPLETE", "数据接入中"], ["FAILED", "数据异常"]] as const) {
+  for (const [sourceStatus, label] of [["PROCESSING", "计算中"], ["NOT_MATURE", "待成熟"], ["SOURCE_INCOMPLETE", "来源不完整"], ["FAILED", "加工失败"]] as const) {
     expect(livePointStateLabel({ ...point, sourceStatus })).toBe(label);
   }
   expect(livePointStateLabel({ ...point, state: "zero_denominator" })).toBe("分母为0");
-  expect(livePointStateLabel({ ...point, state: "immature" })).toBe("未成熟");
-  expect(livePointStateLabel({ ...point, state: "source_failure" })).toBe("来源读取失败");
+  expect(livePointStateLabel({ ...point, state: "immature" })).toBe("待成熟");
+  expect(livePointStateLabel({ ...point, state: "source_failure" })).toBe("读取失败");
   live.state = { status: "failure", kind: "error", code: "FAILED", message: "失败" };
   expect(liveDailyPoint(live, "M016", date)).toMatchObject({ state: "source_failure", reason: "该日查询失败" });
 });
@@ -86,7 +86,7 @@ test("经营明细历史状态不借当前日，计算中与查询失败按各�
   const columns = operatingLiveColumns(live), rows = operatingLiveRows(live, { PH: live.state });
   const index = columns.findIndex(column => column.metric.id === "M016" && !column.slice), value = rows[0].values[index];
   expect(operatingValueLabel(value, columns[index], "previousDay", true)).toBe("计算中");
-  expect(operatingValueLabel(value, columns[index], "previousWeek", true)).toBe("来源读取失败");
+  expect(operatingValueLabel(value, columns[index], "previousWeek", true)).toBe("读取失败");
 });
 
 test("缺少evidence时仅当前日使用显式no_record，参考日不借当前状态", () => {

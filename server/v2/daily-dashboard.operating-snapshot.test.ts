@@ -33,7 +33,7 @@ function fixture(mode: Mode) {
         const row = { metricCode: code, businessDate: date, dimensions: { pid: query.pid, ...filters, ...(path === BI_V1_PLAYBACK_API ? { videoType: "short_video" } : {}) },
           value: value as number | null, numerator: ratio ? zero ? 0 : 1 : value, denominator: ratio ? 2 : 0,
           unit: code === "M058" ? "currency" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
-          dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: code === "M058" ? "paid-order-value-v1" : code === "M102" ? "foreground-watch-duration-v1"
+          dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: code === "M058" ? "paid-order-value-rmb-v2" : code === "M102" ? "foreground-watch-duration-v1"
             : ["M034", "M036"].includes(code) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "snapshot-fixture-v1" };
         if (path === BI_V1_PLAYBACK_API && code === "M034") Object.assign(row, { value: zero ? 0 : 1, numerator: zero ? 0 : 1 });
         if (path === BI_V1_PLAYBACK_API && code === "M036") Object.assign(row, { value: zero ? null : 0.5, denominator: zero ? 0 : 2 });

@@ -55,7 +55,7 @@ test("未发月活请求时保留月空态行与范围说明，不生成查询�
 test("M018非READY保留状态，其他指标逐日导出结构与日期保持", async () => {
   const payload = result(["2020-01-12", "2020-01-17"], ["2020-01-17"]), point = payload.data.series[0].points.at(-1)!;
   point.sourceStatus = "SOURCE_INCOMPLETE"; point.state = "no_value"; point.value = null;
-  expect((await metricSheet(payload)).rows[1].slice(1, 4)).toEqual([null, null, "数据接入中"]);
+  expect((await metricSheet(payload)).rows[1].slice(1, 4)).toEqual([null, null, "来源不完整"]);
   const daily = await metricSheet(payload, "M016");
   expect(daily.rows[0]).toEqual(["日期", "结果（人）", "人数（人）", "状态", "查询时间", "刷新状态"]);
   expect(daily.rows.slice(1).map(row => row[0])).toEqual(["2020-01-12", "2020-01-13", "2020-01-14", "2020-01-15", "2020-01-16", "2020-01-17"]);

@@ -113,9 +113,9 @@ test("活跃与消费共用 Android/iOS 新老用户独立交叉结果及来源�
       const series = data.data.series.find(item => item.metric.id === sourceId)!;
       for (const [sourceStatus, state, status, label] of [
         ["PROCESSING", "no_value", "no_values", "计算中"],
-        ["SOURCE_INCOMPLETE", "no_value", "no_values", "数据接入中"],
+        ["SOURCE_INCOMPLETE", "no_value", "no_values", "来源不完整"],
         ["NOT_MATURE", "immature", "no_values", "待成熟"],
-        ["FAILED", "source_failure", "failed", "数据异常"]
+        ["FAILED", "source_failure", "failed", "加工失败"]
       ] as const) {
         series.points[0] = { ...series.points[0], state, value: null, sourceStatus };
         expect(topicScopeModel(id, DEFAULT_TOPIC_VIEW, scope, live).result).toMatchObject({ status, label });

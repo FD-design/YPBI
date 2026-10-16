@@ -100,7 +100,7 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
         return { current: month ? resultValue(month.scope.anchor) : null, previousDay: null, previousWeek: null,
           evidence: { current: { ...current, date: month?.label ?? `${date.slice(0, 7)} 自然月 · 查询范围尚未返回`,
             label: current.state === "no_record" ? "本月未返回记录" : current.label,
-            sourceNote: [current.sourceNote, "实际查询截止不是来源数据水位；来源数据水位未返回。"].filter(Boolean).join(" ") },
+            sourceNote: [current.sourceNote, month?.point.monthlyMetadata ? "统计截止日包含当天，不是来源数据水位或最近成功加工日；月份状态表示自然月是否结束，加工就绪以指标数据状态为准。" : "实际查询截止不是来源数据水位；来源数据水位未返回。"].filter(Boolean).join(" ") },
           previousDay: inapplicable(shiftDate(date, -1)), previousWeek: inapplicable(shiftDate(date, -7)) } };
       }
       return { current: resultValue(date), previousDay: resultValue(shiftDate(date, -1)), previousWeek: resultValue(shiftDate(date, -7)),

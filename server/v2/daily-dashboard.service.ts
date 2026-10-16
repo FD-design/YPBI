@@ -7,12 +7,13 @@ import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSn
 import { metricBusinessDefinition } from "../../contracts/metric-description";
 import { getV2MetricDefinition } from "./metric-definitions";
 import { P_DAY_SUM_API } from "../upstream/overview.adapter";
+import { legacyChannelDateParams } from "../upstream/channel-date";
 import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { REALTIME_API } from "../upstream/realtime.adapter";
 import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-daily.adapter";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API, aggregateBiV1Playback, projectBiV1PlaybackGroups, queryBiV1Playback, unavailableBiV1PlaybackGroups, type BiV1PlaybackDay, type BiV1PlaybackMetricCode } from "../upstream/bi-v1.adapter";
 import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension } from "../upstream/bi-v1.metrics-adapter";
-import { readBiV1MonthlyMetricDays } from "../upstream/bi-v1.monthly-adapter";
+import { readBiV1MonthlyMetricDays, type BiV1MonthlyMetricDay } from "../upstream/bi-v1.monthly-adapter";
 import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, supportsAcquisitionGroupMetric, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
 export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRechargeSucRate";
@@ -27,7 +28,7 @@ const AMOUNT_UNIT = "元";
 const AMOUNT_PER_USER_UNIT = `${AMOUNT_UNIT}/人`;
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_MINUTE = 60;
-const VALUE_RULE_VERSIONS = { M034: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M036: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M058: "paid-order-value-v1", M102: "foreground-watch-duration-v1" } as const;
+const VALUE_RULE_VERSIONS = { M034: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M036: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M058: "paid-order-value-rmb-v2", M102: "foreground-watch-duration-v1" } as const;
 const WATCH_TIME_NOTE = `来自 bi-v1 M102 的播放成功后前台观看时长，规则版本 ${VALUE_RULE_VERSIONS.M102}，单位为秒。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态。`;
 const RECHARGE_AMOUNT_NOTE = `来自 bi-v1 M058 的人民币元金额，规则版本 ${VALUE_RULE_VERSIONS.M058}，保留接口数值。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态；按完整业务日提供合计及日均。`;
 const baseMappings = {
@@ -566,7 +567,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           if (controller) channelControllers.set(date, controller);
           try {
             const result = z.object({ msg: z.object({ pageData: z.array(rowSchema), totalData: z.array(z.record(z.string(), z.unknown())).max(1) }).loose() }).loose().parse(await client.get(CHANNEL_V2_API, {
-              pid: query.pid, page: "1", count: "1", sumDateBegin: date + " 00:00:00", sumDateEnd: date + " 23:59:59"
+              pid: query.pid, page: "1", count: "1", ...legacyChannelDateParams([date, date])
             }, undefined, controller?.signal));
             if (result.msg.pageData.some(row => row.pid !== query.pid || toBeijingDate(row.sumDate) !== date)) throw badSource();
             assertScopeEcho(result.msg, query.pid, date);
@@ -676,7 +677,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         }
       }));
     });
-    const monthlyDays = new Map<string, BiV1MetricDay>();
+    const monthlyDays = new Map<string, BiV1MonthlyMetricDay>();
     const monthlyTask = readSource("monthly", async (client) => {
       if (!sourceIds.includes("M018")) return;
       try {
@@ -756,7 +757,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             state: invalidSourceValue ? "invalid_value" : selectedState,
             value: invalidSourceValue || selectedValue === null ? null : selectedValue / (mapping.resultDivisor ?? 1),
             inputs: mapping.fields.map((key, index) => ({ key, value: invalidSourceValue ? null : values[index] ?? null })),
-            ...(biV1Point.dataStatus ? { sourceStatus: biV1Point.dataStatus } : {})
+            ...(biV1Point.dataStatus ? { sourceStatus: biV1Point.dataStatus } : {}),
+            ...(id === "M018" && monthlyDays.get(date)?.monthlyMetadata ? { monthlyMetadata: monthlyDays.get(date)!.monthlyMetadata } : {})
           };
         }
         if (selection.kind === "modern_missing") return { date, value: null, state: biV1Day ? "no_record" : "source_failure", inputs: mapping.fields.map(key => ({ key, value: null })) };

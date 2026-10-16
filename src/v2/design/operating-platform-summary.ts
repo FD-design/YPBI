@@ -3,6 +3,7 @@ import { formatMetricNumber, metricNumberFormatOptions } from "../../components/
 import type { CalculationBasis } from "../features/dashboards/CalculationEvidence";
 import type { DashboardMetricAvailableResult, DashboardMetricCardModel, DashboardMetricRefresh, DashboardMetricUnavailableResult } from "../features/dashboards/dashboard-metric-card-model";
 import { OPERATING_SUMMARY_IDS, summaryColumn } from "./operating-detail-columns";
+import { livePointStateLabel } from "../features/dashboards/live-point-state";
 
 export interface AggregateSummaryEntry {
   pid: string;
@@ -26,15 +27,15 @@ function pointUnavailable(entry: AggregateSummaryEntry, date: string, divide: bo
   if (!entry.metric || !point) return { status: "unsupported", label: "字段未返回", retryable: false };
   if (point.date !== date) return { status: "no_values", label: "数据日不一致", retryable: false };
   switch (point.sourceStatus) {
-    case "FAILED": return { status: "failed", label: "来源读取失败", retryable: true };
-    case "NOT_MATURE": return { status: "immature", label: "未成熟", retryable: false };
-    case "PROCESSING": return { status: "not_produced", label: "来源处理中", retryable: false };
-    case "SOURCE_INCOMPLETE": return { status: "no_values", label: "来源不完整，仅供核对", retryable: false };
+    case "FAILED": return { status: "failed", label: livePointStateLabel(point), retryable: true };
+    case "NOT_MATURE": return { status: "immature", label: livePointStateLabel(point), retryable: false };
+    case "PROCESSING": return { status: "not_produced", label: livePointStateLabel(point), retryable: false };
+    case "SOURCE_INCOMPLETE": return { status: "no_values", label: livePointStateLabel(point), retryable: false };
   }
   switch (point.state) {
     case "no_record": return { status: "no_records", label: "当日未返回记录", retryable: false };
-    case "immature": return { status: "immature", label: "未成熟", retryable: false };
-    case "source_failure": return { status: "failed", label: "来源读取失败", retryable: true };
+    case "immature": return { status: "immature", label: livePointStateLabel(point), retryable: false };
+    case "source_failure": return { status: "failed", label: livePointStateLabel(point), retryable: true };
     case "no_value": return { status: "no_values", label: "字段未返回", retryable: false };
     case "invalid_value": return { status: "no_values", label: "数据异常", retryable: false };
   }

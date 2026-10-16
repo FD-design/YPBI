@@ -50,9 +50,9 @@ test("正式支付链路卡只读取真实状态，成功、观察中、来源�
   paymentSubmit.state = "no_value"; paymentSubmit.value = null; paymentSubmit.sourceStatus = "PROCESSING";
   expect(model("M084").result).toMatchObject({ status: "no_values", label: "计算中" });
   paymentSubmit.sourceStatus = "SOURCE_INCOMPLETE";
-  expect(model("M084").result).toMatchObject({ status: "no_values", label: "数据接入中" });
+  expect(model("M084").result).toMatchObject({ status: "no_values", label: "来源不完整" });
   paymentSubmit.state = "source_failure"; paymentSubmit.sourceStatus = "FAILED";
-  expect(model("M084").result).toMatchObject({ status: "failed", label: "数据异常" });
+  expect(model("M084").result).toMatchObject({ status: "failed", label: "加工失败" });
 
   const credited = data.data.series.find(series => series.metric.id === "M086")!.points[0];
   credited.state = "immature"; credited.value = null; credited.sourceStatus = "NOT_MATURE";

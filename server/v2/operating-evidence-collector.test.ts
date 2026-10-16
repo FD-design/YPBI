@@ -8,6 +8,11 @@ import { createOperatingEvidenceCollector, OPERATING_EVIDENCE_MAX_BYTES, OPERATI
 const params = () => ({ pid: "PH", startDate: "2026-10-05", endDate: "2026-10-13", granularity: "day", metricCodes: "M016", includeIncomplete: "true" });
 const row = (extra: Record<string, unknown> = {}) => ({ metricCode: "M016", businessDate: "2026-10-12", dimensions: { pid: "PH" },
   value: null, numerator: 0, denominator: 0, unit: "count", dataStatus: "PROCESSING", metricVersion: "bi-v1", ruleVersion: "daily-active-v1", ...extra });
+const monthlyParams = () => ({ ...params(), startDate: "2026-10-01", endDate: "2026-11-01", granularity: "summary", metricCodes: "M018" });
+const monthlyRow = (extra: Record<string, unknown> = {}) => {
+  const { businessDate: _date, ...summary } = row({ metricCode: "M018", ...extra });
+  return summary;
+};
 const envelope = (rows: unknown[] = [row()], extra: Record<string, unknown> = {}) => ({ code: 200,
   msg: { metricVersion: "bi-v1", generatedAt: "2026-10-15T08:00:00+08:00", watermark: "2026-10-12", rows }, ...extra });
 async function capture(payload: unknown, request: Record<string, string> = params(), options: Parameters<typeof createOperatingEvidenceCollector>[1] = {}) {
@@ -59,6 +64,92 @@ describe("operating evidence private collector", () => {
     const { response, snapshot } = await capture(envelope([summary]), { ...params(), startDate: "2026-10-01", endDate: "2026-10-15", granularity: "summary", metricCodes: "M018" });
     expect(snapshot.calls[0].params).toMatchObject({ startDate: "2026-10-01", endDate: "2026-10-15", granularity: "summary" });
     expect(response.rows[0]).toMatchObject({ scope: "in_scope", dateScope: "undated", metricCode: "M018" });
+  });
+
+  test("M018行原样保留合法月活元数据及false，READY真实0与来源状态不被修改", async () => {
+    for (const isComplete of [false, true]) {
+      const metadata = { month: "2026-10", cutoffDate: "2026-10-28", isComplete };
+      const source = monthlyRow({ ...metadata, dataStatus: "READY", value: 0 });
+      const before = JSON.stringify(source);
+      const { response } = await capture(envelope([source]), monthlyParams());
+      const projected = business(response.rows[0]);
+      expect(projected).toMatchObject({ metricCode: "M018", dateScope: "undated", dataStatus: "READY", value: 0, ...metadata });
+      expect(projected.fieldState).toMatchObject({ month: { state: "valid", kind: "string" },
+        cutoffDate: { state: "valid", kind: "string" }, isComplete: { state: "valid", kind: "boolean" } });
+      expect(projected.omittedFieldCount).toBe(0);
+      expect(JSON.stringify(source)).toBe(before);
+    }
+  });
+
+  test("月活元数据缺失保持逐字段missing，不从请求、业务日期、READY或其他返回位置猜测", async () => {
+    const metadata = { month: "2026-10", cutoffDate: "2026-10-28", isComplete: false };
+    const payload = envelope([monthlyRow({ dataStatus: "READY", monthlyMetadata: metadata })]);
+    Object.assign(payload.msg, metadata);
+    const { response } = await capture(payload, monthlyParams());
+    const projected = business(response.rows[0]);
+    for (const name of ["month", "cutoffDate", "isComplete"] as const) {
+      expect(projected).not.toHaveProperty(name);
+      expect(projected.fieldState[name]).toEqual({ state: "missing", kind: "missing" });
+    }
+    expect(projected.omittedFieldCount).toBe(1);
+    expect(response.omittedMsgFieldCount).toBe(3);
+  });
+
+  test("月活仅返回已提供字段，非READY不伪造元数据完整性或清空原始输入", async () => {
+    for (const metadata of [{ month: "2026-10" }, { cutoffDate: "2026-10-28" }, { isComplete: false }]) {
+      const { response } = await capture(envelope([monthlyRow({ ...metadata, value: 999, numerator: 999 })]), monthlyParams());
+      const projected = business(response.rows[0]);
+      expect(projected).toMatchObject({ dataStatus: "PROCESSING", value: 999, numerator: 999, ...metadata });
+      for (const name of ["month", "cutoffDate", "isComplete"] as const) {
+        expect(projected.fieldState[name]?.state).toBe(Object.hasOwn(metadata, name) ? "valid" : "missing");
+      }
+    }
+  });
+
+  test("月活格式或类型非法只保留state和kind，不输出原文或hash", async () => {
+    for (const [name, value, kind] of [
+      ["month", "2026-1", "string"], ["month", "2026-13", "string"], ["month", "2026-00", "string"],
+      ["month", "private-month", "string"], ["month", 123, "number"], ["month", null, "null"],
+      ["cutoffDate", "2026-02-30", "string"], ["cutoffDate", "private-cutoff", "string"],
+      ["cutoffDate", {}, "object"], ["cutoffDate", null, "null"],
+      ["isComplete", "false", "string"], ["isComplete", 0, "number"], ["isComplete", null, "null"],
+      ["isComplete", ["private-value"], "array"]
+    ] as const) {
+      const { response } = await capture(envelope([monthlyRow({ [name]: value })]), monthlyParams());
+      const projected = business(response.rows[0]);
+      expect(projected).not.toHaveProperty(name);
+      expect(projected.fieldState[name]).toEqual({ state: value === null ? "null" : "invalid", kind });
+      expect(projected.fieldState[name]).not.toHaveProperty("sha256");
+      expect(JSON.stringify(projected)).not.toContain("private");
+      if (typeof value === "string" || typeof value === "number") {
+        expect(JSON.stringify(projected)).not.toContain(createHash("sha256").update(`${typeof value}\u0000${value}`).digest("hex"));
+      }
+    }
+  });
+
+  test("月活字段复用protected检测，合法格式敏感文本与非法敏感文本都不回显或hash", async () => {
+    for (const [name, secret] of [["month", "2026-10"], ["cutoffDate", "2026-10-28"], ["isComplete", "configured-private-secret"]] as const) {
+      const { snapshot, response } = await capture(envelope([monthlyRow({ [name]: secret })]), monthlyParams(),
+        { isProtectedText: value => value === secret });
+      const projected = business(response.rows[0]);
+      expect(projected).not.toHaveProperty(name);
+      expect(projected.fieldState[name]).toEqual({ state: "protected", kind: "string" });
+      expect(JSON.stringify(snapshot)).not.toContain(`"${secret}"`);
+      expect(JSON.stringify(snapshot)).not.toContain(createHash("sha256").update(`string\u0000${secret}`).digest("hex"));
+    }
+  });
+
+  test("其他指标继续省略月活字段，越权M018行不输出元数据", async () => {
+    const metadata = { month: "2026-10", cutoffDate: "2026-10-28", isComplete: false };
+    const { response } = await capture(envelope([row(metadata)]));
+    const projected = business(response.rows[0]);
+    for (const name of ["month", "cutoffDate", "isComplete"] as const) {
+      expect(projected).not.toHaveProperty(name);
+      expect(projected.fieldState).not.toHaveProperty(name);
+    }
+    expect(projected.omittedFieldCount).toBe(3);
+    const rejected = await capture(envelope([monthlyRow({ ...metadata, dimensions: { pid: "OTHER" } })]), monthlyParams());
+    expect(rejected.response.rows).toEqual([{ rowIndex: 0, scope: "scope_conflict", reason: "pid_mismatch" }]);
   });
 
   test("null、非法字符串、非法类型与缺失日期分别保留固定类型诊断", async () => {

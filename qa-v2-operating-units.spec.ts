@@ -24,7 +24,7 @@ const generated = JSON.parse(execFileSync(bun, ["--no-env-file", "-e", `
 `], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })) as { catalog: { success: true; data: { items: { id: string; metricIds: string[] }[] } }; results: Record<string, DailyDashboardV2Success> };
 const metricIds = generated.catalog.data.items.find(board => board.id === "5.2")!.metricIds;
 
-async function fixtures(page: Page, conflicting = false, sliceOnly = false) {
+async function fixtures(page: Page, conflicting = false, sliceOnly = false, statusSuite = false) {
   const calls: DailyDashboardQuery[] = [];
   await page.route("**/*", async route => {
     const address = new URL(route.request().url());
@@ -70,6 +70,24 @@ async function fixtures(page: Page, conflicting = false, sliceOnly = false) {
     }
     const retention = result.data.series.find(series => series.metric.id === "M020.natural")!;
     retention.points.forEach(point => Object.assign(point, { state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: retention.metric.inputs.map((input, i) => ({ key: input.key, value: i === 0 ? 1 : 2 })) }));
+    if (statusSuite) {
+      for (const [id, state, sourceStatus] of [
+        ["M058.nature", "no_value", "SOURCE_INCOMPLETE"], ["M058.internal", "source_failure", "FAILED"],
+        ["M086", "no_record", undefined], ["M067", "zero_denominator", "READY"]
+      ] as const) {
+        const target = result.data.series.find(series => series.metric.id === id)!;
+        target.points.forEach(point => {
+          delete point.sourceStatus;
+          Object.assign(point, { state, ...(sourceStatus ? { sourceStatus } : {}), value: null,
+            inputs: target.metric.inputs.map(input => ({ key: input.key, value: state === "zero_denominator" ? 0 : null })) });
+        });
+      }
+      const monthly = result.data.series.find(series => series.metric.id === "M018")!;
+      const point = monthly.points.find(point => point.date === date)!;
+      Object.assign(point, { state: "available", sourceStatus: "READY", value: 0,
+        inputs: monthly.metric.inputs.map(input => ({ key: input.key, value: 0 })),
+        monthlyMetadata: { month: "2026-09", cutoffDate: "2026-09-30", isComplete: true } });
+    }
     dailyDashboardV2SuccessSchema.parse(result);
     expect(dailyDashboardMatchesQuery(result, query, query.projection ? OPERATING_METRIC_IDS : metricIds)).toBe(true);
     return route.fulfill({ status: 200, json: result });
@@ -187,4 +205,26 @@ test("总体金额未就绪时，单PID新用户拆分详情和真实XLSX仍显�
   expect(sheet).toHaveLength(2);
   expect(sheet[1][2]).toBe("TT");
   expect(sheet[1][amount]).toBe(24);
+});
+
+test("新版来源状态分别展示，月活保留0与实际截至，93列和实际导出一致", async ({ page }, info) => {
+  await fixtures(page, false, false, true); await page.goto(url);
+  await expect(local(page).locator('thead th[data-column-key]')).toHaveCount(93);
+  for (const [key, label] of Object.entries({ "M058:新用户": "计算中", "M058:自然新增": "来源不完整",
+    "M058:内部导量": "加工失败", "M086:overall": "当日未返回记录", "M067:overall": "分母为0",
+    "M018:overall": "0", "M059:overall": "0" })) {
+    await expect(cell(page, "TikTok", key)).toHaveText(label);
+  }
+  await expect(cell(page, "Pornhub", "M058:overall")).toHaveText("读取失败");
+  const monthly = row(page, "TikTok").locator('td[data-column-key="M018:overall"] button');
+  await expect(monthly).toHaveAttribute("aria-label", /统计截至 2026-09-30（含当天）/);
+  await expect(monthly).toHaveAttribute("aria-label", /月份状态：已结束/);
+  const sheet = await download(page), tt = sheet.find(values => values[2] === "TT")!;
+  for (const [heading, label] of Object.entries({ "总充值金额（自然新增）｜当日（元）": "来源不完整",
+    "总充值金额（内部导量）｜当日（元）": "加工失败", "充值到账订单数｜当日（单）": "当日未返回记录" })) {
+    const index = sheet[0].indexOf(heading); expect(index).toBeGreaterThan(2);
+    expect(tt[index]).toBeNull(); expect(tt[index + 1]).toContain(label);
+  }
+  await monthly.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath("backend-aligned-states-monthly.png") });
 });

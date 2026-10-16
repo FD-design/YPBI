@@ -4,6 +4,7 @@ import { dailyDashboardMatchesQuery, dailyDashboardQuerySchema, dailyDashboardSu
 import { loadEnv } from "../config/env";
 import type { IdentityResolution } from "../identity/identity-provider";
 import { UpstreamError } from "../upstream/client";
+import { legacyChannelDateParams } from "../upstream/channel-date";
 import { currentUpstreamRequestProfile } from "../upstream/request-profile";
 import { DailyDashboardService, dailyDashboardCatalog, dailyDashboardMatchesMapping, dailyDashboardProjectionDocumentation, type DailyDashboardExecutor } from "./daily-dashboard.service";
 import { getV2MetricDefinition } from "./metric-definitions";
@@ -335,7 +336,7 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
   type FixtureRow = Record<string, unknown>;
   const fixture = (metricCode: string, value: number | null, unit = "count", dimensions: Record<string, string> = {}, numerator = value, denominator = 0): FixtureRow => ({
     metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, value, numerator, denominator, unit,
-    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-v1" : metricCode === "M102" ? "foreground-watch-duration-v1" : "isolated-value-fixture-v1"
+    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-rmb-v2" : metricCode === "M102" ? "foreground-watch-duration-v1" : "isolated-value-fixture-v1"
   });
   const rows = () => [fixture("M102", 64, "seconds"), fixture("M026", 4), fixture("M016", 6), fixture("M008", 3),
     fixture("M058", 162.02, "currency"), fixture("M058", 141.02, "currency", { userCohort: "new" }),
@@ -950,7 +951,7 @@ describe("bi-v1 通用指标渐进替换", () => {
         }
         if (path.includes("channelStatByTypeV2")) {
           const requestedDate = params.sumDateBegin.slice(0, 10);
-          expect(params).toMatchObject({ pid: "PH", sumDateBegin: requestedDate + " 00:00:00", sumDateEnd: requestedDate + " 23:59:59" });
+          expect(params).toMatchObject({ pid: "PH", ...legacyChannelDateParams([requestedDate, requestedDate]) });
           const fields = legacyDays[requestedDate];
           return { msg: { pageData: [], totalData: fields ? [{ pid: "PH", sumDate: requestedDate, ...fields }] : [] } };
         }
@@ -1893,7 +1894,7 @@ describe("服务端所选日期合计与日均", () => {
         const filters=JSON.parse(params.dimensionFilters??"{}");
         return {code:200,msg:{...emptyMetrics.msg,rows:query.dateRange.flatMap((businessDate,index)=>missing&&index===1?[]:["M058","M102"].filter(code=>params.metricCodes.split(",").includes(code)).map(metricCode=>{
           const value=metricCode==="M102"?1801:index===0?.1:.2;
-          return {metricCode,businessDate,dimensions:{pid:"PH",...filters},value,numerator:value,denominator:0,unit:metricCode==="M102"?"seconds":"currency",dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:metricCode==="M102"?"foreground-watch-duration-v1":"paid-order-value-v1"};
+          return {metricCode,businessDate,dimensions:{pid:"PH",...filters},value,numerator:value,denominator:0,unit:metricCode==="M102"?"seconds":"currency",dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:metricCode==="M102"?"foreground-watch-duration-v1":"paid-order-value-rmb-v2"};
         }))}};
       }
       if(path.endsWith("pDaySum"))return{msg:{pageData:[row({diamondChargeAmt:.1}),row({sumDate:"2026-09-06",diamondChargeAmt:.2})],totalCount:2}};

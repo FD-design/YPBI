@@ -58,7 +58,7 @@ test("D1缺失不污染D3，周期各自分母且绝不借M115总体或其他sco
   expect(rows[0].base).toBeNull();
   expect(rows[0].cells[0]).toMatchObject({rate:null,count:null,base:null});
   expect(rows[0].cells[1]).toMatchObject({rate:1/7,count:1,base:7});
-  expect(rows[0].cells[2]).toMatchObject({rate:null,count:null,base:null,status:"数据异常 · 待验数"});
+  expect(rows[0].cells[2]).toMatchObject({rate:null,count:null,base:null,status:"加工失败 · 待验数"});
   expect(rows[0].cells[3]).toMatchObject({rate:.1,count:1,base:10});
   expect(liveMetricModel(original("M021.android"),live).result.status).toBe("available");
   expect(liveCalculation(series.find(s=>s.metric.id==="M021.android")!,d3)?.denominator.value).toBe(7);

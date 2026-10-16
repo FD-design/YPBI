@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { monthlyMetricMetadataSchema } from "../../contracts/monthly-query-scope";
 import { BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
 import { BI_V1_METRICS_API, biV1MetricCodeSchema } from "../upstream/bi-v1.metrics-adapter";
 import type { UpstreamClient } from "../upstream/client";
@@ -21,13 +22,15 @@ export interface OperatingEvidenceFieldState {
 const PARAM_FIELDS = ["pid", "startDate", "endDate", "granularity", "metricCodes", "includeIncomplete", "dimensions", "dimensionFilters"] as const;
 const DIMENSION_FIELDS = ["pid", "clientPlatform", "userCohort", "sourceType", "paymentMethod", "videoType"] as const;
 const ROW_FIELDS = ["metricCode", "businessDate", "dimensions", "value", "numerator", "denominator", "unit", "dataStatus", "metricVersion", "ruleVersion"] as const;
+const MONTHLY_ROW_FIELDS = ["month", "cutoffDate", "isComplete"] as const;
 const MESSAGE_FIELDS = ["metricVersion", "generatedAt", "watermark", "rows"] as const;
 type ParamField = typeof PARAM_FIELDS[number];
 type DimensionField = typeof DIMENSION_FIELDS[number];
 type RowField = typeof ROW_FIELDS[number];
+type MonthlyRowField = typeof MONTHLY_ROW_FIELDS[number];
 type MessageField = typeof MESSAGE_FIELDS[number];
 type FieldStates<T extends string> = Readonly<Record<T, OperatingEvidenceFieldState>>;
-type JsonScalar = string | number | null;
+type JsonScalar = string | number | boolean | null;
 
 export interface OperatingEvidenceParams {
   readonly pid?: string;
@@ -66,7 +69,10 @@ export interface OperatingEvidenceBusinessRow {
   readonly dataStatus?: string;
   readonly metricVersion?: string;
   readonly ruleVersion?: string;
-  readonly fieldState: FieldStates<RowField>;
+  readonly month?: string;
+  readonly cutoffDate?: string;
+  readonly isComplete?: boolean;
+  readonly fieldState: FieldStates<RowField> & Readonly<Partial<Record<MonthlyRowField, OperatingEvidenceFieldState>>>;
   readonly omittedFieldCount: number;
 }
 type IdentityFailure = "row_invalid" | "request_scope_invalid" | "pid_missing" | "pid_invalid" | "pid_mismatch" | "date_invalid" | "date_out_of_range" | "metric_code_missing" | "metric_code_invalid" | "metric_code_out_of_scope";
@@ -254,7 +260,7 @@ export function createOperatingEvidenceCollector(client: Pick<UpstreamClient, "g
     const values: Record<string, JsonScalar> = { metricCode: code.value };
     const states = { metricCode: code.state, businessDate: businessDate.state,
       dimensions: isObject(dimensionsSource.value) ? { state: "valid", kind: "object" } : invalid(dimensionsSource.value, dimensionsSource.present)
-    } as Record<RowField, OperatingEvidenceFieldState>;
+    } as Record<RowField, OperatingEvidenceFieldState> & Partial<Record<MonthlyRowField, OperatingEvidenceFieldState>>;
     if (typeof businessDate.value === "string") values.businessDate = businessDate.value;
     for (const name of ["value", "numerator", "denominator"] as const) {
       const selected = select(raw, name, (value): value is number => typeof value === "number" && Number.isFinite(value), true);
@@ -270,8 +276,24 @@ export function createOperatingEvidenceCollector(client: Pick<UpstreamClient, "g
       states[name] = selected.state;
       if (typeof selected.value === "string") values[name] = selected.value;
     }
+    if (code.value === "M018") {
+      const metadataPredicates = {
+        month: string(value => monthlyMetricMetadataSchema.shape.month.safeParse(value).success),
+        cutoffDate: date,
+        isComplete: (value: unknown): value is boolean => typeof value === "boolean"
+      };
+      for (const name of MONTHLY_ROW_FIELDS) {
+        const selected = select<string | boolean>(raw, name, metadataPredicates[name]);
+        // Monthly metadata diagnostics expose only type and state. Malformed
+        // or protected source text must not produce plaintext or a digest.
+        const { sha256: _digest, ...state } = selected.state;
+        states[name] = state;
+        if (selected.value !== undefined) values[name] = selected.value;
+      }
+    }
     return { rowIndex, scope: "in_scope", dateScope: businessDate.state.state === "missing" ? "undated" : "dated", ...values,
-      dimensions: projectDimensions(dimensionsSource.value), fieldState: states, omittedFieldCount: omittedFields(raw, ROW_FIELDS) };
+      dimensions: projectDimensions(dimensionsSource.value), fieldState: states,
+      omittedFieldCount: omittedFields(raw, code.value === "M018" ? [...ROW_FIELDS, ...MONTHLY_ROW_FIELDS] : ROW_FIELDS) };
   };
   const projectResponse = (payload: unknown, params: OperatingEvidenceParams): OperatingEvidenceResponse => {
     const msg = field(payload, "msg"), rawRows = field(msg.value, "rows");

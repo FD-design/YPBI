@@ -12,6 +12,8 @@ import { formatMetricNumber, metricNumberFormatOptions } from "../../../componen
 import { isMonthlyMetric, liveMonthlySeriesRows, monthlyComparisonReason } from "./live-monthly-reading";
 import { dailyDashboardEnvironment, dataEnvironmentLabel } from "../../api/daily-dashboard-environment";
 import type { DataEnvironmentMode } from "../../api/dataEnvironmentPreference";
+import { livePointStateLabel } from "./live-point-state";
+export { livePointStateLabel, liveStateLabel } from "./live-point-state";
 
 export type LiveSeries = DailyDashboardSuccess["data"]["series"][number];
 export interface LiveDashboardReading {
@@ -55,12 +57,6 @@ export function liveExportMetadata(live: LiveDashboardReading) {
     ["对比日期", live.comparison?.query.dateRange.join(" 至 ") ?? "未启用对比"], ["对比状态", livePeriodStatus(live, true)],
     ["数据性质", "真实接口候选结果，待验数；完整性未知，数据水位未返回"]];
 }
-export const liveStateLabel = { available: "已返回", no_record: dashboardNoRecordLabels.day, no_value: "字段未返回", invalid_value: "数据异常", zero_denominator: "分母为0", immature: "未成熟", source_failure: "来源读取失败" };
-export const livePointStateLabel = (point: LiveSeries["points"][number], metric?: LiveSeries["metric"]) => metric && diagnosticRatioInputs(metric, point) ? DIAGNOSTIC_INPUTS_LABEL : point.sourceStatus === "PROCESSING" ? "计算中"
-  : point.sourceStatus === "NOT_MATURE" ? "待成熟"
-    : point.sourceStatus === "SOURCE_INCOMPLETE" ? "数据接入中"
-      : point.sourceStatus === "FAILED" ? "数据异常"
-        : liveStateLabel[point.state];
 export const liveValue = (value: number | null, unit: string) => value === null ? "—" : formatMetricNumber(unit === "%" ? value * 100 : value, "zh-CN", metricNumberFormatOptions(value, unit));
 export function liveCalculation(series: LiveSeries, point: LiveSeries["points"][number], referencePresentation = true): CalculationBasis | undefined {
   if (series.metric.inputs.length !== 2) return undefined;

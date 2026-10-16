@@ -59,6 +59,50 @@ describe("日看板周期统计版本契约", () => {
   });
 });
 
+describe("自然月来源元数据可选契约", () => {
+  const monthlyResponse = (version: "day-dashboard/v1" | "day-dashboard/v2", metadata?: unknown) => {
+    const result = response(version);
+    return { ...result, data: { ...result.data, series: result.data.series.map(item => ({
+      ...item, metric: { ...item.metric, id: "M018", referenceMetricId: "M018" },
+      points: item.points.map(point => ({ ...point, ...(metadata === undefined ? {} : { monthlyMetadata: metadata }) }))
+    })) } };
+  };
+
+  for (const version of ["day-dashboard/v1", "day-dashboard/v2"] as const) {
+    test(`${version}兼容旧响应并完整保留READY 0、false及独立来源日期`, () => {
+      const old = dailyDashboardSuccessSchema.parse(monthlyResponse(version));
+      expect(old.data.series[0].points[0]).not.toHaveProperty("monthlyMetadata");
+      const metadata = { month: "2026-09", cutoffDate: "2026-09-04", isComplete: false };
+      const parsed = dailyDashboardSuccessSchema.parse(monthlyResponse(version, metadata));
+      expect(parsed.data.series[0].points[0]).toMatchObject({ state: "available", value: 0, monthlyMetadata: metadata });
+      expect(dailyDashboardMatchesQuery(parsed, query, ["M018"])).toBe(true);
+      expect(parsed.data.completeness).toBe("unknown");
+      expect(parsed.data.watermark).toBeNull();
+    });
+
+    test(`${version}来源元数据部分返回时不补充缺失字段或推断完整月`, () => {
+      for (const metadata of [
+        { month: "2026-09" }, { cutoffDate: "2026-09-04" }, { isComplete: true }, { isComplete: false },
+        { month: "2026-09", cutoffDate: "2026-09-04", isComplete: true }
+      ]) {
+        const parsed = dailyDashboardSuccessSchema.parse(monthlyResponse(version, metadata));
+        expect(parsed.data.series[0].points[0].monthlyMetadata).toEqual(metadata);
+      }
+    });
+
+    test(`${version}拒绝月活元数据字段漂移且保留数值状态校验`, () => {
+      for (const metadata of [
+        {}, null, { unknown: true }, { month: "2026-9" }, { month: "2026-13" },
+        { cutoffDate: "2026-09-31" }, { cutoffDate: null }, { isComplete: "false" },
+        { month: "2026-09", cutoffDate: "2026-10-01" }
+      ]) expect(dailyDashboardSuccessSchema.safeParse(monthlyResponse(version, metadata)).success).toBe(false);
+      const invalid = monthlyResponse(version, { month: "2026-09", isComplete: false });
+      invalid.data.series[0].points[0].state = "source_failure";
+      expect(dailyDashboardSuccessSchema.safeParse(invalid).success).toBe(false);
+    });
+  }
+});
+
 const acquisitionGroups = (): DailyAcquisitionGroups => {
   const request = { state: "returned" as const, scopeStatuses: [], generatedAt: "2026-09-07T01:00:00Z", watermark: null };
   const make = (dimension: "channel" | "downloadPlatform") => ({ dimension, completeness: "unknown" as const, day: structuredClone(request), summary: structuredClone(request), groups: [{ key: "A-B", label: "A-B",

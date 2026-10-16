@@ -45,7 +45,7 @@ function fixture(request: OperatingEvidenceQuery, mode: Mode = "ready", held = f
           ...(path === BI_V1_PLAYBACK_API ? { videoType: "short_video" } : {}) },
           value, numerator: ratio ? zero ? 0 : 1 : value, denominator: ratio ? 2 : 0,
           unit: metricCode === "M058" ? "currency" : metricCode === "M102" ? "seconds" : metricCode === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
-          dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-v1"
+          dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-rmb-v2"
             : metricCode === "M102" ? "foreground-watch-duration-v1" : ["M034", "M036"].includes(metricCode) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "evidence-fixture-v1" };
         if (path === BI_V1_PLAYBACK_API && metricCode === "M034") Object.assign(row, { value: zero ? 0 : 1, numerator: zero ? 0 : 1 });
         if (path === BI_V1_PLAYBACK_API && metricCode === "M036") Object.assign(row, { value: zero ? null : 0.5, denominator: zero ? 0 : 2 });

@@ -1,3 +1,20 @@
+import { z } from "zod";
+
+/** Inclusive statistical cutoff and calendar-month closure; processing readiness is dataStatus. */
+export const monthlyMetricMetadataSchema = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/).refine(value => z.iso.date().safeParse(`${value}-01`).success, "月活所属月份无效").optional(),
+  cutoffDate: z.iso.date().optional(),
+  isComplete: z.boolean().optional()
+}).strict().superRefine((metadata, ctx) => {
+  if (Object.values(metadata).every(value => value === undefined)) {
+    ctx.addIssue({ code: "custom", message: "月活来源元数据不能为空" });
+  }
+  if (metadata.month && metadata.cutoffDate && metadata.cutoffDate.slice(0, 7) !== metadata.month) {
+    ctx.addIssue({ code: "custom", path: ["cutoffDate"], message: "月活所属月份与统计截止日不一致" });
+  }
+});
+export type MonthlyMetricMetadata = z.infer<typeof monthlyMetricMetadataSchema>;
+
 /** Internal query bounds shared by the monthly adapter and its readers, not data watermarks. */
 export interface MonthlyQueryScope {
   month: string;

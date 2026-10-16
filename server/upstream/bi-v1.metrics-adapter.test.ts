@@ -491,12 +491,98 @@ describe("bi-v1 付费与广告独立人数", () => {
   });
 });
 
+describe("bi-v1 人民币金额 v2 准入", () => {
+  const expectedRuleVersions = { M058: "paid-order-value-rmb-v2" };
+  const slices: { name: string; filters: BiV1MetricDimensionFilters; value: number }[] = [
+    { name: "总体", filters: {}, value: 162.02 },
+    { name: "新用户", filters: { userCohort: "new" }, value: 141.02 },
+    { name: "自然新增", filters: { sourceType: "natural" }, value: 138.02 },
+    { name: "内部导量", filters: { sourceType: "internal_channel" }, value: 24 }
+  ];
+
+  for (const slice of slices) {
+    const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M058"] as const,
+      expectedRuleVersions, ...(Object.keys(slice.filters).length ? { dimensionFilters: slice.filters } : {}) };
+    const key = biV1MetricKey("M058", slice.filters);
+    const amount = { ...makeRow("M058", "currency", slice.value, slice.value, 0, slice.filters), ruleVersion: expectedRuleVersions.M058 };
+    const read = (rows: unknown[]) => readBiV1MetricDays({ get: async (_path, params) => ({ code: 200,
+      msg: { ...message([]), rows: rows.filter(row => params.metricCodes.split(",").includes((row as { metricCode: string }).metricCode)) }
+    }) }, query);
+
+    test(`${slice.name} READY 人民币元与真实0原值准入，计算输入保持同一金额`, async () => {
+      for (const value of [slice.value, 0]) {
+        const result = await read([{ ...amount, value, numerator: value }]);
+        expect(result.days[0].metrics[key]).toEqual({ state: "available", dataStatus: "READY", value,
+          numerator: value, denominator: 0, unit: "currency" });
+        expect(result.message?.rows[0].ruleVersion).toBe("paid-order-value-rmb-v2");
+        expect(Object.keys(result.days[0].metrics)).toEqual([key]);
+      }
+    });
+
+    test(`${slice.name} 旧版、缺版及未知版本金额不准入，付费人数和付费率继续使用v1`, async () => {
+      const siblings = [makeRow("M059", "count", 5, 5, 0, slice.filters),
+        makeRow("M061", "ratio", 5 / 6, 5, 6, slice.filters), makeRow("M064", "ratio", 1, 3, 3, slice.filters)]
+        .map(row => ({ ...row, ruleVersion: "paid-order-value-v1" }));
+      for (const ruleVersion of ["paid-order-value-v1", "", "paid-order-value-v2", "paid-order-value-rmb-v3", "unknown-rule"]) {
+        const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([
+          { ...amount, ruleVersion }, ...siblings
+        ]) }) }, { ...query, metricCodes: ["M058", "M059", "M061", "M064"] });
+        expect(result.days[0].metrics[key]).toEqual({ state: "invalid_value", dataStatus: null, value: null,
+          numerator: null, denominator: null, unit: null });
+        for (const row of siblings) expect(result.days[0].metrics[biV1MetricKey(row.metricCode, slice.filters)])
+          .toMatchObject({ state: "available", value: row.value, numerator: row.numerator, denominator: row.denominator });
+      }
+    });
+
+    test(`${slice.name} v2错误单位与USDT原币不成为人民币金额或计算输入`, async () => {
+      for (const unit of ["count", "ratio", "count_per_user", "seconds", "cents", "usdt", "USDT"]) {
+        const point = (await read([{ ...amount, unit }])).days[0].metrics[key];
+        expect(point.state).toBe(["cents", "usdt", "USDT"].includes(unit) ? "source_failure" : "invalid_value");
+        expect(point).toMatchObject({ dataStatus: null, value: null, numerator: null, denominator: null, unit: null });
+        expect(point.diagnosticInputs).toBeUndefined();
+      }
+    });
+
+    test(`${slice.name} v2标量输入不一致保持无效，不以分子分母重算金额`, async () => {
+      for (const invalid of [{ value: null }, { numerator: slice.value + 1 }, { denominator: 1 }]) {
+        const point = (await read([{ ...amount, ...invalid }])).days[0].metrics[key];
+        expect(point).toEqual({ state: "invalid_value", dataStatus: null, value: null, numerator: null, denominator: null, unit: null });
+      }
+    });
+
+    test(`${slice.name} v2非READY保留来源状态，所带金额和输入不进入计算`, async () => {
+      for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["NOT_MATURE", "immature"],
+        ["SOURCE_INCOMPLETE", "no_value"], ["FAILED", "source_failure"]] as const) {
+        for (const value of [null, 0, 999]) {
+          const point = (await read([{ ...amount, dataStatus, value }])).days[0].metrics[key];
+          expect(point).toEqual({ state, dataStatus, value: null, numerator: null, denominator: null, unit: null });
+        }
+      }
+      expect((await read([])).days[0].metrics[key]).toEqual({ state: "no_record", dataStatus: null,
+        value: null, numerator: null, denominator: null, unit: null });
+    });
+  }
+
+  test("USDT支付方式只接收明确人民币v2结果，旧版原币不能通过版本准入", async () => {
+    const filters = { paymentMethod: "usdt_pay" as const };
+    for (const [ruleVersion, state, expectedValue] of [
+      ["paid-order-value-rmb-v2", "available", 72.34], ["paid-order-value-v1", "invalid_value", null]
+    ] as const) {
+      const result = await readBiV1MetricDays({ get: async () => ({ code: 200, msg: message([
+        { ...makeRow("M058", "currency", 72.34, 72.34, 0, filters), ruleVersion }
+      ]) }) }, { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M058"],
+        expectedRuleVersions, dimensionFilters: filters });
+      expect(result.days[0].metrics[biV1MetricKey("M058", filters)]).toMatchObject({ state, value: expectedValue, numerator: expectedValue });
+    }
+  });
+});
+
 describe("bi-v1 私有规则版本准入", () => {
-  const expectedRuleVersions = { M058: "paid-order-value-v1", M102: "foreground-watch-duration-v1" };
+  const expectedRuleVersions = { M058: "paid-order-value-rmb-v2", M102: "foreground-watch-duration-v1" };
   const query = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-22", metricCodes: ["M058", "M102"] as const, expectedRuleVersions };
 
   for (const [code, unit] of [["M058", "currency"], ["M102", "seconds"]] as const) {
-    for (const ruleVersion of ["", "other-rule-v1", `${expectedRuleVersions[code]}-next`]) {
+    for (const ruleVersion of ["", "other-rule-v1", `${expectedRuleVersions[code]}-next`, ...(code === "M058" ? ["paid-order-value-v1"] : [])]) {
       test(`${code} READY规则 ${JSON.stringify(ruleVersion)} 单日拒绝，不混入已准入的前日或相邻指标`, async () => {
         const other = code === "M058" ? "M102" : "M058";
         const rows = [

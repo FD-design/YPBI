@@ -65,7 +65,7 @@ function fixture(options: {
           value: ready ? ratio ? 0.5 : scalar : null, numerator, denominator: ratio ? 2 : 0,
           unit: status === "invalid" ? "currency" : code === "M058" ? "currency" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
           dataStatus: status === "invalid" ? "READY" : status, metricVersion: "bi-v1",
-          ruleVersion: code === "M058" ? "paid-order-value-v1" : code === "M102" ? "foreground-watch-duration-v1"
+          ruleVersion: code === "M058" ? "paid-order-value-rmb-v2" : code === "M102" ? "foreground-watch-duration-v1"
             : ["M034", "M036"].includes(code) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "channel-dependency-fixture-v1" }];
       })));
     }
@@ -222,7 +222,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       });
     });
     const healthyController = new AbortController();
-    const params = { pid: "PH", page: "1", count: "1", sumDateBegin: selectedDates[0] + " 00:00:00", sumDateEnd: selectedDates[0] + " 23:59:59" };
+    const params = { pid: "PH", page: "1", count: "1", sumDateBegin: selectedDates[0] + " 00:00:00", sumDateEnd: "2026-10-06 00:00:00" };
     const healthy = upstream.get(CHANNEL_V2_API, params, undefined, healthyController.signal);
     const base = fixture();
     const client = { get: (path: string, values: Record<string, string>, token?: string, signal?: AbortSignal) => path === CHANNEL_V2_API

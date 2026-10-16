@@ -26,13 +26,13 @@ for (const value of [.004, -.004, 0, 12345.6789, null]) {
     else expect(summary.result).toMatchObject({ status: "available", value: { raw: value, display: expected, unit: "元/人" } });
     const detail = operatingDetailBreakdown(summary, rows, "PH", date);
     const newUsers = detail.groups.flatMap(group => group.rows).find(row => row.key === "新用户")!;
-    if (value === null) expect(newUsers.value).toMatchObject({ status: "no_record", label: "数据接入中" });
+    if (value === null) expect(newUsers.value).toMatchObject({ status: "no_record", label: "来源不完整" });
     else expect(newUsers.value).toMatchObject({ status: "available", raw: value, display: expected });
     expect(detail.unit).toBe("元/人");
     const exported = operatingLiveExportRows(rows, columns, date);
     for (const [index, column] of columns.entries()) {
       if (column.metric.id !== "M067") continue;
-      expect(operatingValueLabel(rows[0].values[index], column)).toBe(value === null ? "数据接入中" : expected);
+      expect(operatingValueLabel(rows[0].values[index], column)).toBe(value === null ? "来源不完整" : expected);
       expect(exported[1][3 + index * 9]).toBe(value);
       expect(exported[0][3 + index * 9]).toContain("元/人");
       expect(rows[0].values[index].current).toBe(value);

@@ -101,14 +101,103 @@ describe("bi-v1 自然月月活读取", () => {
     expect(missing.days.at(-1)?.metrics.M018).toMatchObject({ state: "no_record", dataStatus: null, value: null });
   });
 
+  test("历史月已结束与READY 0独立保留", async () => {
+    const monthlyMetadata = { month: "2020-01", cutoffDate: "2020-01-31", isComplete: true };
+    const result = await readBiV1MonthlyMetricDays(clientFor([row({ ...monthlyMetadata, value: 0, numerator: 0 })]), query, today);
+    expect(result.days.at(-1)).toMatchObject({
+      monthlyMetadata,
+      metrics: { M018: { state: "available", dataStatus: "READY", value: 0, numerator: 0, denominator: 0, unit: "count" } }
+    });
+    expect(result.days.slice(0, -1).every(day => !day.monthlyMetadata)).toBe(true);
+  });
+
+  test("当前月进行中且READY时展示月初至北京时间昨天的去重人数", async () => {
+    const monthlyMetadata = { month: "2026-10", cutoffDate: "2026-10-08", isComplete: false };
+    const result = await readBiV1MonthlyMetricDays(clientFor([row(monthlyMetadata)]), { ...query, startDate: "2026-10-03", endDate: "2026-10-06" }, today);
+    expect(result.days.at(-1)).toMatchObject({ queryStart: "2026-10-01", queryEnd: "2026-10-08", monthlyMetadata, metrics: { M018: { state: "available", value: 37 } } });
+  });
+
+  test("当前月仅返回月份状态false时保留字段，READY真实0仍可展示", async () => {
+    const result = await readBiV1MonthlyMetricDays(clientFor([row({ isComplete: false, value: 0, numerator: 0 })]),
+      { ...query, startDate: "2026-10-03", endDate: "2026-10-06" }, today);
+    expect(result.days.at(-1)).toMatchObject({ monthlyMetadata: { isComplete: false }, metrics: { M018: { state: "available", dataStatus: "READY", value: 0 } } });
+  });
+
+  for (const monthlyMetadata of [
+    { month: "2020-01" }, { cutoffDate: "2020-01-31" }, { isComplete: true }
+  ]) {
+    test(`月活来源元数据部分返回时只保留已提供项：${JSON.stringify(monthlyMetadata)}`, async () => {
+      const result = await readBiV1MonthlyMetricDays(clientFor([row(monthlyMetadata)]), query, today);
+      expect(result.days.at(-1)?.monthlyMetadata).toEqual(monthlyMetadata);
+    });
+  }
+
+  test("旧响应不由业务日、查询日期或READY推断来源元数据", async () => {
+    const result = await readBiV1MonthlyMetricDays(clientFor([row({ businessDate: "2020-01-08" })]), query, today);
+    expect(result.days.at(-1)).not.toHaveProperty("monthlyMetadata");
+  });
+
+  test("业务FAILED保留来源元数据且不泄露无效值，读取失败不生成元数据", async () => {
+    const monthlyMetadata = { month: "2020-01", cutoffDate: "2020-01-31", isComplete: true };
+    const failed = await readBiV1MonthlyMetricDays(clientFor([row({ ...monthlyMetadata, dataStatus: "FAILED" })]), query, today);
+    expect(failed.days.at(-1)).toMatchObject({ monthlyMetadata, metrics: { M018: { state: "source_failure", dataStatus: "FAILED", value: null } } });
+    const transport = await readBiV1MonthlyMetricDays({ get: async () => { throw new UpstreamError("UPSTREAM_TIMEOUT", "请求超时", 504); } }, query, today);
+    expect(transport.days.at(-1)).not.toHaveProperty("monthlyMetadata");
+    expect(transport.days.at(-1)?.metrics.M018).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
+  });
+
+  for (const monthlyMetadata of [
+    { month: "2020-1" }, { month: "2020-00" }, { month: "2020-13" }, { month: null }, { month: "2019-12" },
+    { cutoffDate: "2020-02-30" }, { cutoffDate: null }, { cutoffDate: "2019-12-31" }, { cutoffDate: "2020-02-01" },
+    { month: "2020-01", cutoffDate: "2020-02-01" }, { cutoffDate: "2020-01-20" },
+    { isComplete: false }, { isComplete: "true" }, { isComplete: 0 }, { isComplete: null }
+  ]) {
+    test(`月活来源元数据格式或范围冲突失败关闭：${JSON.stringify(monthlyMetadata)}`, async () => {
+      const result = await readBiV1MonthlyMetricDays(clientFor([row(monthlyMetadata)]), query, today);
+      expect(result.days.at(-1)?.metrics.M018).toMatchObject({ state: "source_failure", dataStatus: null, value: null });
+      expect(result.days.at(-1)).not.toHaveProperty("monthlyMetadata");
+    });
+  }
+
+  for (const monthlyMetadata of [
+    { cutoffDate: "2026-10-05" }, { cutoffDate: today }, { isComplete: true }
+  ]) {
+    test(`当前月统计截止与月份状态冲突失败关闭：${JSON.stringify(monthlyMetadata)}`, async () => {
+      const result = await readBiV1MonthlyMetricDays(clientFor([row(monthlyMetadata)]),
+        { ...query, startDate: "2026-10-03", endDate: "2026-10-06" }, today);
+      expect(result.days.at(-1)?.metrics.M018).toMatchObject({ state: "source_failure", value: null });
+      expect(result.days.at(-1)).not.toHaveProperty("monthlyMetadata");
+    });
+  }
+
+  test("额外分组的错误月元数据不污染精确总体结果", async () => {
+    const monthlyMetadata = { month: "2020-01", cutoffDate: "2020-01-31", isComplete: true };
+    const result = await readBiV1MonthlyMetricDays(clientFor([
+      row(monthlyMetadata), row({ month: "1999-12", cutoffDate: "1999-12-31", dimensions: { pid: "PH", clientPlatform: "android" } })
+    ]), query, today);
+    expect(result.days.at(-1)).toMatchObject({ monthlyMetadata, metrics: { M018: { state: "available", value: 37 } } });
+  });
+
+  test("跨月元数据按独立月份校验，错误月份不清空下一月", async () => {
+    const result = await readBiV1MonthlyMetricDays({ get: async (_path, params) => payload([
+      row(params.startDate === "2020-01-01"
+        ? { month: "2020-02", cutoffDate: "2020-02-29", isComplete: true }
+        : { month: "2020-02", cutoffDate: "2020-02-29", isComplete: true })
+    ]) }, { ...query, endDate: "2020-02-29" }, today);
+    expect(result.days.find(day => day.date === "2020-01-31")?.metrics.M018).toMatchObject({ state: "source_failure", value: null });
+    expect(result.days.at(-1)).toMatchObject({ monthlyMetadata: { month: "2020-02", cutoffDate: "2020-02-29", isComplete: true }, metrics: { M018: { state: "available", value: 37 } } });
+  });
+
   for (const [dataStatus, state] of [
     ["PROCESSING", "no_value"], ["NOT_MATURE", "immature"],
     ["SOURCE_INCOMPLETE", "no_value"], ["FAILED", "source_failure"]
   ] as const) {
     test(`${dataStatus}保留状态并清空上游数值`, async () => {
       for (const value of [null, 37]) {
-        const result = await readBiV1MonthlyMetricDays(clientFor([row({ dataStatus, value })]), query, today);
+        const result = await readBiV1MonthlyMetricDays(clientFor([row({ dataStatus, value,
+          month: "2020-01", cutoffDate: "2020-01-31", isComplete: true })]), query, today);
         expect(result.days.at(-1)?.metrics.M018).toEqual({ state, dataStatus, value: null, numerator: null, denominator: null, unit: null });
+        expect(result.days.at(-1)?.monthlyMetadata).toEqual({ month: "2020-01", cutoffDate: "2020-01-31", isComplete: true });
       }
     });
   }

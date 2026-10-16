@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "./operating-detail-projection";
+import { monthlyMetricMetadataSchema } from "./monthly-query-scope";
 
 export const DAILY_DASHBOARD_VERSION = "day-dashboard/v2" as const;
 export const DAILY_STATISTICS_VERSION = "daily-statistics/v1" as const;
@@ -36,6 +37,7 @@ export type DailyDashboardCatalog = z.infer<typeof dailyDashboardCatalogSchema>[
 export const dailyPointSchema = z.object({
   date: z.iso.date(), state: z.enum(["available", "no_record", "no_value", "invalid_value", "zero_denominator", "immature", "source_failure"]),
   sourceStatus: z.enum(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_INCOMPLETE", "FAILED"]).optional(),
+  monthlyMetadata: monthlyMetricMetadataSchema.optional(),
   value: z.number().finite().nonnegative().nullable(),
   inputs: z.array(z.object({ key: shortText, value: z.number().finite().nonnegative().nullable() }).strict()).min(1).max(2)
 }).strict().superRefine((point, ctx) => {
