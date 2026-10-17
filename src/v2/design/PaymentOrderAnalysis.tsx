@@ -1,4 +1,4 @@
-import { liveDailyReferenceRows, liveExportMetadata, liveDataEnvironment, livePeriodStatus, livePointStateLabel, liveValue, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
+import { liveDailyReferenceRows, liveExportMetadata, liveDataEnvironment, livePeriodStatus, livePointStateLabel, liveValue, useLiveDashboard, liveResourceRetainsResult } from "../features/dashboards/LiveDashboardContext";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
 import { safeDiagnosticSeries } from "../features/dashboards/diagnostic-inputs";
@@ -63,16 +63,16 @@ export function PaymentOrderAnalysis({range,compared=false,pending=false,onOpen}
     const series = result?.data.series.find(item => item.metric.id === model.metric.id);
     const previousResult = live.comparison?.state.status === "success" ? live.comparison.state.data : null;
     return series && result && live.canExport && !live.controls.dirty
-      ? <LiveSeriesExport series={series} result={result} comparison={previousResult} comparisonStatus={livePeriodStatus(live, true)} dayReferences={liveDailyReferenceRows(live, [model.metric.id])} stale={Boolean((live.state.status === "success" && live.state.refreshError) || (live.comparison?.state.status === "success" && live.comparison.state.refreshError))} />
+      ? <LiveSeriesExport series={series} result={result} comparison={previousResult} comparisonStatus={livePeriodStatus(live, true)} dayReferences={liveDailyReferenceRows(live, [model.metric.id])} stale={liveResourceRetainsResult(live.state)} comparisonStale={liveResourceRetainsResult(live.comparison?.state)} />
       : <Button disabled>导出未就绪</Button>;
   };
   const exportAction=<PreviewExportControl name="拉单与充值" scope={`${ways.map(item => item.label).join("、")}；全部指标、逐日值和计算输入`} context={scope} dataOrigin={live ? "live" : "demo"} dataEnvironment={live ? liveDataEnvironment(live) : undefined} pending={pending || Boolean(live && (!live.canExport || live.controls.dirty || live.state.status !== "success"))} onDownloadPreview={()=>{
     if(live && (!live.canExport || live.controls.dirty || live.state.status !== "success"))return;
     const demoSheets=paymentOrderSheets(range,false,compared);
     if(!live){downloadPreviewWorkbook("拉单与充值",demoSheets);return;}
-    const periods=[...(live.state.status==="success"?[{label:"当前",result:live.state.data,stale:Boolean(live.state.refreshError)}]:[]),...(live.comparison?.state.status==="success"&&live.comparison.state.data?[{label:"对比",result:live.comparison.state.data,stale:Boolean(live.comparison.state.refreshError)}]:[])];
+    const periods=[...(live.state.status==="success"?[{label:"当前",result:live.state.data,stale:liveResourceRetainsResult(live.state)}]:[]),...(live.comparison?.state.status==="success"&&live.comparison.state.data?[{label:"对比",result:live.comparison.state.data,stale:liveResourceRetainsResult(live.comparison.state)}]:[])];
     const dayReferences=liveDailyReferenceRows(live,live.metricIds);
-    downloadPreviewWorkbook("拉单与充值",[{name:"来源说明",rows:[...liveExportMetadata(live),["真实结果",`${ways.map(item => item.label).join("、")}的已登记逐日结果，待验数；完整性未知、水位未返回`],["真实日期",live.query.dateRange.join(" 至 ")],["真实平台",live.query.pid],["查询时间",live.state.status==="success"?live.state.data.data.fetchedAt:""],["刷新状态",live.state.status==="success"&&live.state.refreshError?"上次查询结果":"本次查询结果"],["来源隔离","正式查询不导出演示快照，未接入与未就绪指标保留空值和状态"]] },
+    downloadPreviewWorkbook("拉单与充值",[{name:"来源说明",rows:[...liveExportMetadata(live),["真实结果",`${ways.map(item => item.label).join("、")}的已登记逐日结果，待验数；完整性未知、水位未返回`],["真实日期",live.query.dateRange.join(" 至 ")],["真实平台",live.query.pid],["查询时间",live.state.status==="success"?live.state.data.data.fetchedAt:""],["刷新状态",liveResourceRetainsResult(live.state)?"上次查询结果":"本次查询结果"],["来源隔离","正式查询不导出演示快照，未接入与未就绪指标保留空值和状态"]] },
       ...periods.flatMap(period=>period.result.data.series.map(safeDiagnosticSeries).map(series=>({name:period.label+"-"+series.metric.name,rows:[["日期","值","单位",...series.metric.inputs.map(input=>input.name+"（"+input.unit+"）"),"状态","平台","查询时间","刷新状态"],...series.points.map(point=>[point.date,point.value,series.metric.unit==="%"?"原始比值":series.metric.unit,...point.inputs.map(input=>input.value),livePointStateLabel(point,series.metric),live.query.pid,period.result.data.fetchedAt,period.stale?"上次查询结果":"本次查询结果"])]}))),
       ...(dayReferences.length?[paymentOrderReferenceSheet(dayReferences, new Map(periods.flatMap(period=>period.result.data.series).map(series=>[series.metric.id,series.metric.name])))]:[])], "pending");
   }}/>;

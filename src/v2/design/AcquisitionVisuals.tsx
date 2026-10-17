@@ -11,7 +11,7 @@ import { exportAcquisition, exportAcquisitionTrend } from "./acquisition-export"
 import { CHART_PALETTE } from "../../theme/tokens";
 import "./acquisition-visuals.css";
 import "./payment-breakdowns.css";
-import { useLiveDashboard, liveDailyReferenceRows, liveMetricModel, livePeriodStatus } from "../features/dashboards/LiveDashboardContext";
+import { useLiveDashboard, liveDailyReferenceRows, liveMetricModel, livePeriodStatus, liveResourceRetainsResult } from "../features/dashboards/LiveDashboardContext";
 import { DataOriginProvider } from "../components/DataOrigin";
 import { ConnectedStructureContent } from "./ConnectedStructure";
 import { CompactMetricReading } from "../features/dashboards/CompactMetricReading";
@@ -61,7 +61,7 @@ export function AcquisitionVisuals({filters,mixed,pending,onOpen,onLocate}:Props
   const metricExport=(model:DashboardMetricCardModel)=>{
     if(!live)return <PreviewExportControl name={`${model.metric.name}同口径数据表`} scope="当前指标全部逐日结果、实际比较日期、计算输入与状态" context={`${filters.start} 至 ${filters.end} · 大盘整体 · 合成演示数据`} pending={pending} onDownloadPreview={()=>exportAcquisitionTrend(model,filters)}/>;
     const result=live.state.status==="success"?live.state.data:null,series=result?.data.series.find(item=>item.metric.id===model.metric.id),previousResult=live.comparison?.state.status==="success"?live.comparison.state.data:null;
-    return series&&result&&live.canExport&&!live.controls.dirty?<LiveSeriesExport series={series} result={result} comparison={previousResult} comparisonStatus={livePeriodStatus(live,true)} dayReferences={liveDailyReferenceRows(live,[model.metric.id])} stale={Boolean((live.state.status==="success"&&live.state.refreshError)||(live.comparison?.state.status==="success"&&live.comparison.state.refreshError))}/>:<Button disabled>导出未就绪</Button>;
+    return series&&result&&live.canExport&&!live.controls.dirty?<LiveSeriesExport series={series} result={result} comparison={previousResult} comparisonStatus={livePeriodStatus(live,true)} dayReferences={liveDailyReferenceRows(live,[model.metric.id])} stale={liveResourceRetainsResult(live.state)} comparisonStale={liveResourceRetainsResult(live.comparison?.state)}/>:<Button disabled>导出未就绪</Button>;
   };
   return <>
     <DataOriginProvider value={live?"pending":"demo"}><DashboardPanel title="下载表现" guidanceKey="acquisition.download" note="下载目标与注册客户端分别统计；默认次数口径，不表示安装完成。" chartKind="download-composition">

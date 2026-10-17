@@ -1,6 +1,6 @@
 import type { CalculationBasis } from "../features/dashboards/CalculationEvidence";
 import { liveExportEnvironmentRows } from "../features/dashboards/LiveDashboardContext";
-import { liveCalculation, livePointStateLabel, type LiveDashboardReading, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
+import { liveCalculation, livePointStateLabel, liveResourceRetainsResult, livePeriodStatus, type LiveDashboardReading, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import type { WorkbookSheet } from "./preview-workbook";
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { calculationInputValues, diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio, safeDiagnosticSeries } from "../features/dashboards/diagnostic-inputs";
@@ -45,7 +45,7 @@ function reading(live: LiveDashboardReading, id: string, before = false) {
     state: !period ? "未启用对比" : period.state.status === "loading" ? "读取中" : period.state.status === "failure" ? "读取失败"
       : point ? series && diagnosticRatioInputs(series.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point) : series ? "当日未返回" : "待接入",
     series,
-    freshness: period?.state.status === "success" && period.state.refreshError ? "刷新失败，保留上次查询结果" : ""
+    freshness: liveResourceRetainsResult(period?.state) ? livePeriodStatus(live, before) : ""
   };
 }
 
@@ -87,6 +87,6 @@ export function connectedDimensionSheet(live: LiveDashboardReading, id: string, 
       ...(live.comparison ? [{ label: "对比期", series: row.baselineSeries, state: row.baselineState, period: live.comparison }] : [])
     ].flatMap(({ label, series, state, period }) => series ? series.points.map(point => { const reference = retentionReferenceRatio(series.metric, point); return [label, live.query.pid, series.metric.name, row.name, point.date,
       point.value, series.metric.unit === "%" ? "原始比值" : series.metric.unit, point.inputs.map(input => `${series.metric.inputs.find(item => item.key === input.key)?.name ?? input.key}：${input.value ?? "—"}`).join("；"), diagnosticRatioInputs(series.metric, point) ? DIAGNOSTIC_INPUTS_LABEL : livePointStateLabel(point),
-      period.state.status === "success" && period.state.refreshError ? "上次查询结果" : "本次查询结果", ...(hasReference ? [reference ? reference.value * 100 : null, reference?.label ?? null] : [])]; })
+      liveResourceRetainsResult(period.state) ? "上次查询结果" : "本次查询结果", ...(hasReference ? [reference ? reference.value * 100 : null, reference?.label ?? null] : [])]; })
       : [[label, live.query.pid, id, row.name, period.query.dateRange.join(" 至 "), null, "", "", state, "", ...(hasReference ? [null, null] : [])]]))] };
 }

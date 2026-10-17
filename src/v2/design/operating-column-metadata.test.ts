@@ -32,6 +32,27 @@ function reading(state: OperatingResources[string] = failure): LiveDashboardRead
 
 const amountIndex = DETAIL_COLUMNS.findIndex(column => column.metric.id === "M058" && !column.slice);
 
+for (const phase of ["refreshing", "failed", "complete"] as const) test(`经营${phase}三期保留原值，证据及两类导出统一标记新旧结果`, () => {
+  const base = resource("PH"), state = { ...base, refreshing: phase === "refreshing",
+    refreshError: phase === "failed" ? { code: "UPSTREAM_TIMEOUT", message: "刷新失败" } : null };
+  const live = reading(state), resources = { PH: state, TT: failure };
+  const columns = operatingLiveColumns(live, resources), rows = operatingLiveRows(live, resources);
+  const value = rows[0].values[amountIndex], stale = phase !== "complete";
+  expect(columns).toHaveLength(93);
+  expect([value.current, value.previousDay, value.previousWeek]).toEqual([24, 24, 24]);
+  for (const period of ["current", "previousDay", "previousWeek"] as const) {
+    expect(value.evidence![period]).toMatchObject({ stale, state: "available", inputs: [{ value: 24 }] });
+  }
+  const calculation = operatingLiveCalculationRows(rows, columns).filter(row => row[0] === "PH" && row[3] === "M058:overall");
+  expect(calculation).toHaveLength(3);
+  expect(calculation.every(row => row[12] === (stale ? "上次查询结果" : "本次查询结果"))).toBe(true);
+  const exported = operatingLiveExportRows(rows, columns, date)[1];
+  for (const offset of [0, 3, 6]) {
+    expect(exported[3 + amountIndex * 9 + offset]).toBe(24);
+    expect(String(exported[4 + amountIndex * 9 + offset]).includes("上次查询结果")).toBe(stale);
+  }
+});
+
 for (const environment of ["production", "test"] as const) for (const primary of [failure, { status: "loading" as const }]) {
   test(`${environment}环境${primary.status}页头继续隔离异环境经营元数据、数值、摘要及导出`, () => {
     const live = { ...reading(primary), dataEnvironment: environment }, otherEnvironment = environment === "production" ? "test" : "production";

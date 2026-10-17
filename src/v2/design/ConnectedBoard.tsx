@@ -7,7 +7,7 @@ import { useAuthentication } from "../app/AuthProvider";
 import { navigate, useBrowserLocation } from "../app/router";
 import { RefreshNotice, RequestFailureDetails } from "../components/StatePanel";
 import { DemoDataProvider } from "../components/DataOrigin";
-import { LiveDashboardContext, liveDailyReferenceRows, liveExportEnvironmentRows, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { LiveDashboardContext, liveDailyReferenceRows, liveExportEnvironmentRows, livePointStateLabel, liveResourceRetainsResult, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import { DateRangePicker } from "../../components/ui/DateRangePicker";
 import { MenuSelect } from "../../components/ui/MenuSelect";
@@ -48,8 +48,8 @@ export function connectedBoardMetricSheet(series: DailyDashboardSuccess["data"][
 export function connectedBoardExportSheets(live: LiveDashboardReading): WorkbookSheet[] {
   if (live.state.status !== "success") return [];
   const { query, state, comparison } = live, result = state.data;
-  const periods = [{ name: "当前期", result, stale: Boolean(state.refreshError) },
-    ...(comparison?.state.status === "success" && comparison.state.data ? [{ name: "对比期", result: comparison.state.data, stale: Boolean(comparison.state.refreshError) }] : [])];
+  const periods = [{ name: "当前期", result, stale: liveResourceRetainsResult(state) },
+    ...(comparison?.state.status === "success" && comparison.state.data ? [{ name: "对比期", result: comparison.state.data, stale: liveResourceRetainsResult(comparison.state) }] : [])];
   const dayReferences = liveDailyReferenceRows(live, live.metricIds);
   return [
     { name: "读取说明", rows: [...liveExportEnvironmentRows(live), ["数据性质", "真实后台候选结果，待验数"], ["平台", query.pid], ["范围", query.dateRange.join(" 至 ")], ["主值", "普通日指标为所选结束日；注册留存卡按成熟已返回批次加权；本文件逐日列出原始值"], ["完整性", "未知"], ["数据水位", "未返回"], ["对比状态", !comparison ? "不对比" : comparison.state.status !== "success" || !comparison.state.data ? "对比查询未成功，不以演示结果补齐" : "独立读取上一等长周期"]] },

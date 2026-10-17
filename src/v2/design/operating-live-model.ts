@@ -2,7 +2,7 @@ import type { DailyDashboardSuccess, DailyReadingMetric } from "../../../contrac
 import { OPERATING_LIVE_IDS } from "../../../contracts/operating-detail-projection";
 export { OPERATING_LIVE_IDS } from "../../../contracts/operating-detail-projection";
 import type { V2ResourceState } from "../api/useV2Resource";
-import { liveMetricModel, livePointStateLabel, liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { liveMetricModel, livePointStateLabel, liveDataEnvironment, liveResourceRetainsResult, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import type { DataEnvironmentMode } from "../api/dataEnvironmentPreference";
 import { shiftDate } from "../../components/ui/date-range-model";
@@ -89,7 +89,7 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
         const inputValues = series ? calculationInputValues(series.metric, value) : [];
         return { date: day, state: resource?.status === "failure" ? "failed" : !resource || resource.status === "loading" ? "loading" : unitConflict && readable(value) ? "invalid_value" : value?.state === "available" && !readable(value) ? "no_value" : value?.state ?? "no_value",
           label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : unitConflict && readable(value) ? "单位不一致" : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : value ? livePointStateLabel(value) : "字段未返回",
-          fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: resource?.status === "success" && Boolean(resource.refreshError),
+          fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: liveResourceRetainsResult(resource),
           inputs: series?.metric.inputs.map((input, index) => ({ ...input, value: inputValues[index] ?? null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote,
           ...(reference ? { referenceRatio: reference } : {}) };
       };

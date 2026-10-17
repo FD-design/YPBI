@@ -168,6 +168,31 @@ test("已开详情随读取失败、同范围真实刷新和重试成功更新�
   } finally { control.release(); }
 });
 
+test("刷新期间保留READY值，已开详情标记上次查询结果，完成后恢复本次标记", async ({ page }, info) => {
+  const control = await fixtures(page, platforms.slice(0, 1), 24);
+  control.release();
+  try {
+    await page.goto(url);
+    await expect(cell(page)).toHaveText("4");
+    await openDetail(page);
+    const status = dialog(page).locator("tbody tr").first().locator("td").nth(2);
+    await expect(status).toHaveText("已返回");
+    const before = control.calls.filter(request => request.projection === "operating_snapshot").length;
+    control.hold();
+    await page.getByRole("button", { name: "刷新看板", exact: true, includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
+    await expect.poll(() => control.calls.filter(request => request.projection === "operating_snapshot").length).toBe(before + 1);
+    await expect(cell(page)).toHaveText("4");
+    await expect(status).toHaveText("已返回 · 上次查询结果");
+    await expect(dialog(page)).toHaveAttribute("data-lifecycle-probe", "opened-once");
+    await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
+    await page.screenshot({ path: info.outputPath("operating-refresh-retained-result.png") });
+    control.release();
+    await expect(status).toHaveText("已返回");
+    await expect(cell(page)).toHaveText("4");
+    await expect(dialog(page)).toHaveAttribute("data-lifecycle-probe", "opened-once");
+  } finally { control.release(); }
+});
+
 for (const change of ["date", "pid"] as const) test(`历史${change === "date" ? "日期" : "PID"}范围变化与返回关闭旧详情，不混用旧输入`, async ({ page }) => {
   const control = await fixtures(page); control.release();
   await page.goto(url); await expect(cell(page)).toHaveText("来源不完整"); await openDetail(page); await expectPartialInput(page);

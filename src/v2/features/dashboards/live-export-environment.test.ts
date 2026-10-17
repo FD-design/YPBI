@@ -1,11 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { dailyDashboardSuccessSchema, type DailyDashboardSuccess } from "../../../../contracts/daily-dashboard";
 import { dailyDashboardEnvironment, recordDailyDashboardEnvironment } from "../../api/daily-dashboard-environment";
 import { currentDataEnvironmentPreference, setDataEnvironmentPreference, type DataEnvironmentMode } from "../../api/dataEnvironmentPreference";
 import { connectedDimensionReading, connectedDimensionRows, connectedDimensionSheet } from "../../design/connected-dimension-model";
 import { connectedTopicExportSheets } from "../../design/connected-topic-export";
 import { buildPreviewWorkbook, prepareWorkbookSheets, type WorkbookSheet } from "../../design/preview-workbook";
-import { liveDataEnvironment, liveExportEnvironmentRows, liveExportMetadata, type LiveDashboardReading } from "./LiveDashboardContext";
+import { liveDataEnvironment, liveExportEnvironmentRows, liveExportMetadata, liveResourceRetainsResult, type LiveDashboardReading } from "./LiveDashboardContext";
+import { LiveSeriesExport } from "./ConnectedMetricCard";
 
 function result(values: (number | null)[] = [0, null, 7], startDate = "2026-10-10"): DailyDashboardSuccess {
   const dates = values.map((_, index) => new Date(Date.parse(startDate) + index * 86400000).toISOString().slice(0, 10));
@@ -68,6 +69,44 @@ function threePeriods(modes: [DataEnvironmentMode, DataEnvironmentMode, DataEnvi
 function metadataValue(live: LiveDashboardReading, name: string) {
   return liveExportMetadata(live).find(row => row[0] === name)?.[1];
 }
+
+for (const before of [false, true]) for (const phase of ["refreshing", "failed", "complete"] as const) test(`单卡${before ? "对比" : "当前"}期${phase}的日值与周期统计独立标注来源`, async () => {
+  const live = threePeriods();
+  if (live.state.status !== "success" || live.comparison?.state.status !== "success" || !live.comparison.state.data) throw new Error("expected both results");
+  const current = live.state.data, comparison = live.comparison.state.data;
+  for (const [data, sum] of [[current, 7], [comparison, 8]] as const) data.data.series[0].periodStatistics = {
+    aggregationVersion: "daily-statistics/v1", dateRange: data.data.query.dateRange, dayCount: 3,
+    state: "available", values: [{ kind: "period_sum", value: sum }], reason: null
+  };
+  const state = before ? live.comparison.state : live.state;
+  state.refreshing = phase === "refreshing";
+  state.refreshError = phase === "failed" ? { code: "UPSTREAM_TIMEOUT", message: "刷新失败" } : null;
+  const snapshot = JSON.stringify([current, comparison]);
+  let blob: Blob | undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const url = spyOn(URL, "createObjectURL").mockImplementation(value => { blob = value as Blob; return "blob:test"; });
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(() => 0 as unknown as ReturnType<typeof setTimeout>);
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => ({ click() {}, remove() {} }), querySelector: () => null, body: { appendChild() {} } } });
+  try {
+    LiveSeriesExport({ series: current.data.series[0], result: current, comparison,
+      stale: liveResourceRetainsResult(live.state), comparisonStale: liveResourceRetainsResult(live.comparison.state) }).props.onClick();
+    const rows = (await blob!.text()).replace(/^\uFEFF/, "").split("\r\n").map(line => [...line.matchAll(/"((?:""|[^"])*)"/g)].map(match => match[1].replaceAll('""', '"')));
+    const header = rows[0], freshness = header.indexOf("刷新状态"), value = header.indexOf("结果（次）");
+    for (const [period, retained, daily, sum] of [
+      ["当前期", !before && phase !== "complete", ["0", "", "7"], "7"],
+      ["对比期", before && phase !== "complete", ["3", "", "5"], "8"]] as const) {
+      const dailyRows = rows.filter(row => row[0] === period), statistics = rows.filter(row => row[0] === `${period}·合计`);
+      expect(dailyRows.map(row => row[value])).toEqual([...daily]);
+      expect(statistics).toHaveLength(1);
+      expect(statistics[0][value]).toBe(sum);
+      expect([...dailyRows, ...statistics].map(row => row[freshness])).toEqual(Array(4).fill(retained ? "包含上次结果" : "本次结果"));
+    }
+    expect(JSON.stringify([current, comparison])).toBe(snapshot);
+  } finally {
+    url.mockRestore(); timer.mockRestore();
+    if (descriptor) Object.defineProperty(globalThis, "document", descriptor); else Reflect.deleteProperty(globalThis, "document");
+  }
+});
 
 // Read the stored OOXML ZIP entries so assertions target worksheet cells.
 function workbookTextFiles(bytes: Uint8Array) {

@@ -4,7 +4,7 @@ import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
 import { RetentionMatrix, retentionCellCalculationInputs, type RetentionMatrixRow } from "../features/dashboards/RetentionMatrix";
 import { useV2Resource, type V2ResourceState } from "../api/useV2Resource";
 import { fetchDailyDashboard } from "../api/client";
-import { livePointStateLabel, liveExportMetadata, liveDataEnvironment, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { livePointStateLabel, liveExportMetadata, liveDataEnvironment, liveResourceRetainsResult, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { topicMetric } from "./topic-preview-fixtures";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
@@ -58,7 +58,7 @@ export function connectedCohortRows(query: DailyDashboardQuery, state: V2Resourc
       return { id, rate: ready ? point?.value ?? null : null, count: ready ? point?.inputs[0]?.value ?? null : null, base: ready ? point?.inputs[1]?.value ?? null : null, availableAt: shiftDate(date, days),
         ...(diagnostic ? { diagnosticInputs: { count: diagnostic.numerator, base: diagnostic.denominator } } : {}),
         ...(referenceRate ? { referenceRate } : {}),
-        status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? (diagnostic ? REGISTRATION_DIAGNOSTIC_LABEL : livePointStateLabel(point)) + (state.refreshError ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
+        status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? (diagnostic ? REGISTRATION_DIAGNOSTIC_LABEL : livePointStateLabel(point)) + (liveResourceRetainsResult(state) ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
     });
     const bases = [...new Set(cells.map(cell => cell.base).filter((value): value is number => value !== null))];
     return { date, base: bases.length === 1 ? bases[0] : null, cells };

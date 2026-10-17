@@ -12,7 +12,7 @@ import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
 import { missingCalculation } from "../features/dashboards/CalculationEvidence";
 import { ComparisonDetails } from "../features/dashboards/ComparisonDetails";
 import { LiveSeriesDetails, LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
-import { LiveDashboardContext, liveDailyReferenceRows, liveExportMetadata, liveDataEnvironment, livePeriodStatus, liveValue, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import { LiveDashboardContext, liveDailyReferenceRows, liveExportMetadata, liveDataEnvironment, livePeriodStatus, liveValue, liveResourceRetainsResult, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
 import type { DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
 import { demoMetric, type ExtendedBoard } from "./extended-board-model";
@@ -76,7 +76,7 @@ export function ConnectedCategoryDimension({ spec, live, pending, open, onSelect
     const records = row.series && current && <><LiveSeriesDetails series={row.series} result={current} />{row.baselineSeries && previous && <LiveSeriesDetails series={row.baselineSeries} result={previous} />}</>;
     const metricExport = row.series && current && live.canExport && !live.controls.dirty
       ? source.detailExport?.(live, row) ?? <LiveSeriesExport series={row.series} result={current} comparison={previous} dataEnvironment={liveDataEnvironment(selected)} comparisonEnvironment={selected.comparison ? liveDataEnvironment(selected.comparison) : undefined} comparisonStatus={livePeriodStatus(selected, true)}
-        dayReferences={liveDailyReferenceRows(selected, [row.seriesId])} stale={Boolean(selected.state.status === "success" && selected.state.refreshError || selected.comparison?.state.status === "success" && selected.comparison.state.refreshError)} />
+        dayReferences={liveDailyReferenceRows(selected, [row.seriesId])} stale={liveResourceRetainsResult(selected.state)} comparisonStale={liveResourceRetainsResult(selected.comparison?.state)} />
       : <Button disabled>导出未就绪</Button>;
     open(`${spec.title} · ${row.name}`, <DataOriginProvider value="pending">
       <p>{metric.name} · {row.name} · 主值 {live.query.dateRange[1]}</p><p>当前值 {rowValue(row)} · {status(row)}</p>

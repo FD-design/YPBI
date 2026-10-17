@@ -1,5 +1,5 @@
 import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
-import { liveDailyReferenceRows, liveExportEnvironmentRows, liveDataEnvironment, livePeriodStatus, livePointStateLabel, type LiveDashboardReading as LiveDashboardValue, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
+import { liveDailyReferenceRows, liveExportEnvironmentRows, liveDataEnvironment, livePeriodStatus, livePointStateLabel, liveResourceRetainsResult, type LiveDashboardReading as LiveDashboardValue, type LiveSeries } from "../features/dashboards/LiveDashboardContext";
 import { dataEnvironmentLabel } from "../api/daily-dashboard-environment";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
 import { REGISTRATION_RETENTION_WINDOWS, registrationCohortMetricId, registrationCohortScopeLabel, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
@@ -16,9 +16,9 @@ const hasUsableInputs = (point: LiveSeries["points"][number]) => (!point.sourceS
 export function connectedTopicExportSheets(live: LiveDashboardValue, cohortLive: LiveDashboardValue, scope: RegistrationCohortScope): ExportSheet[] {
   const current = live.state.status === "success" ? live.state.data : null;
   const periods = [
-    ...(current ? [{ name: "当前期", result: current, stale: live.state.status === "success" && Boolean(live.state.refreshError) }] : []),
+    ...(current ? [{ name: "当前期", result: current, stale: liveResourceRetainsResult(live.state) }] : []),
     ...(live.comparison?.state.status === "success" && live.comparison.state.data
-      ? [{ name: "对比期", result: live.comparison.state.data, stale: Boolean(live.comparison.state.refreshError) }] : [])
+      ? [{ name: "对比期", result: live.comparison.state.data, stale: liveResourceRetainsResult(live.comparison.state) }] : [])
   ];
   const scopeLabel = registrationCohortScopeLabel(scope);
   const selectedIds = REGISTRATION_RETENTION_WINDOWS.map(([id]) => registrationCohortMetricId(id, scope));

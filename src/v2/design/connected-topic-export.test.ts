@@ -39,6 +39,24 @@ function fixture() {
   return { live, cohortLive };
 }
 
+for (const before of [false, true]) for (const phase of ["refreshing", "failed", "complete"] as const) test(`专题${before ? "对比" : "当前"}期${phase}导出保留数值并准确标记来源`, () => {
+  const { live, cohortLive } = fixture();
+  const state = before ? live.comparison!.state : live.state;
+  if (state.status !== "success") throw new Error("本用例要求已有成功结果");
+  state.refreshing = phase === "refreshing";
+  state.refreshError = phase === "failed" ? { code: "UPSTREAM_TIMEOUT", message: "刷新失败" } : null;
+  const sheets = connectedTopicExportSheets(live, cohortLive, "overall");
+  const period = before ? "对比期" : "当前期", other = before ? "当前期" : "对比期";
+  const rows = (name: string) => sheets.find(sheet => sheet.name === name)!.rows;
+  const current = rows(`${period}-M016`), freshness = current[0].indexOf("刷新状态");
+  expect(current[1][1]).toBe(before ? 90 : 100);
+  expect(current[1][freshness]).toBe(phase === "complete" ? "本次查询结果" : "上次查询结果");
+  const unaffected = rows(`${other}-M016`);
+  expect(unaffected[1][unaffected[0].indexOf("刷新状态")]).toBe("本次查询结果");
+  const statistics = rows("周期统计"), statFreshness = statistics[0].indexOf("刷新状态");
+  expect(statistics.find(row => row[0] === period && row[2] === "M016")![statFreshness]).toBe(phase === "complete" ? "本次查询结果" : "上次查询结果");
+});
+
 describe("真实留存专题整页导出", () => {
   for (const [scopeIndex, { value: scope }] of REGISTRATION_COHORT_SCOPES.entries()) {
     test(`${scope}只导出同范围四周期及独立注册日期对比`, () => {

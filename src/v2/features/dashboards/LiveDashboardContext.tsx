@@ -35,6 +35,9 @@ export interface LiveDashboardReading {
 export const LiveDashboardContext = createContext<LiveDashboardReading | null>(null);
 export const LiveHeaderExportContext = createContext(false);
 export const useLiveDashboard = () => useContext(LiveDashboardContext);
+export function liveResourceRetainsResult(state: V2ResourceState<unknown> | undefined): boolean {
+  return state?.status === "success" && Boolean(state.refreshing || state.refreshError);
+}
 export function liveMetricUnit(live: LiveDashboardReading, metricId: string): string | null {
   const data = live.state.status === "success" && live.state.data.data.query.pid === live.query.pid ? live.state.data.data : null;
   return data?.series.find(series => series.metric.id === metricId)?.metric.unit ?? null;

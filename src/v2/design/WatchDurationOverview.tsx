@@ -4,7 +4,7 @@ import { PaginatedTable } from "../../components/ui/PaginatedTable";
 import { Button } from "../../components/ui/Button";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { DashboardPanel } from "../features/dashboards/DashboardPresentation";
-import { liveMetricModel, livePeriodStatus, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
+import { liveMetricModel, livePeriodStatus, useLiveDashboard, liveResourceRetainsResult } from "../features/dashboards/LiveDashboardContext";
 import { LiveSeriesDetails, LiveSeriesExport } from "../features/dashboards/ConnectedMetricCard";
 import { CalculationEvidence } from "../features/dashboards/CalculationEvidence";
 import type { DashboardMetricCardModel } from "../features/dashboards/dashboard-metric-card-model";
@@ -56,7 +56,7 @@ export function WatchDurationOverview({ models, exportDemo }: {
         const series = connected ? result?.data.series.find(item => item.metric.id === model.metric.id) : null;
         const available = model.result.status === "available" ? model.result : null;
         return <section key={model.metric.id}><h3>{model.metric.name}</h3>{connected && series && result ? <>
-          {live!.canExport && !live!.controls.dirty && <LiveSeriesExport series={series} result={result} comparison={previous} comparisonStatus={livePeriodStatus(live!, true)} stale={Boolean(live!.state.status === "success" && live!.state.refreshError)} />}
+          {live!.canExport && !live!.controls.dirty && <LiveSeriesExport series={series} result={result} comparison={previous} comparisonStatus={livePeriodStatus(live!, true)} stale={liveResourceRetainsResult(live!.state)} comparisonStale={liveResourceRetainsResult(live!.comparison?.state)} />}
           <LiveSeriesDetails series={series} result={result}/>
         </> : <><p>{model.metric.aggregationLabel}</p><p>{model.metric.definitionLabel}</p><p>{available ? `${available.value.display} ${available.value.unit} · 演示数据` : model.result.status !== "available" ? model.result.label : "—"}</p>{available?.calculation && <CalculationEvidence basis={available.calculation}/>}{connected ? <p>当前真实查询无可用结果，未使用演示替代。</p> : exportDemo(model)}</>}</section>;
       })}
