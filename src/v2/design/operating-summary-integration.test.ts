@@ -92,6 +92,32 @@ test("全部平台导出保留合计输入、93列逐平台明细与未去重范
   expect(rows.every(row => row.values.length === 93)).toBe(true);
 });
 
+test("广告人均正分子零分母在93列、列汇总和计算导出保持相同依据", () => {
+  const { live, resources } = setup();
+  live.metricIds = [...live.metricIds, "M110"];
+  for (const [pid, current] of Object.entries(resources)) {
+    if (current.status !== "success") throw Error("fixture");
+    current.data.data.series.push({ metric: {
+      id: "M110", referenceMetricId: "M110", name: "活跃用户人均广告点击次数", unit: "次/人", authorityVersion: "qa-v1",
+      definition: "同指标分子分母", formula: "广告点击次数 ÷ 日活跃用户数", sourceNote: null,
+      inputs: [{ key: "adClicks", name: "广告点击次数", unit: "次" }, { key: "activeUsers", name: "日活跃用户数", unit: "人" }]
+    }, points: [{ date, sourceStatus: "READY", state: "zero_denominator", value: null,
+      inputs: [{ key: "adClicks", value: pid === "PH" ? 137630 : 0 }, { key: "activeUsers", value: 0 }] }] });
+  }
+  const rows = operatingLiveRows(live, resources), column = summaryColumn("M110");
+  expect(rows.every(row => row.values.length === 93)).toBe(true);
+  for (const row of rows) expect(row.values[DETAIL_COLUMNS.indexOf(column)]).toMatchObject({ current: null,
+    evidence: { current: { state: "zero_denominator", label: "分母为0" } } });
+  const model = operatingLiveColumnSummary(live, resources, rows, column);
+  expect(model.result).toMatchObject({ status: "no_values", label: "分母为0", calculation: {
+    numerator: { value: 137630 }, denominator: { value: 0 }, result: "分母为0"
+  } });
+  expect(model.metric.aggregationLabel).toContain("覆盖2/2平台");
+  const exported = operatingLiveCalculationRows(rows, DETAIL_COLUMNS, [model]).filter(row => row[3] === "M110:platform-sum");
+  expect(exported.map(row => row[8])).toEqual([137630, 0]);
+  expect(exported.some(row => row.includes("计算输入异常或缺失"))).toBe(false);
+});
+
 for (const [id, unit] of [["M058", "元"], ["M067", "元/人"]] as const) test(`全部平台${id}总体未就绪而切片可用时保留正式${unit}，不回退演示单位`, () => {
   const { live, resources } = setup();
   live.metricIds = [...live.metricIds, `${id}.new`, id];

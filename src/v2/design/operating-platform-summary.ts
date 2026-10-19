@@ -47,7 +47,7 @@ function pointUnavailable(entry: AggregateSummaryEntry, date: string, divide: bo
     const [numerator, denominator] = definitions.map(input => point.inputs.find(value => value.key === input.key)?.value);
     const exactKeys = definitions.length === 2 && point.inputs.length === 2 && new Set(point.inputs.map(input => input.key)).size === 2;
     if (!exactKeys || !finiteValue(numerator) || !finiteValue(denominator)
-      || (point.state === "zero_denominator" ? numerator !== 0 || denominator !== 0 : denominator === 0)
+      || (point.state === "zero_denominator" ? denominator !== 0 : denominator === 0)
       || entry.metric.referenceMetricId === "M020" && (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || numerator > denominator)) {
       return { status: "no_values", label: "计算输入异常或缺失", retryable: false };
     }

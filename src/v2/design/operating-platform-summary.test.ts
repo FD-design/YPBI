@@ -5,8 +5,8 @@ import { operatingPlatformSummary, type AggregateSummaryEntry } from "./operatin
 
 const date = "2026-10-12";
 function entry(id: string, pid: string, value: number | null, values: number[] = [value ?? 0], overrides: Partial<AggregateSummaryEntry> = {}): AggregateSummaryEntry {
-  const ratio = ["M081", "M020", "M061", "M111"].includes(id), divide = ratio || id === "M067";
-  const unit = ratio ? "%" : id === "M058" ? "元" : id === "M067" ? "元/人" : "人";
+  const ratio = ["M081", "M020", "M061", "M111"].includes(id), divide = ratio || id === "M067" || id === "M110";
+  const unit = ratio ? "%" : id === "M058" ? "元" : id === "M067" ? "元/人" : id === "M110" ? "次/人" : "人";
   const metric: DailyReadingMetric = { id, referenceMetricId: id, name: id, unit, definition: "来源定义", authorityVersion: "fixture-v1", sourceNote: null,
     formula: divide ? "分子 ÷ 分母" : null, inputs: (divide ? ["numerator", "denominator"] : ["value"]).map((key, index) => ({ key, name: index === 0 ? "分子" : "分母", unit: id === "M067" && index === 0 ? "元" : "人" })) };
   const point: DailyPoint = { date, state: value === null ? "zero_denominator" : "available", sourceStatus: "READY", value,
@@ -60,6 +60,43 @@ test("0/0可与有效平台合并，整体0/0保留零分母而不输出0%", () 
   expect(result.status).toBe("no_values");
   expect(result).toMatchObject({ label: "分母为0", calculation: { numerator: { value: 0 }, denominator: { value: 0 } } });
   expect(available("M020", [entry("M020", "A", 0, [0, 5])]).value.display).toBe("0.00");
+});
+
+test("合法非零分子与零分母保留原输入及分母为0状态", () => {
+  for (const id of ["M110", "M111", "M061"]) {
+    const source = entry(id, "PH", null, [137630, 0]);
+    const model = operatingPlatformSummary(date, { [id]: [source] }, { metricIds: [id] })[0];
+    expect(model.result).toMatchObject({ status: "no_values", label: "分母为0", calculation: {
+      numerator: { value: 137630 }, denominator: { value: 0 }, result: "分母为0"
+    } });
+    expect(model.metric.aggregationLabel).toContain("覆盖1/1平台");
+    expect(model.metric.definitionLabel).not.toContain("计算输入异常或缺失");
+    expect(source.point).toMatchObject({ sourceStatus: "READY", state: "zero_denominator", value: null });
+  }
+});
+
+test("人均合计保留各平台零分母记录的真实分子，不借其他指标人数", () => {
+  const source = entry("M110", "PH", null, [137630, 0]);
+  const model = operatingPlatformSummary(date, { M110: [source, entry("M110", "B", .5, [2, 4])] }, { metricIds: ["M110"] })[0];
+  expect(model.result).toMatchObject({ status: "available", value: { raw: 137632 / 4, unit: "次/人" }, calculation: {
+    numerator: { value: 137632 }, denominator: { value: 4 }
+  } });
+  expect(model.metric.aggregationLabel).toContain("覆盖2/2平台");
+});
+
+test("零分母准入仍拒绝错误分母和留存分子超出注册批次", () => {
+  expect(summary("M020", [entry("M020", "PH", null, [1, 0])]).result).toMatchObject({ label: "计算输入异常或缺失" });
+  for (const values of [[1, 2], [-1, 0], [NaN, 0], [1, NaN]]) {
+    const model = operatingPlatformSummary(date, { M110: [entry("M110", "PH", null, values)] }, { metricIds: ["M110"] })[0];
+    expect(model.result).toMatchObject({ label: "计算输入异常或缺失" });
+  }
+  for (const sourceStatus of ["PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED"] as const) {
+    const source = entry("M110", "PH", null, [137630, 0]);
+    source.point!.sourceStatus = sourceStatus;
+    const model = operatingPlatformSummary(date, { M110: [source] }, { metricIds: ["M110"] })[0];
+    expect(model.result).not.toMatchObject({ label: "分母为0" });
+    expect(model.metric.aggregationLabel).toContain("覆盖0/1平台");
+  }
 });
 
 test("旧合法无sourceStatus结果可以合计", () => {

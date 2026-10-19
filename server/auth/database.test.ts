@@ -1,7 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { validateAuthDatabaseUrl } from "./database";
+import { AUTH_RUNTIME_DATABASE_LIMITS, createAuthRuntimeDatabase, validateAuthDatabaseUrl } from "./database";
 
 describe("auth database URL", () => {
+  test("运行池固定类型加载，URL不能破坏冷连接reservation就绪及认证池限制", async () => {
+    for (const suffix of ["", "?fetch_types=false"]) {
+      const sql = createAuthRuntimeDatabase(`postgres://unit@memory.invalid/unit${suffix}`);
+      try {
+        expect(sql.options.fetch_types).toBe(true);
+        expect(sql.options.max).toBe(4);
+        expect(sql.options.connect_timeout).toBe(10);
+        expect(sql.options.connection.statement_timeout).toBe(AUTH_RUNTIME_DATABASE_LIMITS.statementTimeoutMs);
+        expect(sql.options.connection.lock_timeout).toBe(AUTH_RUNTIME_DATABASE_LIMITS.lockTimeoutMs);
+      } finally { await sql.end({ timeout: 0 }); }
+    }
+  });
+
   test("允许标准 PostgreSQL URL 与传输参数", () => {
     expect(validateAuthDatabaseUrl("postgres://ypbi:secret@db.example.test/ypbi?sslmode=require"))
       .toBe("postgres://ypbi:secret@db.example.test/ypbi?sslmode=require");

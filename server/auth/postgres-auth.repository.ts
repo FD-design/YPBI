@@ -1,4 +1,4 @@
-import type { Sql } from "postgres";
+import type { ReservedSql, Sql } from "postgres";
 import { biRoleSchema, type BiRole } from "../../contracts/bi-auth";
 import type {
   AuthRepository,
@@ -85,6 +85,29 @@ const userColumns = `
   credential_version, must_change_password, status, failed_login_count, failed_login_window_started_at,
   locked_until, created_at, updated_at
 `;
+
+/** Acquire a ready connection without cancelling the driver's startup query. */
+async function reserveIdentityConnection(sql: Sql, signal?: AbortSignal): Promise<ReservedSql> {
+  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
+  const pending = sql.reserve();
+  if (!signal) return await pending;
+  let onAbort: () => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try {
+    return await Promise.race([pending, aborted]);
+  } catch (error) {
+    // Abandoned reservations still resolve when startup or pool waiting ends.
+    // Return the slot without sending a stale identity query.
+    void pending.then(connection => connection.release(), () => undefined).catch(() => undefined);
+    throw error;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
 
 async function queryWithAbort<T>(
   query: PromiseLike<T> & { cancel(): void },
@@ -196,8 +219,10 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async findAuthenticatedSession(tokenHash: string, now: Date, signal?: AbortSignal): Promise<AuthenticatedSessionRecord | null> {
-    if (signal?.aborted) throw new Error("auth_query_aborted");
-    const rows = await queryWithAbort(this.sql.unsafe<(SessionRow & UserRow)[]>(
+    const connection = await reserveIdentityConnection(this.sql, signal);
+    try {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
+      const rows = await queryWithAbort(connection.unsafe<(SessionRow & UserRow)[]>(
       `select
         s.session_id, s.user_id, s.token_hash,
         s.credential_version, s.created_at, s.expires_at, s.revoked_at,
@@ -213,13 +238,16 @@ export class PostgresAuthRepository implements AuthRepository {
         and u.credential_version = s.credential_version`,
       [tokenHash, now]
     ), signal);
-    const row = rows[0];
-    if (!row) return null;
-    const userRow: UserRow = {
-      ...row,
-      created_at: Reflect.get(row, "user_created_at") as Date
-    };
-    return { session: mapSession(row), user: mapUser(userRow) };
+      const row = rows[0];
+      if (!row) return null;
+      const userRow: UserRow = {
+        ...row,
+        created_at: Reflect.get(row, "user_created_at") as Date
+      };
+      return { session: mapSession(row), user: mapUser(userRow) };
+    } finally {
+      connection.release();
+    }
   }
 
   async revokeSession(tokenHash: string, now: Date) {
