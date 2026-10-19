@@ -11,6 +11,7 @@ import { MemoryAuthRepository } from "./repository";
 import { permissionsByRole } from "./roles";
 import { BiAccountAdminService, BiAuthService } from "./service";
 import { PasswordWorkCapacityError, type ScryptParameters } from "./password";
+import { markIdentityLookupPhase } from "../identity/identity-lookup-diagnostics";
 
 const testScryptParameters: ScryptParameters = {
   N: 2 ** 10,
@@ -290,15 +291,18 @@ describe("biAuthPlugin", () => {
 
   test("会话查询超过期限时取消底层查询并稳定返回 503", async () => {
     let lookupSignal: AbortSignal | undefined;
+    const logMessages: Record<string, unknown>[] = [];
+    const logger = { level: "error", stream: { write: (line: string) => { logMessages.push(JSON.parse(line)); } } };
     const authService = {
       resolveSession: (_token: string | null, signal?: AbortSignal) => {
         lookupSignal = signal;
+        markIdentityLookupPhase(signal, "query");
         return new Promise<never>((_resolve, reject) => {
           signal?.addEventListener("abort", () => reject(new Error("query_cancelled")), { once: true });
         });
       }
     } as unknown as BiAuthService;
-    const app = Fastify();
+    const app = Fastify({ logger });
     await app.register(biAuthPlugin, {
       prefix: "/api/bi/v2/auth",
       authService,
@@ -317,6 +321,30 @@ describe("biAuthPlugin", () => {
     expect(response.json().error.code).toBe("AUTH_SERVICE_UNAVAILABLE");
     expect(lookupSignal?.aborted).toBe(true);
     expect(Date.now() - startedAt).toBeLessThan(500);
+    const failure = logMessages.find(event => event.outcome === "session_failed");
+    expect(failure).toMatchObject({ identityLookup: { failureCode: "deadline_exceeded", phase: "query", deadlineMs: 20 } });
+    expect(failure?.requestId).toBe(response.json().error.requestId);
+    expect(JSON.stringify(logMessages)).not.toContain("a".repeat(43));
+    expect(response.body).not.toContain("identityLookup");
+  });
+
+  test("会话未知异常只记录固定unknown，不回传原错误或认证输入", async () => {
+    const logMessages: Record<string, unknown>[] = [];
+    const logger = { level: "error", stream: { write: (line: string) => { logMessages.push(JSON.parse(line)); } } };
+    const original = Object.assign(new Error("secret-storage-message"), { code: "secret-code", query: "secret-sql" });
+    const authService = { resolveSession: async () => { throw original; } } as unknown as BiAuthService;
+    const app = Fastify({ logger });
+    await app.register(biAuthPlugin, { prefix: "/api/bi/v2/auth", authService });
+    apps.push(app);
+    const response = await app.inject({ method: "GET", url: "/api/bi/v2/auth/session",
+      headers: { cookie: `${BI_SESSION_COOKIE}=${"a".repeat(43)}` } });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error.code).toBe("AUTH_SERVICE_UNAVAILABLE");
+    expect(logMessages.find(event => event.outcome === "session_failed")).toMatchObject({ identityLookup: { failureCode: "unknown", phase: "resolve", deadlineMs: 3000 } });
+    expect(JSON.stringify(logMessages)).not.toContain("secret");
+    expect(JSON.stringify(logMessages)).not.toContain("a".repeat(43));
+    expect(response.body).not.toContain("secret");
+    expect(original.message).toBe("secret-storage-message");
   });
 
   test("退出要求 CSRF，成功后服务端会话立即失效", async () => {

@@ -76,9 +76,11 @@ async function createApp(
     provider?: IdentityProvider;
     metricDefinitionResolver?: (metricId: string) => NonNullable<ReturnType<typeof getV2MetricDefinition>> | undefined;
     dataEnvironmentResolver?: V2BiPluginOptions["dataEnvironmentResolver"];
+    logMessages?: Record<string, unknown>[];
   } = {}
 ) {
-  const app = Fastify();
+  const logger = { level: "warn", stream: { write: (line: string) => { options.logMessages?.push(JSON.parse(line)); } } };
+  const app = options.logMessages ? Fastify({ logger }) : Fastify();
   openApps.push(app);
   await app.register(v2BiPlugin, {
     prefix: "/api/bi/v2",
@@ -458,14 +460,20 @@ describe("v2BiPlugin identity boundary", () => {
   });
 
   test("身份 Provider 抛错或超时时使用同一个安全 503 契约", async () => {
-    for (const provider of [
+    for (const [index, provider] of [
       { resolve: async () => { throw new Error("secret identity response"); } },
       { resolve: async () => new Promise<IdentityResolution>(() => {}) }
-    ] satisfies IdentityProvider[]) {
-      const app = await createApp({ status: "unauthenticated" }, queryExecutor(), { provider, identityTimeoutMs: 5 });
+    ].entries()) {
+      const logMessages: Record<string, unknown>[] = [];
+      const app = await createApp({ status: "unauthenticated" }, queryExecutor(), { provider, identityTimeoutMs: 5, logMessages });
       const response = await app.inject({ method: "GET", url: "/api/bi/v2/catalog/metrics" });
       expect(response.statusCode).toBe(503);
       expect(response.body).not.toContain("secret");
+      const failure = logMessages.find(event => event.outcome === "identity_provider_failed");
+      expect(failure).toMatchObject({ identityLookup: { failureCode: index === 0 ? "unknown" : "deadline_exceeded", phase: "resolve", deadlineMs: 5 } });
+      expect(failure?.requestId).toBe(response.json().error.requestId);
+      expect(JSON.stringify(logMessages)).not.toContain("secret");
+      expect(response.body).not.toContain("identityLookup");
     }
   });
 

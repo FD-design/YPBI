@@ -4,6 +4,10 @@ import type {
   IdentityRequestContext,
   IdentityResolution
 } from "./identity-provider";
+import {
+  associateIdentityLookupFailure, beginIdentityLookupDiagnostics,
+  freezeIdentityLookupFailure, markIdentityLookupPhase
+} from "./identity-lookup-diagnostics";
 
 export const DEFAULT_IDENTITY_TIMEOUT_MS = 3_000;
 
@@ -36,8 +40,10 @@ export async function resolveIdentity(
 ): Promise<IdentityResolution> {
   const { signal: externalSignal, ...providerContext } = context;
   const controller = new AbortController();
+  beginIdentityLookupDiagnostics(controller.signal, timeoutMs);
   const abortFromExternalSignal = () => {
     if (!controller.signal.aborted) {
+      freezeIdentityLookupFailure(controller.signal, "client_aborted");
       controller.abort(externalSignal?.reason instanceof Error
         ? externalSignal.reason
         : new Error("identity_request_aborted"));
@@ -47,7 +53,10 @@ export async function resolveIdentity(
   else externalSignal?.addEventListener("abort", abortFromExternalSignal, { once: true });
 
   const timer = setTimeout(() => {
-    if (!controller.signal.aborted) controller.abort(new Error("identity_timeout"));
+    if (!controller.signal.aborted) {
+      freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
+      controller.abort(new Error("identity_timeout"));
+    }
   }, timeoutMs);
   timer.unref();
   try {
@@ -63,8 +72,21 @@ export async function resolveIdentity(
       aborted
     ]);
     const parsed = identityResolutionSchema.safeParse(rawResolution);
-    if (!parsed.success) throw new Error("invalid_identity_resolution");
+    if (!parsed.success) {
+      freezeIdentityLookupFailure(controller.signal, "invalid_resolution");
+      throw new Error("invalid_identity_resolution");
+    }
+    if (parsed.data.status === "unavailable") {
+      freezeIdentityLookupFailure(controller.signal);
+      associateIdentityLookupFailure(controller.signal, parsed.data);
+      associateIdentityLookupFailure(controller.signal, externalSignal);
+    } else markIdentityLookupPhase(controller.signal, "complete");
     return parsed.data;
+  } catch (error) {
+    freezeIdentityLookupFailure(controller.signal);
+    associateIdentityLookupFailure(controller.signal, error);
+    associateIdentityLookupFailure(controller.signal, externalSignal);
+    throw error;
   } finally {
     clearTimeout(timer);
     externalSignal?.removeEventListener("abort", abortFromExternalSignal);

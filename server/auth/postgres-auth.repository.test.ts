@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Sql } from "postgres";
 import { PostgresAuthRepository } from "./postgres-auth.repository";
+import { beginIdentityLookupDiagnostics, freezeIdentityLookupFailure } from "../identity/identity-lookup-diagnostics";
 
 interface CapturedUnsafeCall {
   query: string;
@@ -89,6 +90,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     const sql = { unsafe, reserve: async () => connection } as unknown as Sql;
     const repository = new PostgresAuthRepository(sql);
     const controller = new AbortController();
+    beginIdentityLookupDiagnostics(controller.signal, 3000);
 
     const lookup = repository.findAuthenticatedSession(
       "a".repeat(64),
@@ -96,11 +98,14 @@ describe("PostgresAuthRepository 账号权限维护", () => {
       controller.signal
     );
     await queryStarted;
+    const frozen = freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
+    expect(frozen.phase).toBe("query");
     controller.abort();
 
     await expect(lookup).rejects.toThrow("query cancelled");
     expect(cancelled).toBe(true);
     expect(released).toBe(1);
+    expect(freezeIdentityLookupFailure(controller.signal)).toBe(frozen);
   });
 
   test("冷连接等待取消后立即拒绝，晚到连接只归还而不执行身份SQL", async () => {
@@ -112,7 +117,10 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     const sql = { unsafe: connection.unsafe, reserve: () => reserved } as unknown as Sql;
     const repository = new PostgresAuthRepository(sql);
     const controller = new AbortController();
+    beginIdentityLookupDiagnostics(controller.signal, 3000);
     const lookup = repository.findAuthenticatedSession("a".repeat(64), new Date(), controller.signal);
+    const frozen = freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
+    expect(frozen.phase).toBe("acquire");
     controller.abort(new Error("request cancelled"));
     await expect(lookup).rejects.toThrow("request cancelled");
     expect(reads).toBe(0);
@@ -121,6 +129,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     await Promise.resolve();
     expect(reads).toBe(0);
     expect(released).toBe(1);
+    expect(freezeIdentityLookupFailure(controller.signal)).toBe(frozen);
   });
 
   test("取消后连接获取失败不会启动SQL或产生未处理拒绝", async () => {
@@ -151,8 +160,11 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     const failure = new Error("statement failed");
     const unsafe = () => Promise.reject(failure);
     const sql = { unsafe, reserve: async () => ({ unsafe, release: () => { released++; } }) } as unknown as Sql;
-    await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("a".repeat(64), new Date())).rejects.toBe(failure);
+    const signal = new AbortController().signal;
+    beginIdentityLookupDiagnostics(signal, 3000);
+    await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("a".repeat(64), new Date(), signal)).rejects.toBe(failure);
     expect(released).toBe(1);
+    expect(freezeIdentityLookupFailure(signal)).toMatchObject({ failureCode: "storage_unavailable", phase: "query", storageFailureCode: "unknown" });
   });
 
   test("就绪连接保留会话到期、撤销、账号状态及权限版本过滤，成功后只归还一次", async () => {
@@ -183,8 +195,11 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     const row = { ...userRow({ role: "invalid-role" }), session_id: "session-test", token_hash: "c".repeat(64),
       user_created_at: new Date(), expires_at: new Date(), revoked_at: null };
     const sql = { reserve: async () => ({ unsafe: async () => [row], release: () => { released++; } }) } as unknown as Sql;
-    await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("c".repeat(64), new Date())).rejects.toThrow("未知 BI 角色");
+    const signal = new AbortController().signal;
+    beginIdentityLookupDiagnostics(signal, 3000);
+    await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("c".repeat(64), new Date(), signal)).rejects.toThrow("未知 BI 角色");
     expect(released).toBe(1);
+    expect(freezeIdentityLookupFailure(signal)).toMatchObject({ failureCode: "storage_unavailable", phase: "map", storageFailureCode: "unknown" });
   });
 
   test("角色变化使用 credential_version CAS，并在同一事务撤销全部会话", async () => {

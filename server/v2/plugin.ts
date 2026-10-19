@@ -17,6 +17,7 @@ import type {
 } from "../../contracts/bi-v2";
 import type { IdentityProvider, IdentityResolution, Principal } from "../identity/identity-provider";
 import { DEFAULT_IDENTITY_TIMEOUT_MS, resolveIdentity } from "../identity/resolve-identity";
+import { identityLookupFailureDiagnostics } from "../identity/identity-lookup-diagnostics";
 import { UpstreamError } from "../upstream/client";
 import { listV2Platforms, v2MetricCatalog } from "./catalog";
 import {
@@ -125,7 +126,7 @@ async function requirePrincipal(
       identityTimeoutMs
     );
   } catch (error) {
-    request.log.error({ requestId: request.id, outcome: "identity_provider_failed" }, "v2 identity provider failed");
+    request.log.error({ requestId: request.id, outcome: "identity_provider_failed", identityLookup: identityLookupFailureDiagnostics(clientAbortController.signal) }, "v2 identity provider failed");
     sendV2Error(request, reply, 503, "IDENTITY_PROVIDER_UNAVAILABLE", "正式身份来源当前不可用");
     return null;
   } finally {
@@ -133,7 +134,7 @@ async function requirePrincipal(
   }
   const resolution = rawResolution;
   if (resolution.status === "unavailable") {
-    request.log.warn({ requestId: request.id, identityStatus: resolution.status }, "v2 request rejected by identity boundary");
+    request.log.warn({ requestId: request.id, identityStatus: resolution.status, identityLookup: identityLookupFailureDiagnostics(clientAbortController.signal) }, "v2 request rejected by identity boundary");
     sendV2Error(request, reply, 503, "IDENTITY_PROVIDER_UNAVAILABLE", "正式身份来源当前不可用");
     return null;
   }

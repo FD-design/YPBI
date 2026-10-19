@@ -11,6 +11,10 @@ import {
 import { AuthServiceError, type BiAuthService } from "./service";
 import { PasswordWorkCapacityError } from "./password";
 import { bindClientRequestAbort } from "../http/client-request-abort";
+import {
+  associateIdentityLookupFailure, beginIdentityLookupDiagnostics, freezeIdentityLookupFailure,
+  identityLookupFailureDiagnostics, markIdentityLookupPhase
+} from "../identity/identity-lookup-diagnostics";
 
 export interface BiAuthPluginOptions {
   authService: BiAuthService;
@@ -81,6 +85,9 @@ export async function authenticatedSession(
   if (!token) return { token, session: null };
 
   const controller = new AbortController();
+  beginIdentityLookupDiagnostics(controller.signal, timeoutMs);
+  const recordClientAbort = () => freezeIdentityLookupFailure(controller.signal, "client_aborted");
+  controller.signal.addEventListener("abort", recordClientAbort, { once: true });
   const unbindClientAbort = bindClientRequestAbort(
     request.raw,
     reply.raw,
@@ -88,7 +95,10 @@ export async function authenticatedSession(
     "auth_request_aborted"
   );
   const timeout = setTimeout(
-    () => controller.abort(new Error("auth_session_lookup_timeout")),
+    () => {
+      freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
+      controller.abort(new Error("auth_session_lookup_timeout"));
+    },
     timeoutMs
   );
   timeout.unref();
@@ -107,9 +117,15 @@ export async function authenticatedSession(
       service.resolveSession(token, controller.signal),
       aborted
     ]);
+    markIdentityLookupPhase(controller.signal, "complete");
     return { token, session };
+  } catch (error) {
+    freezeIdentityLookupFailure(controller.signal);
+    associateIdentityLookupFailure(controller.signal, request);
+    throw error;
   } finally {
     clearTimeout(timeout);
+    controller.signal.removeEventListener("abort", recordClientAbort);
     unbindClientAbort();
   }
 }
@@ -209,7 +225,7 @@ export const biAuthPlugin: FastifyPluginAsync<BiAuthPluginOptions> = async (app,
       const token = readUniqueOpaqueCookie(cookieHeader(request), cookieConfiguration.name)!;
       return { success: true, data: options.authService.sessionData(token, session) };
     } catch {
-      request.log.error({ requestId: request.id, outcome: "session_failed" }, "BI user session lookup failed");
+      request.log.error({ requestId: request.id, outcome: "session_failed", identityLookup: identityLookupFailureDiagnostics(request) }, "BI user session lookup failed");
       return sendError(request, reply, 503, "AUTH_SERVICE_UNAVAILABLE", "登录服务当前不可用");
     }
   });

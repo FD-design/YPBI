@@ -5,6 +5,7 @@ import {
   resolveSessionCookieConfiguration
 } from "./cookies";
 import type { BiAuthService } from "./service";
+import { freezeIdentityLookupFailure } from "../identity/identity-lookup-diagnostics";
 
 export class SessionIdentityProvider implements IdentityProvider {
   private readonly cookieConfiguration: Readonly<BiSessionCookieConfiguration>;
@@ -37,6 +38,7 @@ export class SessionIdentityProvider implements IdentityProvider {
         }
       } as const;
     } catch {
+      freezeIdentityLookupFailure(context.signal);
       return { status: "unavailable", reason: "身份存储当前不可用" } as const;
     }
   }

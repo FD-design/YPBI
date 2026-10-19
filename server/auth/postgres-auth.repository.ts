@@ -1,5 +1,6 @@
 import type { ReservedSql, Sql } from "postgres";
 import { biRoleSchema, type BiRole } from "../../contracts/bi-auth";
+import { markIdentityLookupPhase, recordIdentityStorageFailure } from "../identity/identity-lookup-diagnostics";
 import type {
   AuthRepository,
   AuthSessionRecord,
@@ -219,9 +220,14 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async findAuthenticatedSession(tokenHash: string, now: Date, signal?: AbortSignal): Promise<AuthenticatedSessionRecord | null> {
-    const connection = await reserveIdentityConnection(this.sql, signal);
+    markIdentityLookupPhase(signal, "acquire");
+    const connection = await reserveIdentityConnection(this.sql, signal).catch(error => {
+      recordIdentityStorageFailure(signal, error);
+      throw error;
+    });
     try {
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
+      markIdentityLookupPhase(signal, "query");
       const rows = await queryWithAbort(connection.unsafe<(SessionRow & UserRow)[]>(
       `select
         s.session_id, s.user_id, s.token_hash,
@@ -238,6 +244,7 @@ export class PostgresAuthRepository implements AuthRepository {
         and u.credential_version = s.credential_version`,
       [tokenHash, now]
     ), signal);
+      markIdentityLookupPhase(signal, "map");
       const row = rows[0];
       if (!row) return null;
       const userRow: UserRow = {
@@ -245,6 +252,9 @@ export class PostgresAuthRepository implements AuthRepository {
         created_at: Reflect.get(row, "user_created_at") as Date
       };
       return { session: mapSession(row), user: mapUser(userRow) };
+    } catch (error) {
+      recordIdentityStorageFailure(signal, error);
+      throw error;
     } finally {
       connection.release();
     }
