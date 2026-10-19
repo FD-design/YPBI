@@ -1,5 +1,6 @@
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../../contracts/daily-dashboard";
 import type { DashboardMetricReading } from "./dashboard-metric-card-model";
+import { formatMetricNumber, metricNumberFormatOptions } from "../../../components/metric-number-format";
 
 type Series = DailyDashboardSuccess["data"]["series"][number];
 export const periodStatisticLabel = (kind: "period_sum" | "daily_average") => kind === "period_sum" ? "合计" : "均值";
@@ -18,7 +19,7 @@ export function livePeriodReadingStatistics(series: Series, result: DailyDashboa
   if (!statistics || statistics.dayCount < 2) return [];
   return statistics.values.map(statistic => ({
     label: periodStatisticLabel(statistic.kind),
-    display: statistic.value.toLocaleString("zh-CN", { maximumFractionDigits: 2 }),
+    display: formatMetricNumber(statistic.value, "zh-CN", series.metric.unit === "小时" ? metricNumberFormatOptions(statistic.value, series.metric.unit) : { maximumFractionDigits: 2 }),
     unit: series.metric.unit,
     detail: `${query.dateRange.join(" 至 ")} · ${statistics.dayCount} 个业务日；服务端按已返回日值${statistic.kind === "period_sum" ? "累计" : "计算日均"}。${series.metric.unit === "人" && statistic.kind === "daily_average" ? "日均人数不是区间去重人数。" : ""}待验数，完整性未知。${freshness}`
   }));

@@ -15,6 +15,24 @@ test("小额人均数值使用四位小数精度，普通数值保持既定精�
   expect(metricNumberFormatOptions(.004, "%")).toEqual({ maximumFractionDigits: 2, minimumFractionDigits: 2 });
 });
 
+test("非零小时小值统一四位有效数，真实零、整小时及其他单位保持原精度", () => {
+  for (const [value, expected] of [[1 / 3600, "0.0002778"], [64 / 3600, "0.01778"], [-2 / 3600, "-0.0005556"],
+    [.999999, "1"], [1e-12, "0.000000000001"], [-1e-12, "-0.000000000001"]] as const) {
+    expect(metricNumberFormatOptions(value, "小时")).toEqual({ maximumSignificantDigits: 4 });
+    for (const locale of ["en-US", "zh-CN"] as const)
+      expect(formatMetricNumber(value, locale, metricNumberFormatOptions(value, "小时"))).toBe(expected);
+  }
+  for (const value of [Number.MIN_VALUE, -Number.MIN_VALUE])
+    expect(Number(formatMetricNumber(value, "en-US", metricNumberFormatOptions(value, "小时")))).toBe(value);
+  for (const value of [0, -0, 1, -1, 12345.6789, NaN, Infinity, -Infinity])
+    expect(metricNumberFormatOptions(value, "小时")).toEqual({ maximumFractionDigits: 2, minimumFractionDigits: 0 });
+  for (const unit of ["人", "次", "元", "元/人", "USD", "USD/人", "%", "分钟", "分钟/人", "秒", ""]) {
+    const options = metricNumberFormatOptions(1 / 3600, unit);
+    expect(options.maximumSignificantDigits).toBeUndefined();
+    expect(options.maximumFractionDigits).toBe(["人", "次"].includes(unit) ? 0 : unit.includes("/人") ? 4 : 2);
+  }
+});
+
 test("复用格式配置后两种语言、各精度与特殊数值逐字保持一致", () => {
   const values = [0, -0, 1, -1, .004, -.004, .09999, .1, 64 / 3600, 12345.6789, Number.MIN_VALUE, Number.MAX_VALUE, NaN, Infinity, -Infinity];
   for (const locale of ["en-US", "zh-CN"] as const) {

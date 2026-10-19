@@ -10,6 +10,9 @@ import { connectedCohortRows } from "../../design/ConnectedCohorts";
 import { connectedPaymentPoints, connectedPaymentUnit } from "../../design/connected-payment-data";
 import { prepareWorkbookSheets, buildPreviewWorkbook } from "../../design/preview-workbook";
 import { availablePeriodStatistics } from "./live-period-statistics";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { LiveSeriesDetails } from "./ConnectedMetricCard";
 
 const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2026-09-05", "2026-09-06"] };
 const emptyMetrics = { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-10-09T00:00:00Z", watermark: null, rows: [] } };
@@ -249,6 +252,37 @@ test("经营时长表头、字段说明和计算导出保留播放成功后前�
   expect(calculationRows.some(row=>row.includes(64)&&row.includes("秒")&&row.some(cell=>typeof cell==="string"&&cell.includes("foreground-watch-duration-v1")))).toBe(true);
   expect(r.data.series.find(series=>series.metric.id==="M098")!.points.find(point=>point.date===date)).toMatchObject({value:64/4/60,inputs:[{value:64},{value:4}]});
   expect(JSON.stringify(calculationRows)).not.toContain("秒（暂定）");
+});
+test("非零小时小值在真实卡片、趋势、负差、每日详情与周期统计中同精度，输入原值不变", async () => {
+  const result = await data([1, 3]);
+  const metric = { ...result.data.series[0].metric, id: "M102", referenceMetricId: "M102", name: "观影总时长", unit: "小时",
+    inputs: [{ key: "totalUserWatchTime", name: "播放成功后的前台观看时长", unit: "秒" }] };
+  const points = query.dateRange.map((date, index) => ({ date, state: "available" as const, sourceStatus: "READY" as const,
+    value: [3, 1][index] / 3600, inputs: [{ key: "totalUserWatchTime", value: [3, 1][index] }] }));
+  const statistics = { aggregationVersion: "daily-statistics/v1" as const, state: "available" as const,
+    dateRange: query.dateRange, dayCount: 2, values: [{ kind: "period_sum" as const, value: 4 / 3600 }, { kind: "daily_average" as const, value: 2 / 3600 }], reason: null };
+  result.data.series = [{ metric, points, periodStatistics: statistics }];
+  const previous = structuredClone(result), priorRange: [string, string] = ["2026-09-03", "2026-09-04"];
+  previous.data.query = { ...query, dateRange: priorRange };
+  previous.data.series[0].points = points.map((point, index) => ({ ...point, date: priorRange[index], value: 3 / 3600,
+    inputs: [{ key: "totalUserWatchTime", value: 3 }] }));
+  const live = { ...reading(result), metricIds: ["M102"], comparison: { label: "上一周期", query: previous.data.query,
+    state: { status: "success" as const, data: previous, refreshing: false, refreshError: null } } };
+  const model = liveMetricModel(original("M102"), live);
+  expect(model.result).toMatchObject({ status: "available", value: { raw: 1 / 3600, display: "0.0002778", unit: "小时" } });
+  if (model.result.status !== "available") throw Error("expected exact duration value");
+  expect(model.result.trend.current.map(point => point.value?.display)).toEqual(["0.0008333", "0.0002778"]);
+  expect(model.result.trend.current[1].differenceDisplay).toBe("-0.0005556 小时");
+  expect(model.result.reading?.statistics.map(value => value.display)).toEqual(["0.001111", "0.0005556"]);
+  expect(model.result.reading?.comparisons[0].rows).toEqual([{ label: "所选日", date: query.dateRange[1], value: "0.0002778 小时" },
+    { label: "对比日", date: query.dateRange[0], value: "0.0008333 小时" }]);
+  const markup = renderToStaticMarkup(createElement(LiveSeriesDetails, { series: result.data.series[0], result }));
+  expect(markup).toContain("<td>0.0002778</td>");
+  expect(markup).toContain("<td>0.0008333</td>");
+  expect(markup).toContain("合计 0.001111 小时");
+  expect(markup).toContain("均值 0.0005556 小时");
+  expect(result.data.series[0].points).toEqual(points);
+  expect(result.data.series[0].periodStatistics).toEqual(statistics);
 });
 test("留存按共同批次比较，不用缺一批的对比期生成变化",async()=>{
   const service=new DailyDashboardService({get:async(path,params)=>path.includes("reletionsStatPlus")?{data:[0,1].map(i=>{const d=new Date(Date.parse(params.registerDate.slice(0,10))+i*86400000).toISOString().slice(0,10);return{pid:"PH",sumDate:d,registerCount:i?300:100,afterFirstData1:{date:new Date(Date.parse(d)+86400000).toISOString().slice(0,10),loginCnt:i?90:10}};})}:{msg:{pageData:[],totalCount:0}}},()=>new Date("2026-09-12T00:00:00Z"));

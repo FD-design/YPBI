@@ -11,8 +11,9 @@ export function formatDetailValue(value: number | null, kind: DetailValueKind, i
     const dollar = unit?.startsWith("USD") || unit === undefined;
     return `${dollar ? "$" : ""}${formatMetricNumber(value, "en-US", metricNumberFormatOptions(value, unit ?? "USD"))}${includeUnit ? dollar ? unit?.endsWith("/人") ? "/人" : "" : " " + unit : ""}`;
   }
-  const precision = kind === "duration" && value !== 0 && Math.abs(value) < 1
-    ? { maximumSignificantDigits: 4 }
+  const precision = kind === "duration" && (unit === undefined || unit === "小时")
+    ? metricNumberFormatOptions(value, "小时")
+    : kind === "duration" && value !== 0 && Math.abs(value) < 1 ? { maximumSignificantDigits: 4 }
     : kind === "average" ? metricNumberFormatOptions(value, unit ?? "次/人")
       : { maximumFractionDigits: kind === "duration" ? 2 : 0 };
   const number = formatMetricNumber(value, "en-US", precision);

@@ -1,5 +1,6 @@
 /** Numeric precision only; callers retain their locale, scale and unit layout. */
 export function metricNumberFormatOptions(value: number, unit: string): Intl.NumberFormatOptions {
+  if (unit === "小时" && value !== 0 && Math.abs(value) < 1) return { maximumSignificantDigits: 4 };
   return {
     maximumFractionDigits: ["人", "次"].includes(unit) ? 0 : unit.includes("/人") && Math.abs(value) > 0 && Math.abs(value) < .1 ? 4 : 2,
     minimumFractionDigits: unit === "%" ? 2 : 0

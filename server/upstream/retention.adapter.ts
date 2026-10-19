@@ -5,15 +5,23 @@ import type { UpstreamClient } from "./client";
 
 export const RETENTION_PLUS_API = "/api/admin/statistics/reletionsStatPlus/getDays";
 
+const countSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const nullableCountSchema = z.preprocess((value) => {
+  if (value == null) return null;
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  return text === "" ? null : /^\d+$/.test(text) ? Number(text) : value;
+}, countSchema.nullable());
+const retentionPointSchema = z.object({ date: z.string(), loginCnt: nullableCountSchema, retentionRate: z.coerce.number() }).nullish();
 const retentionRowSchema = z.object({
-  sumDate: z.string(), pid: z.string(), registerCount: z.coerce.number(),
-  afterFirstData1: z.object({ date: z.string(), loginCnt: z.coerce.number(), retentionRate: z.coerce.number() }).optional(),
-  afterFirstData3: z.object({ date: z.string(), loginCnt: z.coerce.number(), retentionRate: z.coerce.number() }).optional(),
-  afterFirstData7: z.object({ date: z.string(), loginCnt: z.coerce.number(), retentionRate: z.coerce.number() }).optional(),
-  afterFirstData30: z.object({ date: z.string(), loginCnt: z.coerce.number(), retentionRate: z.coerce.number() }).optional()
+  sumDate: z.string(), pid: z.string(), registerCount: nullableCountSchema.pipe(countSchema),
+  afterFirstData1: retentionPointSchema,
+  afterFirstData3: retentionPointSchema,
+  afterFirstData7: retentionPointSchema,
+  afterFirstData30: retentionPointSchema
 }).loose();
 
-export interface RetentionRow { date: string; platform: string; newUsers: number; retainedUsers: number; retainedUsersD3: number | null; retainedUsersD7: number | null; retainedUsersD30: number | null; retentionD1: number | null; retentionD3: number | null; retentionD7: number | null; retentionD30: number | null }
+export interface RetentionRow { date: string; platform: string; newUsers: number; retainedUsers: number | null; retainedUsersD3: number | null; retainedUsersD7: number | null; retainedUsersD30: number | null; retentionD1: number | null; retentionD3: number | null; retentionD7: number | null; retentionD30: number | null }
 
 function toShanghaiDate(value: string) {
   return new Date(new Date(value).getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -25,7 +33,7 @@ export class RetentionAdapter {
     const payload = await this.client.get(RETENTION_PLUS_API, { pid: platformId, registerDate: `${query.dateRange[0]} 00:00:00`, registerEdDate: `${query.dateRange[1]} 23:59:59` });
     const envelope = z.object({ data: z.array(z.unknown()).optional(), err: z.string().optional() }).loose().parse(payload);
     return (envelope.data ?? []).map((item) => retentionRowSchema.parse(item)).filter((row) => row.pid === platformId).map((row) => {
-      const retainedUsers = row.afterFirstData1?.loginCnt ?? 0;
+      const retainedUsers = row.afterFirstData1?.loginCnt ?? null;
       const retainedUsersD3 = row.afterFirstData3?.loginCnt ?? null;
       const retainedUsersD7 = row.afterFirstData7?.loginCnt ?? null;
       const retainedUsersD30 = row.afterFirstData30?.loginCnt ?? null;
