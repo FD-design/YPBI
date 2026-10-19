@@ -22,6 +22,7 @@ export function operatingResource(resource: OperatingResources[string] | undefin
 export interface DetailEvidence {
   state: string; label: string; date: string; fetchedAt: string | null; stale: boolean; unit?: string; sourceNote?: string | null;
   inputs: { name: string; unit: string; value: number | null }[]; formula: string | null;
+  requestFailure?: { code?: string; requestId?: string };
   referenceRatio?: NonNullable<ReturnType<typeof retentionReferenceRatio>>;
 }
 interface OperatingColumnMetadata { source: DailyReadingMetric; units: Set<string> }
@@ -74,6 +75,10 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
   const metadata = operatingColumnMetadata(live, resources, selectedPlatform);
   return (live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]).map(platform => {
     const resource = operatingResource(resources[platform.pid], platform.pid, date, operatingDataEnvironment(live));
+    const failure = resource?.status === "failure" ? resource : resource?.status === "success" ? resource.refreshError : null;
+    const requestFailure = failure && (failure.code || failure.requestId)
+      ? { ...(failure.code ? { code: failure.code } : {}), ...(failure.requestId ? { requestId: failure.requestId } : {}) }
+      : undefined;
     const values = DETAIL_COLUMNS.map((column): DetailValue => {
       const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
       if (!id || !live.metricIds.includes(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
@@ -91,6 +96,7 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
           label: resource?.status === "failure" ? "读取失败" : !resource || resource.status === "loading" ? "读取中" : unitConflict && readable(value) ? "单位不一致" : diagnostic ? DIAGNOSTIC_INPUTS_LABEL : value ? livePointStateLabel(value) : "字段未返回",
           fetchedAt: resource?.status === "success" ? resource.data.data.fetchedAt : null, stale: liveResourceRetainsResult(resource),
           inputs: series?.metric.inputs.map((input, index) => ({ ...input, value: inputValues[index] ?? null })) ?? [], formula: series?.metric.formula ?? null, unit: series?.metric.unit, sourceNote: series?.metric.sourceNote,
+          ...(requestFailure ? { requestFailure } : {}),
           ...(reference ? { referenceRatio: reference } : {}) };
       };
       if (isMonthlyMetric(id)) {

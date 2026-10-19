@@ -1,4 +1,5 @@
 import { ReviewTools } from "../components/ReviewTools";
+import { RequestFailureDetails } from "../components/StatePanel";
 import { createContext, useContext } from "react";
 import { readPreviewQuery } from "./preview-query";
 import { usePreviewQuery } from "./usePreviewQuery";
@@ -371,6 +372,7 @@ function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: NonNull
   const value = detail.row.values[detail.columnIndex];
   const monthly = detail.column.metric.id === "M018";
   const hasReferences = Object.values(value.evidence ?? {}).some(evidence => evidence.referenceRatio);
+  const hasRequestFailures = Object.values(value.evidence ?? {}).some(evidence => evidence.requestFailure);
   return <MetricReadingDialog title={detail.column.metric.name} onClose={onClose} content={<div className="core-review__snapshot-content">
       <p>{detail.row.name} · {monthly ? value.evidence?.current.date ?? `${date.slice(0, 7)} 自然月` : date} · {value.evidence ? "待验数" : live ? "待接口支持" : "演示数据"}</p>
       <MetricSummary title={monthly ? "自然月结果" : value.evidence?.current.referenceRatio ? "当日参考比率" : "当日结果"} value={operatingValueLabel(value, detail.column)} />
@@ -382,7 +384,24 @@ function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: NonNull
       <DetailComparisonLines current={value.current} baseline={value.previousWeek} baselineLabel={operatingValueLabel(value, detail.column, "previousWeek", true)} kind={detail.column.kind} unit={detail.column.unit} label="较上周同日" date={shiftBusinessDate(date, -7)} />
       </>}
       <p>{detail.column.metric.definition}</p>
-      {value.evidence && <><p>{value.evidence.current.formula}</p><div className={hasReferences ? "core-review__snapshot-evidence" : undefined}><table className="ui-table"><thead><tr><th>{monthly ? "自然月与实际查询范围" : "日期"}</th><th>计算输入</th>{hasReferences && <><th>正式结果</th><th>参考比率</th></>}<th>状态</th><th>查询时间</th></tr></thead><tbody>{Object.entries(value.evidence).filter(([period]) => !monthly || period === "current").map(([period, evidence]) => <tr key={evidence.date}><td>{evidence.date}</td><td>{evidence.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ")}</td>{hasReferences && <><td>{formatDetailValue(value[period as "current" | "previousDay" | "previousWeek"], detail.column.kind, true, detail.column.unit)}</td><td>{evidence.referenceRatio ? <>{formatDetailValue(evidence.referenceRatio.value, "ratio")}<small className="core-review__reference-label">{evidence.referenceRatio.label}</small></> : "—"}</td></>}<td>{evidence.label}{evidence.stale ? " · 上次查询结果" : ""}</td><td>{evidence.fetchedAt ?? "—"}</td></tr>)}</tbody></table></div></>}
+      {value.evidence && <>
+        <p>{value.evidence.current.formula}</p>
+        <div className={hasReferences || hasRequestFailures ? "core-review__snapshot-evidence" : undefined}>
+          <table className="ui-table">
+            <thead><tr><th>{monthly ? "自然月与实际查询范围" : "日期"}</th><th>计算输入</th>{hasReferences && <><th>正式结果</th><th>参考比率</th></>}<th>状态</th><th>查询时间</th></tr></thead>
+            <tbody>{Object.entries(value.evidence).filter(([period]) => !monthly || period === "current").map(([period, evidence]) => <tr key={evidence.date}>
+              <td>{evidence.date}</td>
+              <td>{evidence.inputs.map(input => `${input.name} ${input.value ?? "—"} ${input.unit}`).join(" / ")}</td>
+              {hasReferences && <>
+                <td>{formatDetailValue(value[period as "current" | "previousDay" | "previousWeek"], detail.column.kind, true, detail.column.unit)}</td>
+                <td>{evidence.referenceRatio ? <>{formatDetailValue(evidence.referenceRatio.value, "ratio")}<small className="core-review__reference-label">{evidence.referenceRatio.label}</small></> : "—"}</td>
+              </>}
+              <td>{evidence.label}{evidence.stale ? " · 上次查询结果" : ""}{evidence.requestFailure && <div><RequestFailureDetails {...evidence.requestFailure} /></div>}</td>
+              <td>{evidence.fetchedAt ?? "—"}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </>}
     </div>} />;
 }
 

@@ -3,9 +3,11 @@ import { DETAIL_COLUMNS, detailColumnKey, operatingDetailRows, operatingSummaryM
 import { OPERATING_BREAKDOWNS, galleryBreakdown } from "./operating-breakdown-preview";
 import { operatingColumnDocumentation, OPERATING_SUMMARY_IDS } from "./operating-detail-columns";
 import { retentionTargetDate } from "./operating-detail-snapshot";
-import { OPERATING_LIVE_IDS, operatingLiveColumns, operatingLiveExportRows, operatingLiveRows } from "./operating-live-model";
+import { OPERATING_LIVE_IDS, operatingLiveColumns, operatingLiveExportRows, operatingLiveRows, type OperatingResources } from "./operating-live-model";
 import { DailyDashboardService } from "../../../server/v2/daily-dashboard.service";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
+import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
+import { recordDailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 
 describe("经营明细详情绑定当前查询单元格", () => {
   const scopeKey = "same-query";
@@ -72,6 +74,99 @@ describe("经营明细详情绑定当前查询单元格", () => {
     }
     expect(DETAIL_COLUMNS).toHaveLength(93);
     expect(rows).toHaveLength(4);
+  });
+});
+
+describe("经营明细请求诊断跟随平台资源", () => {
+  const date = "2020-01-01", range: [string, string] = ["2019-12-25", date];
+  const periods = ["current", "previousDay", "previousWeek"] as const;
+  const amountIndex = DETAIL_COLUMNS.findIndex(column => column.metric.id === "M058" && !column.slice);
+  const failure = (code = "IDENTITY_PROVIDER_UNAVAILABLE", requestId?: string) => ({
+    status: "failure" as const, kind: "error" as const, code, requestId, message: "未用于详情的服务端消息"
+  });
+  function reading(environment: "production" | "test" = "production"): LiveDashboardReading {
+    return { query: { boardId: "5.2", pid: "PH", dateRange: [date, date] }, metricIds: Object.values(OPERATING_LIVE_IDS),
+      dataEnvironment: environment, state: { status: "loading" }, platformName: "主平台",
+      platforms: [{ pid: "PH", name: "主平台" }, { pid: "TT", name: "其他平台" }], retry() {}, canExport: true,
+      controls: { date: null, scope: null, comparison: null, dirty: false, acceptsSharedRange: () => true, apply() {}, export() {} } };
+  }
+  function success(pid = "TT", environment: "production" | "test" = "production"): Extract<OperatingResources[string], { status: "success" }> {
+    const data: DailyDashboardSuccess = { success: true, data: {
+      schemaVersion: "day-dashboard/v2", query: { boardId: "5.2", pid, dateRange: [...range], projection: "operating_snapshot" },
+      queryId: `diagnostic-${pid}`, fetchedAt: "2026-10-19T13:33:17Z", timezone: "Asia/Shanghai", validationStatus: "pending_validation",
+      completeness: "unknown", watermark: null, sourceApiIds: ["bi-v1.metrics"], series: [{
+        metric: { id: "M058", referenceMetricId: "M058", name: "总充值金额", unit: "元", definition: "同平台真实金额", authorityVersion: "qa-v1",
+          sourceNote: null, formula: null, inputs: [{ key: "amount", name: "总充值金额", unit: "元" }] },
+        points: [range[0], "2019-12-31", date].map(day => ({ date: day, state: "available" as const, sourceStatus: "READY" as const, value: 24, inputs: [{ key: "amount", value: 24 }] })),
+        periodStatistics: { aggregationVersion: "daily-statistics/v1", dateRange: [...range], dayCount: 8, state: "unsupported", values: [], reason: "经营快照" }
+      }]
+    } };
+    recordDailyDashboardEnvironment(data, environment);
+    return { status: "success", data, refreshing: false, refreshError: null };
+  }
+  const row = (resources: OperatingResources, environment: "production" | "test" = "production") => operatingLiveRows(reading(environment), resources)[1];
+
+  test("非主平台93列失败保留自身三期请求诊断，月活不适用比较不借编号", () => {
+    const resources = { PH: failure("PRIMARY_FAILURE", "req-primary"), TT: failure(undefined, "req-secondary") };
+    const rows = operatingLiveRows(reading(), resources);
+    expect(rows[1].values).toHaveLength(93);
+    for (const [index, value] of rows[1].values.entries()) for (const period of periods) {
+      const evidence = value.evidence![period];
+      if (DETAIL_COLUMNS[index].metric.id === "M018" && period !== "current") {
+        expect(evidence.state).toBe("not_applicable");
+        expect(evidence).not.toHaveProperty("requestFailure");
+      } else {
+        expect(evidence).toMatchObject({ state: "failed", label: "读取失败", stale: false,
+          requestFailure: { code: "IDENTITY_PROVIDER_UNAVAILABLE", requestId: "req-secondary" } });
+        expect(evidence.requestFailure).not.toHaveProperty("message");
+      }
+    }
+    expect(rows[0].values[amountIndex].evidence!.current.requestFailure).toEqual({ code: "PRIMARY_FAILURE", requestId: "req-primary" });
+  });
+
+  test("刷新失败保留旧值、原状态及真实请求诊断，成功恢复清空诊断", () => {
+    const prior = success(), refresh = { ...prior, refreshError: { code: "UPSTREAM_TIMEOUT", requestId: "req-refresh", message: "未用于详情的刷新消息" } };
+    const stale = row({ TT: refresh }).values[amountIndex];
+    expect([stale.current, stale.previousDay, stale.previousWeek]).toEqual([24, 24, 24]);
+    for (const period of periods) expect(stale.evidence![period]).toMatchObject({ state: "available", stale: true,
+      requestFailure: { code: "UPSTREAM_TIMEOUT", requestId: "req-refresh" } });
+    const failed = row({ TT: failure(undefined, "req-failed") });
+    expect(failed.values[amountIndex].evidence!.current.requestFailure?.requestId).toBe("req-failed");
+    const recovered = row({ TT: prior }).values[amountIndex];
+    for (const period of periods) {
+      expect(recovered[period]).toBe(24);
+      expect(recovered.evidence![period]).toMatchObject({ state: "available", stale: false });
+      expect(recovered.evidence![period]).not.toHaveProperty("requestFailure");
+    }
+    expect(prior.refreshError).toBeNull();
+  });
+
+  test("仅透传实际存在的错误字段，加载和无错误字段不生成诊断", () => {
+    for (const [resource, expected] of [
+      [failure("CODE_ONLY"), { code: "CODE_ONLY" }],
+      [failure("", "req-only"), { requestId: "req-only" }]
+    ] as const) expect(row({ TT: resource }).values[amountIndex].evidence!.current.requestFailure).toEqual(expected);
+    for (const resource of [undefined, { status: "loading" as const }, failure("")]) {
+      const values = row(resource ? { TT: resource } : {}).values;
+      for (const value of values) for (const period of periods) expect(value.evidence![period]).not.toHaveProperty("requestFailure");
+    }
+    const refreshing = { ...success(), refreshing: true };
+    expect(row({ TT: refreshing }).values[amountIndex].evidence!.current).toMatchObject({ state: "available", stale: true });
+    expect(row({ TT: refreshing }).values[amountIndex].evidence!.current).not.toHaveProperty("requestFailure");
+  });
+
+  test("异环境、异PID和旧日期资源的刷新错误不进入当前平台详情", () => {
+    for (const environment of ["production", "test"] as const) {
+      const wrongEnvironment = success("TT", environment === "production" ? "test" : "production");
+      const wrongPid = success("PH", environment), wrongDate = success("TT", environment);
+      wrongDate.data.data.query.dateRange = ["2019-12-24", "2019-12-31"];
+      for (const source of [wrongEnvironment, wrongPid, wrongDate]) {
+        const resource = { ...source, refreshError: { code: "STALE_SCOPE_FAILURE", requestId: "req-other-scope", message: "旧查询失败" } };
+        const current = row({ PH: failure("PRIMARY_FAILURE", "req-primary"), TT: resource }, environment);
+        for (const value of current.values) for (const period of periods) expect(value.evidence![period]).not.toHaveProperty("requestFailure");
+        expect(current.values[amountIndex].current).toBeNull();
+      }
+    }
   });
 });
 

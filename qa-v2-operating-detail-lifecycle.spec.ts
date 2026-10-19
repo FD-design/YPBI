@@ -30,6 +30,7 @@ const local = (page: Page) => page.locator(".core-review__detail:visible");
 const row = (page: Page, name = "Pornhub") => local(page).locator(".core-review__comparison-table tbody tr").filter({ hasText: name });
 const cell = (page: Page, name = "Pornhub") => row(page, name).locator('td[data-column-key="M087:overall"] .core-review__detail-trigger > b');
 const dialog = (page: Page) => page.getByRole("dialog", { name: "活跃用户人均充值金额（ARPU）", exact: true });
+const rawFailureMessage = "QA_RAW_FAILURE_MESSAGE_MUST_NOT_ENTER_OPERATING_DETAIL";
 
 function resultFor(request: DailyDashboardQuery, readyNumerator?: number) {
   const result = structuredClone(generated.results[JSON.stringify(request)]);
@@ -48,7 +49,9 @@ function resultFor(request: DailyDashboardQuery, readyNumerator?: number) {
   return result;
 }
 
-async function fixtures(page: Page, readablePlatforms = platforms, readyNumerator?: number) {
+async function fixtures(page: Page, readablePlatforms = platforms, readyNumerator?: number, failurePid = "PH", failure = {
+  status: 504, code: "V2_UPSTREAM_TIMEOUT", requestId: "qa-operating-lifecycle-failed"
+}) {
   let outcome: "hold" | "success" | "failure" = "hold";
   let releaseGate: () => void = () => {};
   let gate = new Promise<void>(resolve => { releaseGate = resolve; });
@@ -72,9 +75,9 @@ async function fixtures(page: Page, readablePlatforms = platforms, readyNumerato
     if (!path.endsWith("/queries/dashboards/daily-reading")) return route.fulfill({ status: 404, json: { success: false, error: { code: "NOT_FOUND", message: "隔离验收未配置此读取", requestId: "qa-operating-lifecycle" } } });
     const request = route.request().postDataJSON() as DailyDashboardQuery;
     control.calls.push(request);
-    if (request.pid === "PH") {
+    if (request.pid === failurePid) {
       if (outcome === "hold") await gate;
-      if (outcome === "failure") return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "隔离验收读取失败", requestId: "qa-operating-lifecycle-failed" } } });
+      if (outcome === "failure") return route.fulfill({ status: failure.status, json: { success: false, error: { code: failure.code, message: rawFailureMessage, requestId: failure.requestId } } });
     }
     return route.fulfill({ status: 200, json: resultFor(request, readyNumerator) });
   });
@@ -152,7 +155,9 @@ test("已开详情随读取失败、同范围真实刷新和重试成功更新�
     await page.goto(url); await expect(cell(page)).toHaveText("读取中"); await openDetail(page);
     control.release("failure");
     await expect(cell(page)).toHaveText("读取失败");
-    await expect(dialog(page).locator("tbody tr").first().locator("td").nth(2)).toHaveText("读取失败");
+    await expect(dialog(page).locator("tbody tr").first().locator("td").nth(2)).toContainText("读取失败");
+    await expect(dialog(page)).toContainText("错误代码：V2_UPSTREAM_TIMEOUT");
+    await expect(dialog(page)).toContainText("请求编号：qa-operating-lifecycle-failed");
     await expect(dialog(page).locator(".metric-summary")).toContainText("读取失败");
     const before = control.calls.filter(request => request.pid === "PH" && request.projection === "operating_snapshot").length;
     control.hold();
@@ -165,6 +170,77 @@ test("已开详情随读取失败、同范围真实刷新和重试成功更新�
     control.release(); await expect(cell(page)).toHaveText("来源不完整"); await expectPartialInput(page);
     await page.screenshot({ path: info.outputPath("operating-detail-failure-retry.png") });
     await page.keyboard.press("Escape"); await expect(dialog(page)).toHaveCount(0);
+  } finally { control.release(); }
+});
+
+for (const width of [1280, 1024, 390]) test(`非主平台93列失败详情保留真实身份错误编号，恢复后清除（${width}）`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 950 });
+  const control = await fixtures(page, platforms, 24, "TT", { status: 503, code: "IDENTITY_PROVIDER_UNAVAILABLE", requestId: "qa-tt-identity-503" });
+  control.release("failure");
+  try {
+    await page.goto(url);
+    await expect(cell(page)).toHaveText("4");
+    await expect(cell(page, "TikTok")).toHaveText("读取失败");
+    await expect(row(page, "TikTok").locator('td[data-column-key] .core-review__detail-trigger > b')).toHaveCount(93);
+    const trigger = row(page, "TikTok").locator('td[data-column-key="M087:overall"] button.core-review__detail-trigger');
+    await trigger.scrollIntoViewIfNeeded(); await trigger.click();
+    await expect(dialog(page)).toBeVisible();
+    await dialog(page).evaluate(element => element.setAttribute("data-lifecycle-probe", "opened-once"));
+    for (const status of await dialog(page).locator("tbody tr td:nth-child(3)").all()) {
+      await expect(status).toContainText("读取失败");
+      await expect(status).toContainText("错误代码：IDENTITY_PROVIDER_UNAVAILABLE");
+      await expect(status).toContainText("请求编号：qa-tt-identity-503");
+    }
+    await expect(dialog(page).locator("tbody tr")).toHaveCount(3);
+    await expect(dialog(page)).not.toContainText(rawFailureMessage);
+    const evidenceTable = dialog(page).locator(".core-review__snapshot-evidence");
+    await expect(evidenceTable).toBeVisible();
+    expect(await evidenceTable.evaluate(element => element.scrollWidth)).toBeGreaterThan(await evidenceTable.evaluate(element => element.clientWidth));
+    await expect(dialog(page).locator("thead th").nth(2)).toHaveText("状态");
+    await page.screenshot({ path: info.outputPath(`operating-nonprimary-error-${width}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    control.hold();
+    await page.getByRole("button", { name: "刷新看板", exact: true, includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
+    await expect(cell(page, "TikTok")).toHaveText("读取中");
+    await expect(dialog(page)).not.toContainText("qa-tt-identity-503");
+    control.release();
+    await expect(cell(page, "TikTok")).toHaveText("0.92");
+    await expect(dialog(page).locator("tbody tr td:nth-child(3)")).toHaveText(["已返回", "已返回", "已返回"]);
+    for (const inputs of await dialog(page).locator("tbody tr td:nth-child(2)").all()) {
+      await expect(inputs).toContainText("24 元");
+      await expect(inputs).toContainText("26 人");
+    }
+    await expect(dialog(page)).toHaveAttribute("data-lifecycle-probe", "opened-once");
+    await expect(dialog(page)).not.toContainText("错误代码：");
+    await expect(dialog(page)).not.toContainText("请求编号：");
+    await expect(dialog(page).locator(".core-review__snapshot-evidence")).toHaveCount(0);
+    await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
+    await page.keyboard.press("Escape"); await expect(dialog(page)).toHaveCount(0); await expect(trigger).toBeFocused();
+  } finally { control.release(); }
+});
+
+test("详情刷新失败保留原值、真实状态和请求编号，成功后清除错误诊断", async ({ page }, info) => {
+  const control = await fixtures(page, platforms.slice(0, 1), 24);
+  control.release();
+  try {
+    await page.goto(url); await expect(cell(page)).toHaveText("4"); await openDetail(page);
+    const status = dialog(page).locator("tbody tr").first().locator("td").nth(2);
+    await expect(status).toHaveText("已返回");
+    control.release("failure");
+    await page.getByRole("button", { name: "刷新看板", exact: true, includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
+    await expect(status).toContainText("请求编号：qa-operating-lifecycle-failed");
+    await expect(status).toContainText("错误代码：V2_UPSTREAM_TIMEOUT");
+    await expect(status).toContainText("已返回 · 上次查询结果");
+    await expect(dialog(page)).not.toContainText(rawFailureMessage);
+    await expect(cell(page)).toHaveText("4");
+    await expect(dialog(page).locator(".metric-summary__number strong")).toHaveText("4");
+    await expect(dialog(page)).toHaveAttribute("data-lifecycle-probe", "opened-once");
+    await page.screenshot({ path: info.outputPath("operating-refresh-error-diagnostics.png") });
+    control.release();
+    await page.getByRole("button", { name: "刷新看板", exact: true, includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
+    await expect(status).toHaveText("已返回");
+    await expect(dialog(page)).not.toContainText("请求编号：");
+    await expect(cell(page)).toHaveText("4");
   } finally { control.release(); }
 });
 
