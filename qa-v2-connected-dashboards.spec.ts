@@ -238,7 +238,7 @@ test("当前值、计算输入、逐日点和真实导出共用查询", async ({
   await expect(row).toContainText("88"); await expect(row).toContainText("108"); await expect(row).toContainText("81.48");
   const download = page.waitForEvent("download"); await page.getByRole("dialog").getByRole("button", { name: "导出", exact: true }).click();
   expect(readFileSync((await (await download).path())!, "utf8")).toContain('"2026-09-08","88","108"');
-  expect(control.calls[0]).toEqual({ boardId: "5.2", pid: "PH", dateRange: ["2026-09-01", "2026-09-08"] });
+  expect(control.calls[0]).toEqual({ boardId: "5.2", pid: "PH", dateRange: ["2026-09-02", "2026-09-08"] });
 });
 
 test("真实周期对比、切平台、纯数值、历史返回不进入设计身份", async ({ page }) => {
@@ -671,9 +671,10 @@ test("全部平台金额总体未就绪时，已就绪新用户拆解仍用元�
   await expect(local.getByRole("button", { name: /^经营明细平台：全部平台$/ })).toBeVisible();
   await local.getByRole("button", { name: /^总充值金额，按/ }).click();
   const dialog = page.getByRole("dialog", { name: "总充值金额 · 维度拆解", exact: true });
-  await expect(dialog).toContainText("来源处理中");
+  await expect(dialog).toContainText("计算中");
   const group = dialog.getByRole("region", { name: "新用户范围", exact: true });
   await expect(group).toContainText("单位：元");
+  await expect(group).toContainText("20元");
   await expect(group.locator("small")).toHaveText("元");
   await expect(dialog).not.toContainText("USD");
 });

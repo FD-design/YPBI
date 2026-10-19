@@ -283,6 +283,15 @@ function invalidMetric(): BiV1MetricPoint {
   return { dataStatus: null, state: "invalid_value", value: null, numerator: null, denominator: null, unit: null };
 }
 
+function isRecoverableSingleMetricTransportFailure(error: unknown) {
+  if (!(error instanceof UpstreamError)) return false;
+  if (error.code === "UPSTREAM_NETWORK_ERROR" || error.code === "UPSTREAM_FAILED") return error.statusCode >= 500;
+  // Physical HTTP and shared-queue expiry use this canonical timeout. Source
+  // budget / caller cancellation uses "后台来源读取超时" and must still abort
+  // the whole read rather than being presented as one metric's source state.
+  return error.code === "UPSTREAM_TIMEOUT" && error.statusCode === 504 && error.message === "后台接口请求超时";
+}
+
 function safeInteger(value: number, label: string) {
   if (!Number.isSafeInteger(value)) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${label} 不是安全整数`, 502);
   return value;
@@ -494,7 +503,7 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
         aggregateBiV1MetricDays(message, singleQuery).forEach((day, index) => Object.assign(days[index].metrics, day.metrics));
         continue;
       } catch (error) {
-        if (!canIsolateBiV1Request(error)) throw error;
+        if (!canIsolateBiV1Request(error) && !isRecoverableSingleMetricTransportFailure(error)) throw error;
       }
     }
     for (const day of days) day.metrics[requestedMetricKey(metricCode, query)] = { ...unavailable(null), state: "source_failure" };

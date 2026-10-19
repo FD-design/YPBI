@@ -43,7 +43,9 @@ export class SourceReadBudget {
         settled = true;
         this.pendingReads.delete(onAbort);
         readSignal?.removeEventListener("abort", onAbort);
-        deliver();
+        if (!this.disposed && !this.didExpire && performance.now() >= this.deadline) this.expire();
+        if (this.disposed || this.didExpire || readSignal?.aborted) reject(this.failure());
+        else deliver();
       };
       const onAbort = () => finish(() => reject(this.failure()));
       this.pendingReads.add(onAbort);
@@ -51,12 +53,7 @@ export class SourceReadBudget {
       try {
         // Both handlers remain attached after expiry to consume late rejections.
         start().then(
-          value => finish(() => {
-            if (this.disposed || this.didExpire || performance.now() >= this.deadline) {
-              this.expire();
-              reject(this.failure());
-            } else resolve(value);
-          }),
+          value => finish(() => resolve(value)),
           error => finish(() => reject(error))
         );
       } catch (error) { finish(() => reject(error)); }

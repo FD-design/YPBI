@@ -1681,6 +1681,34 @@ describe("bi-v1 分维单位与状态回归", () => {
     }
   });
 
+  test("获客类型新增只标注真实bi-v1来源，不登记旧渠道回退", () => {
+    const definitions = dailyDashboardProjectionDocumentation();
+    for (const id of ["M008.nature", "M008.internal"]) {
+      const definition = definitions.find(item => item.id === id)!;
+      expect(definition.sourceApi).toBe("/api/admin/bi/v1/metrics");
+      expect(definition.sourceNote).toContain("bi-v1 M008");
+      expect(definition.sourceNote).not.toContain("渠道统计V2");
+      expect(definition.unit).toBe("人");
+      expect(definition.inputs).toHaveLength(1);
+    }
+    expect(definitions.find(item => item.id === "M026.old")!.sourceApi)
+      .toBe("/api/admin/statistics/channel/channelStatByTypeV2");
+  });
+
+  test("独立留存与交叉切片统一标注现代来源，旧总体留存候选保持", () => {
+    const definitions = dailyDashboardProjectionDocumentation();
+    const independent = ["M016.new", "M016.androidOld", "M016.iosOld", "M026.androidOld", "M026.iosOld", "M081.androidOld", "M081.iosOld",
+      ...["M020", "M021", "M022", "M023"].flatMap(code => ["android", "ios", "natural", "internal"].map(dimension => `${code}.${dimension}`))];
+    for (const id of independent) {
+      const definition = definitions.find(item => item.id === id)!;
+      expect(definition.sourceApi).toBe("/api/admin/bi/v1/metrics");
+      expect(definition.sourceNote).toContain("bi-v1");
+      expect(definition.sourceNote).not.toContain("后台日汇总对应切片");
+    }
+    expect(definitions.find(item => item.id === "M020")!.sourceApi)
+      .toBe("/api/admin/statistics/reletionsStatPlus/getDays");
+  });
+
   test("支付方式计数和比率输入保留次单位，人数保持人单位", () => {
     const definitions = dailyDashboardProjectionDocumentation();
     for (const method of ["alipay", "wechat", "usdt"]) {

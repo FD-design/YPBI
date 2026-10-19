@@ -31,6 +31,7 @@ const SECONDS_PER_MINUTE = 60;
 const VALUE_RULE_VERSIONS = { M034: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M036: BI_V1_EFFECTIVE_PLAY_RULE_VERSION, M058: "paid-order-value-rmb-v2", M102: "foreground-watch-duration-v1" } as const;
 const WATCH_TIME_NOTE = `来自 bi-v1 M102 的播放成功后前台观看时长，规则版本 ${VALUE_RULE_VERSIONS.M102}，单位为秒。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态。`;
 const RECHARGE_AMOUNT_NOTE = `来自 bi-v1 M058 的人民币元金额，规则版本 ${VALUE_RULE_VERSIONS.M058}，保留接口数值。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态；按完整业务日提供合计及日均。`;
+const ACQUISITION_TYPE_REGISTRATIONS_NOTE = "来自 bi-v1 M008 的同平台、同业务日、获客类型独立结果；保留接口真实数据状态，不使用旧渠道统计补值。";
 const baseMappings = {
   M034: { fields: ["effectivePlayCount"], inputIds: ["M034"], inputNames: ["有效观看次数"], inputUnits: ["次"], unit: "次", biV1Playback: true, formula: "各视频类型有效观看次数之和", sourceNote: "来自 bi-v1 播放域；仅展示 READY 结果，其他状态保留为数据状态，不补 0。" },
   M036: { fields: ["effectivePlayCount", "successfulStartCount"], inputIds: ["M034", "M097"], inputNames: ["有效观看次数", "成功起播次数"], inputUnits: ["次", "次"], unit: "%", biV1Playback: true, formula: "有效观看次数 ÷ 成功起播次数 × 100%", sourceNote: "来自 bi-v1 播放域；先汇总各视频类型的分子、分母再计算，不平均分类比率或日比率。" },
@@ -88,8 +89,8 @@ const baseMappings = {
   "M113.unknown": { referenceMetricId: "M113", name: "支付订单获取用户数（未知支付方式）", fields: ["unknownOrderFetchUserCount"], inputIds: ["M113"], inputNames: ["支付订单获取用户数（未知支付方式）"], unit: "人", biV1Metric: "M113", biV1Dimensions: ["unknown"], biV1Only: true },
   "M060.unknown": { referenceMetricId: "M060", name: "支付成功订单数（未知支付方式）", fields: ["unknownPaidOrderCount"], inputIds: ["M060"], inputNames: ["支付成功订单数（未知支付方式）"], unit: "次", biV1Metric: "M060", biV1Dimensions: ["unknown"], biV1Only: true },
   "M114.unknown": { referenceMetricId: "M114", name: "订单获取-支付成功转化率（未知支付方式）", fields: ["unknownPaidOrderCount", "unknownOrderFetchCount"], inputIds: ["M060", "M112"], inputNames: ["支付成功订单数（未知支付方式）", "支付订单获取次数（未知支付方式）"], inputUnits: ["次", "次"], unit: "%", biV1Metric: "M114", biV1Dimensions: ["unknown"], biV1Only: true },
-  "M008.nature": { "referenceMetricId": "M008", "name": "新增用户数（自然新增）", "fields": ["natureRegisterCount"], "inputIds": ["M008"], "inputNames": ["自然新增用户数"], "unit": "人", "channel": true, "allowAboveOne": false, "biV1Metric": "M008", "biV1Dimensions": ["natural"], "biV1Only": true },
-  "M008.internal": { "referenceMetricId": "M008", "name": "新增用户数（内部导量）", "fields": ["channelInternalRegisterCount"], "inputIds": ["M008"], "inputNames": ["内部标识注册用户数"], "unit": "人", "channel": true, "allowAboveOne": false, "biV1Metric": "M008", "biV1Dimensions": ["internal"], "biV1Only": true },
+  "M008.nature": { "referenceMetricId": "M008", "name": "新增用户数（自然新增）", "fields": ["natureRegisterCount"], "inputIds": ["M008"], "inputNames": ["自然新增用户数"], "unit": "人", "allowAboveOne": false, "biV1Metric": "M008", "biV1Dimensions": ["natural"], "biV1Only": true, sourceNote: ACQUISITION_TYPE_REGISTRATIONS_NOTE },
+  "M008.internal": { "referenceMetricId": "M008", "name": "新增用户数（内部导量）", "fields": ["channelInternalRegisterCount"], "inputIds": ["M008"], "inputNames": ["内部标识注册用户数"], "unit": "人", "allowAboveOne": false, "biV1Metric": "M008", "biV1Dimensions": ["internal"], "biV1Only": true, sourceNote: ACQUISITION_TYPE_REGISTRATIONS_NOTE },
   "M058.nature": { referenceMetricId: "M058", name: "充值金额（自然新增）", fields: ["natureChargeAmt"], inputIds: ["M058"], inputNames: ["自然新增来源充值金额"], unit: AMOUNT_UNIT, biV1Metric: "M058", biV1Unit: "currency", biV1Dimensions: ["natural"], biV1Only: true, sourceNote: RECHARGE_AMOUNT_NOTE },
   "M058.internal": { referenceMetricId: "M058", name: "充值金额（内部导量）", fields: ["channelInternalChargeAmt"], inputIds: ["M058"], inputNames: ["内部导量来源充值金额"], unit: AMOUNT_UNIT, biV1Metric: "M058", biV1Unit: "currency", biV1Dimensions: ["internal"], biV1Only: true, sourceNote: RECHARGE_AMOUNT_NOTE },
   "M065": {"referenceMetricId":"M065","name":"VIP充值金额","fields":["vipChargeAmt"],"inputIds":["M065"],"inputNames":["VIP充值金额"],"unit":AMOUNT_UNIT,"channel":true,"allowAboveOne":false},
@@ -329,11 +330,14 @@ function sourceMetricIds(ids: readonly CandidateId[]): CandidateId[] {
   ids.forEach(visit);
   return [...sources];
 }
+function usesLegacyCohortSource(mapping: CandidateMapping) {
+  return Boolean(mapping.cohortDays && !mapping.biV1Only);
+}
 function sourceApis(ids: readonly CandidateId[]) {
   ids = sourceMetricIds(ids);
   return [
     ...(ids.some(id => !mappings[id].cohortDays && !mappings[id].channel && !mappings[id].payment && !mappings[id].checkin && !mappings[id].realtime && !mappings[id].biV1Playback && !mappings[id].biV1Only) ? [P_DAY_SUM_API] : []),
-    ...(ids.some(id => mappings[id].cohortDays) ? [RETENTION_PLUS_API] : []),
+    ...(ids.some(id => usesLegacyCohortSource(mappings[id])) ? [RETENTION_PLUS_API] : []),
     ...(ids.some(id => mappings[id].channel) ? [CHANNEL_V2_API] : []),
     ...(ids.some(id => mappings[id].payment) ? [PAYMENT_RATE_API] : []),
     ...(ids.some(id => mappings[id].checkin) ? [CHECKIN_OVERVIEW_API] : []),
@@ -391,7 +395,11 @@ function metric(id: CandidateId): DailyReadingMetric {
   const effectivePlaySourceNote = ["M034", "M036"].includes(referenceMetricId)
     ? `${mapping.sourceNote ?? "来自 bi-v1 同平台、同日期、同维度的独立结果。"} 仅接收 ${BI_V1_EFFECTIVE_PLAY_RULE_VERSION} 有效观看规则；规则不符或缺失为无效值，非 READY 保留来源状态。`
     : null;
-  const sourceNote = effectivePlaySourceNote ?? mapping.sourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null);
+  const independentSourceNote = mapping.biV1Only
+    ? "来自 bi-v1 同平台、同日期范围、同维度的独立结果；保留接口真实数据状态，不使用旧汇总或其他切片补值。" +
+      (mapping.cohortDays ? "注册批次与观察周期沿用接口口径；查询时间不是源数据水位。" : "")
+    : null;
+  const sourceNote = effectivePlaySourceNote ?? mapping.sourceNote ?? independentSourceNote ?? (mapping.checkin ? "签到看板返回的当日签到人数；使用人数原值，不用签到页 UV、签到率或任务人数替代。成功终态、重复签到排除方式待验数。" : mapping.payment ? "支付通道统计的同日拉单及成功计数；日比率不等同于同批订单的有序漏斗。时间归属和成功阶段待验数；仅返回所选业务平台，排除全平台字段。" : mapping.cohortDays ? "按注册日期查询对应第N日登录人数；观察日结束且基数有效后计算。查询时间不是源数据水位。" : mapping.unit.startsWith(AMOUNT_UNIT) ? "金额为人民币元，保留接口数值；金额覆盖范围与业务时间归属待验数。纯金额按所选完整业务日提供合计及日均，人均金额不平均，不跨平台汇总。" : mapping.channel ? "渠道统计V2的所选平台单日独立合计，不累计渠道层级明细。身份去重方式待验数。" : mapping.name ? "采用后台日汇总对应切片的直接结果，不相加或推算总体；身份去重方式待验数。" : null);
   return { id, referenceMetricId, name: mapping.name ?? definition.name, unit: mapping.unit, authorityVersion: definition.authority.version,
     definition: mapping.definition ?? metricBusinessDefinition(definition.authority),
     formula: mapping.formula ?? (mapping.fields.length === 2 ? mapping.inputNames ? mapping.inputNames.join(" ÷ ") + (mapping.unit === "%" ? " × 100%" : "") : definition.authority.registeredFormula : null),
@@ -521,7 +529,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     }
     } catch { dailyFailure = true; byDate.clear(); } });
     const cohorts = new Map<string, z.infer<typeof rowSchema>>();
-    const needsCohorts = sourceIds.some(id => mappings[id].cohortDays);
+    const needsCohorts = sourceIds.some(id => usesLegacyCohortSource(mappings[id]));
     let cohortFailure = false;
     const cohortTask = readSource("cohort", async (client) => { if (needsCohorts) {
       try {

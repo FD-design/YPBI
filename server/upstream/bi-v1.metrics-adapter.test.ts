@@ -731,6 +731,46 @@ describe("bi-v1 批量请求有界隔离", () => {
     }
   });
 
+  test("拆单中间项传输失败只标记该指标，保留三日零值、非READY兄弟并继续后续请求", async () => {
+    const dates = ["2020-01-01", "2020-01-02", "2020-01-03"] as const;
+    const filters = { sourceType: "natural" as const };
+    const rangeQuery = { ...query, endDate: dates.at(-1)!, metricCodes: ["M008", "M058", "M020"] as const,
+      dimensionFilters: filters, dimensions: ["sourceType"] as const };
+    const calls: string[] = [];
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
+      calls.push(params.metricCodes);
+      if (params.metricCodes.includes(",")) return { code: 400, err: "不支持的指标编码 M058" };
+      if (params.metricCodes === "M058") throw new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504);
+      if (params.metricCodes === "M008") return { code: 200, msg: message(dates.map((businessDate, index) => ({
+        ...makeRow("M008", "count", index, index, 0, filters), businessDate
+      }))) };
+      return { code: 200, msg: message(dates.map((businessDate, index) => ({
+        ...makeRow("M020", "ratio", null, 0, 0, filters, (["NOT_MATURE", "PROCESSING", "FAILED"] as const)[index]), businessDate
+      }))) };
+    } }, rangeQuery);
+
+    expect(calls).toEqual(["M008,M058,M020", "M008", "M058", "M020"]);
+    expect(result.message).toBeNull();
+    const registrationKey = biV1MetricKey("M008", filters);
+    const amountKey = biV1MetricKey("M058", filters);
+    const retentionKey = biV1MetricKey("M020", filters);
+    expect(result.days.map(day => day.metrics[registrationKey])).toMatchObject([
+      { state: "available", dataStatus: "READY", value: 0 },
+      { state: "available", dataStatus: "READY", value: 1 },
+      { state: "available", dataStatus: "READY", value: 2 }
+    ]);
+    expect(result.days.map(day => day.metrics[amountKey])).toMatchObject([
+      { state: "source_failure", dataStatus: null, value: null },
+      { state: "source_failure", dataStatus: null, value: null },
+      { state: "source_failure", dataStatus: null, value: null }
+    ]);
+    expect(result.days.map(day => day.metrics[retentionKey])).toMatchObject([
+      { state: "immature", dataStatus: "NOT_MATURE", value: null },
+      { state: "no_value", dataStatus: "PROCESSING", value: null },
+      { state: "source_failure", dataStatus: "FAILED", value: null }
+    ]);
+  });
+
   test("所有指标失败时请求数不超过去重后的登记指标数加一，单指标不重复请求", async () => {
     let calls = 0;
     const client = { get: async () => { calls++; return { code: 400, err: "未知指标" }; } };
@@ -801,6 +841,18 @@ describe("bi-v1 批量请求有界隔离", () => {
       } }, query)).rejects.toMatchObject({ code: failure === "auth" ? "UPSTREAM_AUTH_FAILED" : "BI_V1_SCOPE_CONFLICT" });
       expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113"]);
     }
+  });
+
+  test("单项恢复过程中的显式来源取消继续整体传播", async () => {
+    const calls: string[] = [];
+    const cancellation = new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504);
+    await expect(readBiV1MetricDays({ get: async (_path, params) => {
+      calls.push(params.metricCodes);
+      if (params.metricCodes.includes(",")) return { code: 400, err: "不支持的指标编码 M008" };
+      if (params.metricCodes === "M008") return { code: 200, msg: message([dated(makeRow("M008", "count", 0, 0, 0))]) };
+      throw cancellation;
+    } }, query)).rejects.toBe(cancellation);
+    expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113"]);
   });
 });
 
