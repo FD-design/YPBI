@@ -164,13 +164,15 @@
 | POST | `/api/bi/admin/auth/login` | maintainer 使用维护密码建立二次会话 |
 | POST | `/api/bi/admin/auth/logout` | 清除当前二次会话 |
 | GET | `/api/bi/admin/data-sources/status` | 返回站点配置状态、脱敏提示和更新时间，不返回 Token |
-| POST | `/api/bi/admin/data-sources/test` | 使用当前或候选 Token 验证连接，不保存候选值 |
-| PUT | `/api/bi/admin/data-sources/token` | 服务端先验证候选 Token，再原子替换运行凭据 |
+| POST | `/api/bi/admin/data-sources/test` | 使用当前整对凭据或候选用户名与Token验证连接，不保存候选值 |
+| PUT | `/api/bi/admin/data-sources/token` | 服务端先验证候选配对，再原子替换该站共享用户名与Token |
 | GET | `/api/bi/admin/data-preview/status` | 返回临时测试数据功能和当前会话状态，不返回 Token |
 | POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的24小时内存会话 |
 | POST | `/api/bi/admin/data-preview/deactivate` | 删除当前服务端测试会话并清除预览 Cookie |
 
-候选验证失败不覆盖旧凭据。凭据文件使用 `0600`、独立临时文件和原子替换；两站并发更新在服务端串行化，成功后清上游缓存。当前探针只证明从指定站点目录中选出的首个启用 PID 与 `pDaySum` 可用，不等于该站全部 PID、接口和指标完成验数。
+维护请求保留`site`和`token`，兼容增加可选`userName`（去除首尾空白，1～256字符，禁止控制字符）。省略用户名时沿用同站实际生效用户名；修改用户名必须同时提供对应Token，不允许只改用户名后复用旧Token。`status.userName`展示实际生效账号，不再固定展示环境初始值。测试当前连接仅提交`site`，不受候选草稿影响；测试环境旁路仍使用独立固定测试账号。
+
+候选验证失败不覆盖旧整对凭据。凭据文件使用`0600`、独立临时文件和原子替换；两站并发更新在服务端串行化，验证和保存使用同一个冻结配对。新记录保存`userName/token/updatedAt`；旧Token-only记录绑定原同站环境用户名。新记录整对生效，不分别回退；成功后清上游缓存，缓存分区继续包含实际用户名与Token的摘要。只回退应用不足以安全回退新账号，须同时恢复受保护的发布前凭据文件及匹配配置；备份不得进入仓库或导出。当前探针只证明从指定站点目录中选出的首个启用PID与`pDaySum`可用，不等于该站全部PID、接口和指标完成验数。此扩展的测试与部署状态见[用户名配对维护](deployment.md#2026-10-20-共享用户名与token配对维护)。
 
 ## 6. V2 只读 API
 
