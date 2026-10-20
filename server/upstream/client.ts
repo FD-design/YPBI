@@ -8,7 +8,12 @@ import { currentUpstreamRequestProfile } from "./request-profile";
 import { RequestWorkQueue } from "./request-work-queue";
 
 export type CredentialSite = PlatformSiteId;
-interface PersistedCredentials { primary?: { token: string; updatedAt: string }; secondary?: { token: string; updatedAt: string } }
+interface StoredCredential { token: string; userName?: string; updatedAt: string }
+interface PersistedCredentials { primary?: StoredCredential; secondary?: StoredCredential }
+interface CredentialProfile { baseUrl: string; token?: string; userName?: string }
+function validUserName(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
+}
 interface PendingRead {
   promise: Promise<unknown>;
   signal: AbortSignal;
@@ -52,13 +57,23 @@ export class UpstreamClient {
     }
   }
 
+  private credentialForSite(site: CredentialSite) {
+    const stored = this.credentials[site];
+    const fallback = site === "primary"
+      ? { token: this.env.UPSTREAM_X_TOKEN, userName: this.env.UPSTREAM_USER_NAME }
+      : { token: this.env.UPSTREAM_SECONDARY_X_TOKEN, userName: this.env.UPSTREAM_SECONDARY_USER_NAME };
+    return stored
+      ? { token: stored.token, userName: Object.hasOwn(stored, "userName") ? stored.userName : fallback.userName, updatedAt: stored.updatedAt }
+      : { ...fallback, updatedAt: null };
+  }
+
   credentialStatus() {
-    const status = (site: CredentialSite, fallback?: string, userName?: string) => {
-      const stored = this.credentials[site];
-      const token = stored?.token ?? fallback ?? "";
-      return { site, configured: Boolean(token), tokenHint: token ? `••••${token.slice(-4)}` : "未配置", updatedAt: stored?.updatedAt ?? null, userName: userName ?? "" };
+    const status = (site: CredentialSite) => {
+      const { token, userName, updatedAt } = this.credentialForSite(site);
+      const configured = typeof token === "string" && token.length > 0 && validUserName(userName);
+      return { site, configured, tokenHint: configured ? `••••${token.slice(-4)}` : "未配置", updatedAt, userName: validUserName(userName) ? userName : "" };
     };
-    return [status("primary", this.env.UPSTREAM_X_TOKEN, this.env.UPSTREAM_USER_NAME), status("secondary", this.env.UPSTREAM_SECONDARY_X_TOKEN, this.env.UPSTREAM_SECONDARY_USER_NAME)];
+    return [status("primary"), status("secondary")];
   }
 
   /** Tests a projected diagnostic string without exposing configured secrets. */
@@ -66,6 +81,7 @@ export class UpstreamClient {
     const profile = currentUpstreamRequestProfile();
     const protectedValues = [
       this.credentials.primary?.token, this.credentials.secondary?.token,
+      this.credentials.primary?.userName, this.credentials.secondary?.userName,
       this.env.UPSTREAM_X_TOKEN, this.env.UPSTREAM_SECONDARY_X_TOKEN,
       this.env.TOKEN_MAINTENANCE_KEY, this.env.BI_AUTH_CSRF_SECRET,
       this.env.DATABASE_URL, this.env.BI_AUTH_DATABASE_URL,
@@ -77,13 +93,26 @@ export class UpstreamClient {
     return protectedValues.some(secret => typeof secret === "string" && secret.length > 0 && value.includes(secret));
   }
 
-  async verifyCredential(site: CredentialSite, token?: string) {
+  private candidateProfile(site: CredentialSite, token?: string, userName?: string) {
     const profile = this.profileForSite(site);
     const testToken = token ?? profile.token;
-    if (!testToken) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
+    if (typeof testToken !== "string" || !testToken) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
+    const testUserName = userName === undefined ? profile.userName : typeof userName === "string" ? userName.trim() : undefined;
+    if (!validUserName(testUserName)) {
+      if (userName !== undefined) throw new UpstreamError("INVALID_CREDENTIAL_INPUT", "后台用户名格式不合法", 400);
+      throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源用户名尚未配置", 503);
+    }
+    return Object.freeze({ baseUrl: profile.baseUrl, token: testToken, userName: testUserName });
+  }
+
+  async verifyCredential(site: CredentialSite, token?: string, userName?: string) {
+    return this.verifySiteProfile(site, this.candidateProfile(site, token, userName));
+  }
+
+  private async verifySiteProfile(site: CredentialSite, profile: CredentialProfile) {
     const probePlatform = enabledPlatformsForSite(site)[0];
     if (!probePlatform) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", `站点 ${site} 当前没有可用业务 PID`, 503);
-    await this.verifyProfile({ ...profile, token: testToken }, probePlatform.pid);
+    await this.verifyProfile(profile, probePlatform.pid);
     return { site, valid: true, checkedAt: new Date().toISOString() };
   }
 
@@ -106,18 +135,25 @@ export class UpstreamClient {
     return { valid: true as const, checkedAt: new Date().toISOString() };
   }
 
-  private async verifyProfile(profile: { baseUrl: string; token?: string; userName?: string }, pid: string) {
+  private async verifyProfile(profile: CredentialProfile, pid: string) {
     if (!profile.token) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
+    if (!validUserName(profile.userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源用户名尚未配置", 503);
     const end = new Date();
     const start = new Date(end); start.setDate(end.getDate() - 1);
     const url = new URL("/api/admin/statistics/pDaySum", profile.baseUrl);
     const params = { page: "1", count: "1", pid, sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`, sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59` };
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    await this.fetchJson(url, profile.token, profile.userName);
+    try { await this.fetchJson(url, profile.token, profile.userName); }
+    catch (error) {
+      if (error instanceof UpstreamError && error.code === "UPSTREAM_INVALID_REQUEST") {
+        throw new UpstreamError(error.code, "后台拒绝凭据验证请求", error.statusCode);
+      }
+      throw error;
+    }
   }
 
-  updateCredential(site: CredentialSite, token: string) {
-    const operation = this.credentialUpdateQueue.then(() => this.persistCredential(site, token));
+  updateCredential(site: CredentialSite, token: string, userName?: string) {
+    const operation = this.credentialUpdateQueue.then(() => this.persistCredential(site, token, userName));
     this.credentialUpdateQueue = operation.then(
       () => undefined,
       () => undefined
@@ -125,9 +161,10 @@ export class UpstreamClient {
     return operation;
   }
 
-  private async persistCredential(site: CredentialSite, token: string) {
-    await this.verifyCredential(site, token);
-    const next: PersistedCredentials = { ...this.credentials, [site]: { token, updatedAt: new Date().toISOString() } };
+  private async persistCredential(site: CredentialSite, token: string, userName?: string) {
+    const profile = this.candidateProfile(site, token, userName);
+    await this.verifySiteProfile(site, profile);
+    const next: PersistedCredentials = { ...this.credentials, [site]: { userName: profile.userName, token: profile.token, updatedAt: new Date().toISOString() } };
     const file = this.env.UPSTREAM_CREDENTIALS_FILE;
     await mkdir(dirname(file), { recursive: true });
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
@@ -150,9 +187,10 @@ export class UpstreamClient {
     const profile = this.selectProfile(params.pid);
     const token = requestProfile?.token ?? inboundToken ?? profile.token;
     const userName = profile.userName;
-    if (!token) {
+    if (typeof token !== "string" || !token) {
       throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源 Token 尚未配置", 503);
     }
+    if (!validUserName(userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源用户名尚未配置", 503);
     const url = new URL(path, profile.baseUrl);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
     const partition = requestProfile?.cachePartition
@@ -249,14 +287,15 @@ export class UpstreamClient {
   }
 
   private profileForSite(site: CredentialSite) {
+    const { token, userName } = this.credentialForSite(site);
     if (site === "secondary") {
-      if (!this.env.UPSTREAM_SECONDARY_API_BASE_URL || !this.env.UPSTREAM_SECONDARY_USER_NAME) {
+      if (!this.env.UPSTREAM_SECONDARY_API_BASE_URL) {
         throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "站2尚未完整配置后台地址和用户名", 503);
       }
-      return { baseUrl: this.env.UPSTREAM_SECONDARY_API_BASE_URL, token: this.credentials.secondary?.token ?? this.env.UPSTREAM_SECONDARY_X_TOKEN, userName: this.env.UPSTREAM_SECONDARY_USER_NAME };
+      return { baseUrl: this.env.UPSTREAM_SECONDARY_API_BASE_URL, token, userName };
     }
     if (!this.env.UPSTREAM_API_BASE_URL) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "站1尚未配置后台地址", 503);
-    return { baseUrl: this.env.UPSTREAM_API_BASE_URL, token: this.credentials.primary?.token ?? this.env.UPSTREAM_X_TOKEN, userName: this.env.UPSTREAM_USER_NAME };
+    return { baseUrl: this.env.UPSTREAM_API_BASE_URL, token, userName };
   }
 
   private async fetchJson(url: URL, token?: string, userName?: string, timeoutMs = this.env.REQUEST_TIMEOUT_MS, signal?: AbortSignal): Promise<unknown> {

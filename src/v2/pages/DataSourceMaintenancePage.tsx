@@ -51,6 +51,8 @@ interface SiteNotice {
   tone: "neutral" | "pending" | "success" | "danger";
   message: string;
   checkedAt?: string;
+  code?: string;
+  requestId?: string;
 }
 
 const SITES: CredentialSite[] = ["primary", "secondary"];
@@ -89,6 +91,10 @@ function siteName(site: CredentialSite) {
   return site === "primary" ? "站1" : "站2";
 }
 
+function validUpstreamUserName(value: string) {
+  return value.length >= 1 && value.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(value);
+}
+
 function saveOutcomeUnknown(error: AdminRequestError) {
   return error.status === 0 || (error.status >= 500 && error.kind !== "upstream") || error.code === "INVALID_ADMIN_RESPONSE";
 }
@@ -123,7 +129,7 @@ function SaveConfirmationDialog({
     onCancel={(event) => { event.preventDefault(); if (!busy) onCancel(); }}
   >
     <div className="v2-save-dialog__icon"><AlertTriangle aria-hidden="true" /></div>
-    <div><h2 id={`save-title-${site}`}>确认替换{siteName(site)}当前 Token？</h2><p id={`save-description-${site}`}>系统会再次验证候选凭证；收到成功结果后对全站所有用户的查询立即生效。若响应中断，页面会提示先核对当前连接。</p></div>
+    <div><h2 id={`save-title-${site}`}>确认更新{siteName(site)}共享凭据？</h2><p id={`save-description-${site}`}>系统会再次验证本次后台用户名与候选 Token；成功后立即用于该站全站所有用户的查询。若响应中断，页面会提示先核对当前连接。</p></div>
     <div className="v2-save-dialog__actions"><button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={onCancel} disabled={busy} autoFocus><X aria-hidden="true" />取消</button><button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={onConfirm} disabled={busy}>{busy ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <Save aria-hidden="true" />}确认验证并保存</button></div>
   </dialog>;
 }
@@ -132,7 +138,7 @@ function SourceConnectionGuide() {
   return <section className="v2-source-guide" aria-label="真实数据接入步骤">
     <h2>接入真实数据</h2>
     <ol>
-      <li><b>取得后台 Token</b><span>使用对应站点的后台账号；Token 与下方请求用户名必须配套。</span></li>
+      <li><b>取得后台 Token</b><span>使用对应站点的后台账号；通常沿用当前用户名，换账号时再同步修改。</span></li>
       <li><b>验证并保存</b><span>先验证候选凭证，保存成功后由 BI 服务端自动用于该站点查询。</span></li>
       <li><b>核对指标接入</b><span>逐项核对字段、口径与数据范围。<ProductLink href="/data/metrics">查看指标接入状态</ProductLink></span></li>
     </ol>
@@ -151,6 +157,8 @@ export function DataSourceMaintenancePage() {
   const [operation, setOperation] = useState<Operation>({ kind: "idle" });
   const [password, setPassword] = useState("");
   const [drafts, setDrafts] = useState<Record<CredentialSite, string>>({ primary: "", secondary: "" });
+  const [userNameDrafts, setUserNameDrafts] = useState<Record<CredentialSite, string>>({ primary: "", secondary: "" });
+  const [editingUserNames, setEditingUserNames] = useState<Record<CredentialSite, boolean>>({ primary: false, secondary: false });
   const [notices, setNotices] = useState<Record<CredentialSite, SiteNotice>>(INITIAL_NOTICES);
   const [pageError, setPageError] = useState<AdminRequestError | null>(null);
   const [confirmingSite, setConfirmingSite] = useState<CredentialSite | null>(null);
@@ -164,13 +172,16 @@ export function DataSourceMaintenancePage() {
 
   const clearSensitiveState = () => {
     setDrafts({ primary: "", secondary: "" });
+    setUserNameDrafts({ primary: "", secondary: "" });
+    setEditingUserNames({ primary: false, secondary: false });
     setNotices(INITIAL_NOTICES);
     setConfirmingSite(null);
     setPreviewToken("");
   };
 
-  const focusSiteFeedback = (site: CredentialSite, target: "status" | "input") => {
-    window.requestAnimationFrame(() => document.getElementById(target === "status" ? `probe-status-${site}` : `token-${site}`)?.focus());
+  const focusSiteFeedback = (site: CredentialSite, target: "status" | "token" | "userName") => {
+    const id = target === "status" ? `probe-status-${site}` : target === "userName" ? `username-${site}` : `token-${site}`;
+    window.requestAnimationFrame(() => document.getElementById(id)?.focus());
   };
 
   const handleAccessError = (error: unknown) => {
@@ -245,29 +256,46 @@ export function DataSourceMaintenancePage() {
     if (operation.kind !== "idle" || access.status !== "ready") return;
     setPageError(null);
     const token = drafts[site].trim();
+    const source = access.sources.find((item) => item.site === site);
+    const editingUserName = kind !== "current" && editingUserNames[site];
+    const userName = kind === "current" ? "" : (editingUserName ? userNameDrafts[site] : source?.userName ?? "").trim();
     if (kind !== "current" && (token.length < 16 || token.length > 4096)) {
       setNotices((current) => ({ ...current, [site]: { tone: "danger", message: "候选 Token 长度应为 16～4096 个字符" } }));
+      focusSiteFeedback(site, "token");
+      return;
+    }
+    if (kind !== "current" && (userName.length < 1 || userName.length > 256)) {
+      setEditingUserNames((current) => ({ ...current, [site]: true }));
+      setNotices((current) => ({ ...current, [site]: { tone: "danger", message: "请先填写 1～256 个字符的候选后台用户名" } }));
+      focusSiteFeedback(site, "userName");
+      return;
+    }
+    if (kind !== "current" && !validUpstreamUserName(userName)) {
+      setNotices((current) => ({ ...current, [site]: { tone: "danger", message: "候选后台用户名不能包含控制字符" } }));
+      focusSiteFeedback(site, "userName");
       return;
     }
     setOperation({ kind, site });
     setNotices((current) => ({ ...current, [site]: { tone: "pending", message: kind === "save" ? "正在再次验证并保存…" : "正在验证凭证探针…" } }));
     try {
       if (kind === "save") {
-        const updated = await updateDataSourceToken(site, token, csrfToken);
+        const updated = await updateDataSourceToken(site, token, csrfToken, editingUserName ? userName : undefined);
         setAccess((current) => current.status === "ready"
           ? { ...current, sources: current.sources.map((item) => item.site === site ? updated : item) }
           : current);
-        setNotices((current) => ({ ...current, [site]: { tone: "success", message: "候选 Token 已验证、保存并立即生效", checkedAt: updated.updatedAt ?? undefined } }));
+        setNotices((current) => ({ ...current, [site]: { tone: "success", message: "候选凭据已验证、保存并立即生效", checkedAt: updated.updatedAt ?? undefined } }));
         setDrafts((current) => ({ ...current, [site]: "" }));
+        setUserNameDrafts((current) => ({ ...current, [site]: updated.userName }));
+        setEditingUserNames((current) => ({ ...current, [site]: false }));
         setConfirmingSite(null);
         focusSiteFeedback(site, "status");
       } else {
-        const result = await testDataSource(site, csrfToken, kind === "candidate" ? token : undefined);
+        const result = await testDataSource(site, csrfToken, kind === "candidate" ? token : undefined, kind === "candidate" && editingUserName ? userName : undefined);
         setNotices((current) => ({
           ...current,
           [site]: {
             tone: "success",
-            message: kind === "candidate" ? "候选 Token 验证通过，未保存，当前凭证未改变" : "当前凭证探针通过",
+            message: kind === "candidate" ? "候选凭据验证通过，未保存，当前凭证未改变" : "当前凭证探针通过",
             checkedAt: result.checkedAt
           }
         }));
@@ -285,12 +313,12 @@ export function DataSourceMaintenancePage() {
         const message = unknown
           ? "保存结果未确认。请先测试当前连接或刷新页面核对，不要直接假定旧凭证仍有效"
           : kind === "save"
-            ? `${problem.message}；服务端已明确拒绝本次更新，原凭证保持不变`
+            ? `${problem.message}；服务端已明确拒绝本次更新，原后台账号与 Token 保持不变`
             : kind === "candidate"
-              ? `${problem.message}；候选 Token 未保存，可修改后重试`
+              ? `${problem.message}；候选凭据未保存，可修改后重试`
               : problem.message;
-        setNotices((current) => ({ ...current, [site]: { tone: "danger", message } }));
-        focusSiteFeedback(site, unknown ? "status" : "input");
+        setNotices((current) => ({ ...current, [site]: { tone: "danger", message, code: problem.code, requestId: problem.requestId } }));
+        focusSiteFeedback(site, unknown ? "status" : "token");
       }
     } finally {
       if (kind === "save") setConfirmingSite(null);
@@ -382,7 +410,7 @@ export function DataSourceMaintenancePage() {
   const busy = operation.kind !== "idle";
   return <div className="v2-page" data-page="data-source-maintenance">
     <header className="v2-page-head">
-      <div><span className="v2-eyebrow">管理中心</span><h1>数据源维护</h1><p>所有已登录用户均可在此维护共享 Token；保存后对全站查询生效。日常查询由 BI 后端自动携带凭证。</p></div>
+      <div><span className="v2-eyebrow">管理中心</span><h1>数据源维护</h1><p>所有已登录用户均可在此维护共享凭据；保存后对全站查询生效。日常查询由 BI 后端自动携带凭证。</p></div>
       <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={logout} disabled={busy}>{operation.kind === "logout" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <LogOut aria-hidden="true" />}退出维护</button>
     </header>
 
@@ -398,6 +426,10 @@ export function DataSourceMaintenancePage() {
         const siteOperation = operation.kind !== "idle" && "site" in operation && operation.site === site ? operation.kind : null;
         const draftLength = drafts[site].trim().length;
         const draftValid = draftLength >= 16 && draftLength <= 4096;
+        const currentUserName = (source?.userName ?? "").trim();
+        const editingUserName = editingUserNames[site];
+        const candidateUserName = (editingUserName ? userNameDrafts[site] : currentUserName).trim();
+        const candidateUserNameValid = validUpstreamUserName(candidateUserName);
         return <article className="v2-source-card" key={site}>
           <header className="v2-source-card__head">
             <div className="v2-source-title"><Database aria-hidden="true" /><div><h2>{siteName(site)}</h2><span>{site === "primary" ? "主后台" : "第二后台"}</span></div></div>
@@ -405,7 +437,14 @@ export function DataSourceMaintenancePage() {
           </header>
 
           <dl className="v2-source-facts">
-            <div><dt>请求用户名</dt><dd>{source?.userName || "未配置"}</dd></div>
+            <div><dt>当前后台用户名</dt><dd>{currentUserName || "未配置（需先设置）"} <button type="button" className="ui-button ui-button--ghost ui-button--lg v2-source-account-action" aria-expanded={editingUserName} aria-controls={`username-editor-${site}`} disabled={busy} onClick={() => {
+              const nextEditing = !editingUserName;
+              setUserNameDrafts((current) => ({ ...current, [site]: source?.userName ?? "" }));
+              setEditingUserNames((current) => ({ ...current, [site]: nextEditing }));
+              setNotices((current) => ({ ...current, [site]: INITIAL_NOTICES[site] }));
+              if (confirmingSite === site) setConfirmingSite(null);
+              if (nextEditing) focusSiteFeedback(site, "userName");
+            }}>{editingUserName ? "取消修改" : currentUserName ? "修改" : "设置"}</button></dd></div>
             <div><dt>当前 Token</dt><dd>{source?.tokenHint || "未配置"}</dd></div>
             <div><dt>Token 更新时间</dt><dd>{source?.configured ? formatTimestamp(source.updatedAt) : "尚未配置"}</dd></div>
             <div><dt>PID 路由范围</dt><dd>由服务器配置决定，当前接口不返回具体清单</dd></div>
@@ -413,18 +452,23 @@ export function DataSourceMaintenancePage() {
 
           <div id={`probe-status-${site}`} className={`v2-probe-status is-${notice.tone}`} role={notice.tone === "danger" ? "alert" : "status"} aria-live="polite" tabIndex={-1}>
             {notice.tone === "pending" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : notice.tone === "success" ? <CheckCircle2 aria-hidden="true" /> : notice.tone === "danger" ? <AlertTriangle aria-hidden="true" /> : <TestTubeDiagonal aria-hidden="true" />}
-            <span><b>凭证探针</b>{notice.message}{notice.checkedAt && <small>检测时间：{formatTimestamp(notice.checkedAt)}</small>}</span>
+            <span><b>凭证探针</b>{notice.message}{notice.checkedAt && <small>检测时间：{formatTimestamp(notice.checkedAt)}</small>}{(notice.code || notice.requestId) && <small>{notice.code && `错误代码：${notice.code}`}{notice.code && notice.requestId && "；"}{notice.requestId && `请求 ID：${notice.requestId}`}</small>}</span>
           </div>
 
           <button type="button" className="ui-button ui-button--secondary ui-button--lg v2-test-current" disabled={busy || !source?.configured} onClick={() => runSiteOperation("current", site)}>{siteOperation === "current" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}{siteOperation === "current" ? "正在测试" : "测试当前连接"}</button>
 
-          <div className="v2-token-editor">
+          <div className="v2-token-editor" id={`username-editor-${site}`}>
+            {editingUserName && <>
+              <label htmlFor={`username-${site}`}><span>候选后台用户名</span><input id={`username-${site}`} type="text" autoComplete="off" data-1p-ignore="true" data-lpignore="true" autoCapitalize="none" spellCheck={false} minLength={1} maxLength={256} aria-describedby={`username-help-${site}${candidateUserNameValid ? "" : ` username-error-${site}`}`} placeholder="填写与候选 Token 配套的后台用户名" value={userNameDrafts[site]} onChange={(event) => { setUserNameDrafts((current) => ({ ...current, [site]: event.target.value })); setNotices((current) => ({ ...current, [site]: INITIAL_NOTICES[site] })); if (confirmingSite === site) setConfirmingSite(null); }} disabled={busy} /></label>
+              <small id={`username-help-${site}`}>只在更换后台账号时修改；保存后该站全站共用新的用户名与 Token。</small>
+              {!candidateUserNameValid && <p id={`username-error-${site}`} className="v2-field-error">请输入 1～256 个字符，且不能包含控制字符</p>}
+            </>}
             <label htmlFor={`token-${site}`}><span>候选 Token</span><input id={`token-${site}`} type="password" autoComplete="off" data-1p-ignore="true" data-lpignore="true" autoCapitalize="none" spellCheck={false} minLength={16} maxLength={4096} aria-describedby={`token-help-${site}${draftLength > 0 && !draftValid ? ` token-error-${site}` : ""}`} placeholder="粘贴后可先仅验证，不保存" value={drafts[site]} onChange={(event) => { setDrafts((current) => ({ ...current, [site]: event.target.value })); setNotices((current) => ({ ...current, [site]: INITIAL_NOTICES[site] })); if (confirmingSite === site) setConfirmingSite(null); }} disabled={busy} /></label>
-            <small id={`token-help-${site}`}><EyeOff aria-hidden="true" />仅更新 Token；请求地址、用户名与 PID 路由由服务器维护。</small>
+            <small id={`token-help-${site}`}><EyeOff aria-hidden="true" />默认沿用当前后台用户名；更换账号时请先修改用户名，再提交配套 Token。</small>
             {draftLength > 0 && !draftValid && <p id={`token-error-${site}`} className="v2-field-error">Token 长度应为 16～4096 个字符</p>}
             <div className="v2-source-actions">
-              <button type="button" className="ui-button ui-button--secondary ui-button--lg" disabled={busy || !draftValid} onClick={() => runSiteOperation("candidate", site)}>{siteOperation === "candidate" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <TestTubeDiagonal aria-hidden="true" />}{siteOperation === "candidate" ? "正在验证" : "仅验证，不保存"}</button>
-              <button id={`save-token-${site}`} type="button" className="ui-button ui-button--primary ui-button--lg" disabled={busy || !draftValid} onClick={() => setConfirmingSite(site)}><Save aria-hidden="true" />验证并保存</button>
+              <button type="button" className="ui-button ui-button--secondary ui-button--lg" disabled={busy || !draftValid || !candidateUserNameValid} onClick={() => runSiteOperation("candidate", site)}>{siteOperation === "candidate" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <TestTubeDiagonal aria-hidden="true" />}{siteOperation === "candidate" ? "正在验证" : "仅验证，不保存"}</button>
+              <button id={`save-token-${site}`} type="button" className="ui-button ui-button--primary ui-button--lg" disabled={busy || !draftValid || !candidateUserNameValid} onClick={() => setConfirmingSite(site)}><Save aria-hidden="true" />验证并保存</button>
             </div>
           </div>
 

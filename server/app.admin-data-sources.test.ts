@@ -151,6 +151,102 @@ async function login(app: FastifyInstance) {
 }
 
 describe("数据源维护管理接口", () => {
+  test("旧固定账号搭配新Token被拒绝，提交正确账号配对后才可保存连接", async () => {
+    const { app, credentialsFile, observedRequests } = await createHarness({ upstreamResponse: request => new Response(JSON.stringify(
+      request.userName === "fake-token-owner" && request.token === CANDIDATE_PRIMARY_TOKEN
+        ? { code: 200, msg: { pageData: [] } }
+        : { code: 2002, err: "fake credential account mismatch" }
+    )) });
+    const cookie = await login(app);
+    const wrongPair = await app.inject({ method: "POST", url: "/api/bi/admin/data-sources/test", headers: { cookie }, payload: { site: "primary", token: CANDIDATE_PRIMARY_TOKEN } });
+    expect(wrongPair.statusCode).toBe(401);
+    expect(wrongPair.json().error.code).toBe("UPSTREAM_AUTH_FAILED");
+    expect(observedRequests.at(-1)?.userName).toBe("fake-primary-user");
+    expect(existsSync(credentialsFile)).toBe(false);
+    const corrected = await app.inject({ method: "PUT", url: "/api/bi/admin/data-sources/token", headers: { cookie }, payload: { site: "primary", userName: "fake-token-owner", token: CANDIDATE_PRIMARY_TOKEN } });
+    expect(corrected.statusCode).toBe(200);
+    expect(corrected.json().data.userName).toBe("fake-token-owner");
+    const current = await app.inject({ method: "POST", url: "/api/bi/admin/data-sources/test", headers: { cookie }, payload: { site: "primary" } });
+    expect(current.statusCode).toBe(200);
+    expect(observedRequests.at(-1)).toMatchObject({ userName: "fake-token-owner", token: CANDIDATE_PRIMARY_TOKEN });
+  });
+
+  test("候选账号与Token成对验证但不保存；保存后只更新Token沿用已保存账号", async () => {
+    const { app, observedRequests, credentialsFile } = await createHarness();
+    const cookie = await login(app);
+    const candidate = { site: "primary", userName: "  fake-own-primary-user  ", token: CANDIDATE_PRIMARY_TOKEN };
+    const probe = await app.inject({ method: "POST", url: "/api/bi/admin/data-sources/test", headers: { cookie }, payload: candidate });
+    expect(probe.statusCode).toBe(200);
+    expect(observedRequests.at(-1)).toMatchObject({ userName: "fake-own-primary-user", token: CANDIDATE_PRIMARY_TOKEN });
+    expect(existsSync(credentialsFile)).toBe(false);
+    const before = await app.inject({ method: "GET", url: "/api/bi/admin/data-sources/status", headers: { cookie } });
+    expect(before.json().data[0].userName).toBe("fake-primary-user");
+
+    const saved = await app.inject({ method: "PUT", url: "/api/bi/admin/data-sources/token", headers: { cookie }, payload: candidate });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().data.userName).toBe("fake-own-primary-user");
+    expect(saved.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
+    const rotated = await app.inject({ method: "PUT", url: "/api/bi/admin/data-sources/token", headers: { cookie }, payload: { site: "primary", token: SECOND_PREVIEW_TOKEN } });
+    expect(rotated.statusCode).toBe(200);
+    expect(rotated.json().data.userName).toBe("fake-own-primary-user");
+    expect(observedRequests.at(-1)).toMatchObject({ userName: "fake-own-primary-user", token: SECOND_PREVIEW_TOKEN });
+    const disk = JSON.parse(await readFile(credentialsFile, "utf8"));
+    expect(disk.primary).toMatchObject({ userName: "fake-own-primary-user", token: SECOND_PREVIEW_TOKEN });
+
+    const current = await app.inject({ method: "POST", url: "/api/bi/admin/data-sources/test", headers: { cookie }, payload: { site: "primary" } });
+    expect(current.statusCode).toBe(200);
+    expect(observedRequests.at(-1)).toMatchObject({ userName: "fake-own-primary-user", token: SECOND_PREVIEW_TOKEN });
+    await app.inject({ method: "POST", url: "/api/bi/admin/data-sources/test", headers: { cookie }, payload: { site: "secondary" } });
+    expect(observedRequests.at(-1)).toMatchObject({ userName: "fake-secondary-user", token: "fake-current-secondary-token-0004" });
+  });
+
+  test("候选配对被后台拒绝时完整保留原账号和Token", async () => {
+    const { app, credentialsFile } = await createHarness({ upstreamResponse: request => new Response(JSON.stringify(
+      request.token === REJECTED_PRIMARY_TOKEN ? { code: 2002, err: "fake rejected credential" } : { code: 200, msg: { pageData: [] } }
+    )) });
+    const cookie = await login(app);
+    await app.inject({ method: "PUT", url: "/api/bi/admin/data-sources/token", headers: { cookie }, payload: { site: "primary", userName: "fake-saved-user", token: CANDIDATE_PRIMARY_TOKEN } });
+    const before = await readFile(credentialsFile, "utf8");
+    const rejected = await app.inject({ method: "PUT", url: "/api/bi/admin/data-sources/token", headers: { cookie }, payload: { site: "primary", userName: "fake-rejected-user", token: REJECTED_PRIMARY_TOKEN } });
+    expect(rejected.statusCode).toBe(401);
+    expect(rejected.body).not.toContain(REJECTED_PRIMARY_TOKEN);
+    expect(rejected.body).not.toContain("fake-rejected-user");
+    expect(await readFile(credentialsFile, "utf8")).toBe(before);
+    const status = await app.inject({ method: "GET", url: "/api/bi/admin/data-sources/status", headers: { cookie } });
+    expect(status.json().data[0].userName).toBe("fake-saved-user");
+  });
+
+  test("后台用户名为空、非法控制字符或缺配套Token时不访问上游", async () => {
+    const { app, observedRequests } = await createHarness();
+    const cookie = await login(app);
+    for (const userName of ["", "   ", "bad\r\nname", "bad\u0000name", "a".repeat(257), 123]) {
+      for (const method of ["POST", "PUT"] as const) {
+        const response = await app.inject({ method, url: `/api/bi/admin/data-sources/${method === "POST" ? "test" : "token"}`, headers: { cookie }, payload: { site: "primary", userName, token: CANDIDATE_PRIMARY_TOKEN } });
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error.code).toBe("INVALID_CREDENTIAL_INPUT");
+      }
+    }
+    const nameOnly = await app.inject({ method: "POST", url: "/api/bi/admin/data-sources/test", headers: { cookie }, payload: { site: "primary", userName: "fake-own-user" } });
+    expect(nameOnly.statusCode).toBe(400);
+    expect(observedRequests).toHaveLength(0);
+  });
+
+  test("凭据探针拒绝不回显上游错误中的候选Token或账号", async () => {
+    const { app, credentialsFile } = await createHarness({ upstreamResponse: request => new Response(JSON.stringify({
+      code: 400, err: `fake reflected ${request.token} ${request.userName}`
+    })) });
+    const cookie = await login(app);
+    for (const method of ["POST", "PUT"] as const) {
+      const response = await app.inject({ method, url: `/api/bi/admin/data-sources/${method === "POST" ? "test" : "token"}`, headers: { cookie }, payload: { site: "primary", userName: "fake-reflected-account", token: CANDIDATE_PRIMARY_TOKEN } });
+      expect(response.statusCode).toBe(422);
+      expect(response.json().error.code).toBe("UPSTREAM_INVALID_REQUEST");
+      expect(response.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
+      expect(response.body).not.toContain("fake-reflected-account");
+      expect(response.body).not.toContain("fake reflected");
+    }
+    expect(existsSync(credentialsFile)).toBe(false);
+  });
+
   test("临时测试 Token 验证后只进入当前用户内存会话，正式默认路径保持不变", async () => {
     const { app, observedRequests, credentialsFile } = await createHarness({
       envOverrides: {

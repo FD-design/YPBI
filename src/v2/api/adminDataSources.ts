@@ -218,21 +218,21 @@ export async function logoutMaintenance(csrfToken: string) {
   return payload.data;
 }
 
-export async function testDataSource(site: CredentialSite, csrfToken: string, token?: string) {
+export async function testDataSource(site: CredentialSite, csrfToken: string, token?: string, userName?: string) {
   const payload = await requestJson("/api/bi/admin/data-sources/test", testResponseSchema, {
     method: "POST",
     headers: { "x-csrf-token": csrfToken },
-    body: JSON.stringify(token === undefined ? { site } : { site, token })
+    body: JSON.stringify(token === undefined ? { site } : { site, token, ...(userName === undefined ? {} : { userName }) })
   }, CREDENTIAL_PROBE_TIMEOUT_MS);
   if (payload.data.site !== site) throw invalidResponse(200);
   return payload.data;
 }
 
-export async function updateDataSourceToken(site: CredentialSite, token: string, csrfToken: string) {
+export async function updateDataSourceToken(site: CredentialSite, token: string, csrfToken: string, userName?: string) {
   const payload = await requestJson("/api/bi/admin/data-sources/token", updateResponseSchema, {
     method: "PUT",
     headers: { "x-csrf-token": csrfToken },
-    body: JSON.stringify({ site, token })
+    body: JSON.stringify({ site, token, ...(userName === undefined ? {} : { userName }) })
   });
   if (payload.data.site !== site) throw invalidResponse(200);
   return payload.data;

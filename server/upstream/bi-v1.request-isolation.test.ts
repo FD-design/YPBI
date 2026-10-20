@@ -80,7 +80,7 @@ describe("HTTP 语义近例通过真实Client保持整路失败", () => {
     inputs: [{ key: "count", name: "次数", unit: "次" }] });
   for (const status of [200, 400, 422]) for (const message of otherMessages.slice(0, 2)) {
     test(`HTTP ${status} ${message}在通用指标和获客分组中均不拆单`, async () => {
-      const env = loadEnv({ NODE_ENV: "test", UPSTREAM_API_BASE_URL: "https://fixture.invalid", UPSTREAM_X_TOKEN: "fixture-only",
+      const env = loadEnv({ NODE_ENV: "test", UPSTREAM_API_BASE_URL: "https://fixture.invalid", UPSTREAM_X_TOKEN: "fixture-only", UPSTREAM_USER_NAME: "fixture-user",
         UPSTREAM_CREDENTIALS_FILE: join(tmpdir(), `bi-isolation-${randomUUID()}.json`) });
       const calls: Record<string, string>[] = [];
       const client = new UpstreamClient(env, async input => {

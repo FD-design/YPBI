@@ -3,7 +3,7 @@ import type { AppEnv } from "../config/env";
 import { UpstreamClient, UpstreamError } from "./client";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdir, mkdtemp, readFile, readdir, rm, unlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { runWithUpstreamRequestProfile } from "./request-profile";
 import { isBiV1MetricSelectionRejection } from "./bi-v1.request-isolation";
 
@@ -26,6 +26,190 @@ const env: AppEnv = {
   REQUEST_TIMEOUT_MS: 1000,
   MAX_PLATFORM_CONCURRENCY: 1
 };
+
+describe("UpstreamClient 站点用户名与Token配对", () => {
+  const response = () => new Response(JSON.stringify({ code: 200, msg: {} }), { status: 200 });
+  async function withFile(run: (file: string) => Promise<void>) {
+    const directory = await mkdtemp(join(tmpdir(), "bi-upstream-pair-"));
+    try { await run(join(directory, "credentials.json")); }
+    finally { await rm(directory, { recursive: true, force: true }); }
+  }
+  const requestPair = (init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    return { userName: headers.get("name"), token: headers.get("x-token") };
+  };
+
+  test("候选用户名与Token仅验证不保存，不改变当前配对及缓存", () => withFile(async file => {
+    const requests: Array<{ userName: string | null; token: string | null }> = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_url, init) => {
+      requests.push(requestPair(init)); return response();
+    });
+    await client.get("/api/pair", { pid: "PH" });
+    await client.verifyCredential("primary", "candidate-pair-token", "candidate-pair-user");
+    await client.get("/api/pair", { pid: "PH" });
+    expect(requests).toEqual([{ userName: "primary-user", token: "test-token" }, { userName: "candidate-pair-user", token: "candidate-pair-token" }]);
+    expect(client.credentialStatus()[0].userName).toBe("primary-user");
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  }));
+
+  test("两站整对原子保存并重启恢复，后续只换Token沿用实际用户名", () => withFile(async file => {
+    const requests: Array<{ url: string; userName: string | null; token: string | null }> = [];
+    const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: url.toString(), ...requestPair(init) }); return response();
+    };
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, fetcher);
+    await Promise.all([client.updateCredential("primary", "paired-primary-token", "paired-primary-user"),
+      client.updateCredential("secondary", "paired-secondary-token", "paired-secondary-user")]);
+    const persisted = JSON.parse(await readFile(file, "utf8"));
+    expect(persisted.primary).toMatchObject({ userName: "paired-primary-user", token: "paired-primary-token" });
+    expect(persisted.secondary).toMatchObject({ userName: "paired-secondary-user", token: "paired-secondary-token" });
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    const restarted = new UpstreamClient({ ...env, UPSTREAM_USER_NAME: "unused-primary-user", UPSTREAM_SECONDARY_USER_NAME: "unused-secondary-user", UPSTREAM_CREDENTIALS_FILE: file }, fetcher);
+    await restarted.verifyCredential("primary");
+    await restarted.updateCredential("primary", "rotated-primary-token");
+    await restarted.get("/api/pair", { pid: "PH" });
+    await restarted.get("/api/pair", { pid: "FBI" });
+    expect(requests.slice(-4).map(({ userName, token }) => ({ userName, token }))).toEqual([
+      { userName: "paired-primary-user", token: "paired-primary-token" },
+      { userName: "paired-primary-user", token: "rotated-primary-token" },
+      { userName: "paired-primary-user", token: "rotated-primary-token" },
+      { userName: "paired-secondary-user", token: "paired-secondary-token" }
+    ]);
+    expect(restarted.credentialStatus().map(({ site, userName, configured }) => ({ site, userName, configured }))).toEqual([
+      { site: "primary", userName: "paired-primary-user", configured: true },
+      { site: "secondary", userName: "paired-secondary-user", configured: true }
+    ]);
+    expect(JSON.stringify(restarted.credentialStatus())).not.toContain("rotated-primary-token");
+    expect(restarted.isProtectedDiagnosticText("prefix-paired-primary-user-suffix")).toBe(true);
+    expect(restarted.isProtectedDiagnosticText("paired-secondary-user")).toBe(true);
+    expect(JSON.parse(await readFile(file, "utf8")).primary.userName).toBe("paired-primary-user");
+  }));
+
+  test("旧token-only文件绑定原同站环境用户名，未迁移站点保持原值", () => withFile(async file => {
+    const old = { primary: { token: "legacy-primary-token", updatedAt: "2026-10-19T00:00:00Z" }, secondary: { token: "legacy-secondary-token", updatedAt: "2026-10-19T00:00:00Z" } };
+    await writeFile(file, JSON.stringify(old), { mode: 0o600 });
+    const requests: ReturnType<typeof requestPair>[] = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_url, init) => { requests.push(requestPair(init)); return response(); });
+    await client.get("/api/pair", { pid: "PH" }); await client.get("/api/pair", { pid: "FBI" });
+    expect(requests).toEqual([{ userName: "primary-user", token: "legacy-primary-token" }, { userName: "secondary-user", token: "legacy-secondary-token" }]);
+    await client.updateCredential("primary", "migrated-primary-token");
+    const persisted = JSON.parse(await readFile(file, "utf8"));
+    expect(persisted.primary).toMatchObject({ userName: "primary-user", token: "migrated-primary-token" });
+    expect(persisted.secondary).toEqual(old.secondary);
+  }));
+
+  test("新配对缺失任一项时不分别借用环境凭据", () => withFile(async file => {
+    for (const entry of [{ userName: "stored-user", updatedAt: "2026-10-19T00:00:00Z" }, { userName: "", token: "stored-token", updatedAt: "2026-10-19T00:00:00Z" }]) {
+      await writeFile(file, JSON.stringify({ primary: entry }), { mode: 0o600 });
+      let reads = 0;
+      const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async () => { reads++; return response(); });
+      expect(client.credentialStatus()[0]).toMatchObject({ configured: false, tokenHint: "未配置" });
+      await expect(client.get("/api/pair", { pid: "PH" })).rejects.toMatchObject({ code: "UPSTREAM_NOT_CONFIGURED" });
+      expect(reads).toBe(0);
+    }
+  }));
+
+  test("候选账号验证失败保持上一整对、文件及缓存，成功换账号后不复用旧缓存", () => withFile(async file => {
+    const requests: ReturnType<typeof requestPair>[] = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_url, init) => {
+      const pair = requestPair(init); requests.push(pair);
+      return pair.userName === "rejected-user" ? new Response(JSON.stringify({ code: 2002, err: "请重新登陆" }), { status: 200 }) : response();
+    });
+    await client.updateCredential("primary", "active-token", "active-user");
+    await client.get("/api/pair", { pid: "PH" });
+    const before = await readFile(file, "utf8");
+    await expect(client.updateCredential("primary", "rejected-token", "rejected-user")).rejects.toMatchObject({ code: "UPSTREAM_AUTH_FAILED" });
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect(client.credentialStatus()[0].userName).toBe("active-user");
+    const count = requests.length;
+    await client.get("/api/pair", { pid: "PH" });
+    expect(requests).toHaveLength(count);
+    await client.updateCredential("primary", "active-token", "next-user");
+    await client.get("/api/pair", { pid: "PH" });
+    expect(requests.at(-1)).toEqual({ userName: "next-user", token: "active-token" });
+  }));
+
+  test("同站并发更新在队列起点冻结配对，省略用户名沿用上一笔已生效配对", () => withFile(async file => {
+    let acceptFirst!: (value: Response) => void, startedFirst!: () => void;
+    const firstStarted = new Promise<void>(resolve => { startedFirst = resolve; });
+    const requests: ReturnType<typeof requestPair>[] = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_url, init) => {
+      const pair = requestPair(init); requests.push(pair);
+      if (pair.token === "first-token") { startedFirst(); return new Promise<Response>(resolve => { acceptFirst = resolve; }); }
+      return response();
+    });
+    const first = client.updateCredential("primary", "first-token", "first-user");
+    await firstStarted;
+    const second = client.updateCredential("primary", "second-token");
+    expect(client.credentialStatus()[0].userName).toBe("primary-user");
+    acceptFirst(response());
+    await Promise.all([first, second]);
+    expect(requests).toEqual([{ userName: "first-user", token: "first-token" }, { userName: "first-user", token: "second-token" }]);
+    expect(JSON.parse(await readFile(file, "utf8")).primary).toMatchObject({ userName: "first-user", token: "second-token" });
+  }));
+
+  test("独立候选探针保留开始时的配对，晚到成功不覆盖并发保存结果", () => withFile(async file => {
+    let acceptProbe!: (value: Response) => void;
+    const requests: ReturnType<typeof requestPair>[] = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_url, init) => {
+      const pair = requestPair(init); requests.push(pair);
+      return pair.token === "probe-only-token" ? new Promise<Response>(resolve => { acceptProbe = resolve; }) : response();
+    });
+    const probe = client.verifyCredential("primary", "probe-only-token", "probe-only-user");
+    await client.updateCredential("primary", "saved-pair-token", "saved-pair-user");
+    acceptProbe(response());
+    await expect(probe).resolves.toMatchObject({ site: "primary", valid: true });
+    await client.get("/api/pair", { pid: "PH" });
+    expect(requests).toEqual([{ userName: "probe-only-user", token: "probe-only-token" },
+      { userName: "saved-pair-user", token: "saved-pair-token" }, { userName: "saved-pair-user", token: "saved-pair-token" }]);
+    expect(client.credentialStatus()[0].userName).toBe("saved-pair-user");
+    expect(JSON.parse(await readFile(file, "utf8")).primary).toMatchObject({ userName: "saved-pair-user", token: "saved-pair-token" });
+  }));
+
+  test("正式凭据探针固定化业务拒绝消息，反射候选Token的失败更新不保存", () => withFile(async file => {
+    const reflectedToken = "fake-reflected-candidate-token", reflectedUser = "fake-reflected-user";
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_url, init) => {
+      const pair = requestPair(init);
+      return pair.token === reflectedToken ? new Response(JSON.stringify({ code: 400, err: `rejected ${pair.token} ${pair.userName}` }), { status: 200 }) : response();
+    });
+    await client.updateCredential("primary", "previous-safe-token", "previous-safe-user");
+    const before = await readFile(file, "utf8");
+    for (const operation of [() => client.verifyCredential("primary", reflectedToken, reflectedUser), () => client.updateCredential("primary", reflectedToken, reflectedUser)]) {
+      const error = await operation().catch(error => error);
+      expect(error).toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message: "后台拒绝凭据验证请求" });
+      expect(error.message).not.toContain(reflectedToken);
+      expect(error.message).not.toContain(reflectedUser);
+    }
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect(client.credentialStatus()[0]).toMatchObject({ userName: "previous-safe-user", tokenHint: "••••oken" });
+    await client.get("/api/pair", { pid: "PH" });
+  }));
+
+  test("临时测试凭据探针同样固定化反射错误，普通数据请求保留原业务诊断", () => withFile(async file => {
+    const reflectedToken = "fake-reflected-preview-token", message = `fixture rejection ${reflectedToken}`;
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file, BI_TEST_DATA_PREVIEW_ENABLED: true,
+      UPSTREAM_TEST_API_BASE_URL: "https://preview.invalid", UPSTREAM_TEST_USER_NAME: "preview-user" }, async () =>
+      new Response(JSON.stringify({ code: 400, err: message }), { status: 200 }));
+    await expect(client.verifyPreviewCredential(reflectedToken)).rejects.toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message: "后台拒绝凭据验证请求" });
+    await expect(client.get("/api/data", { pid: "PH" })).rejects.toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message });
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  }));
+
+  test("候选用户名校验失败不发请求也不写入，测试上下文仍独立", () => withFile(async file => {
+    const requests: ReturnType<typeof requestPair>[] = [];
+    const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_url, init) => { requests.push(requestPair(init)); return response(); });
+    for (const userName of ["", "  ", "bad\nuser", "x".repeat(257)]) {
+      await expect(client.updateCredential("primary", "valid-token", userName)).rejects.toMatchObject({ code: "INVALID_CREDENTIAL_INPUT" });
+    }
+    expect(requests).toHaveLength(0);
+    await client.updateCredential("primary", "shared-token", "shared-user");
+    await runWithUpstreamRequestProfile({ environment: "test", baseUrl: "https://preview.invalid", userName: "preview-user", token: "preview-token", cachePartition: "preview-pair" }, async () => {
+      await client.get("/api/pair", { pid: "PH" }); await client.get("/api/pair", { pid: "FBI" });
+    });
+    await client.get("/api/pair", { pid: "PH" });
+    expect(requests.slice(-3)).toEqual([{ userName: "preview-user", token: "preview-token" }, { userName: "preview-user", token: "preview-token" }, { userName: "shared-user", token: "shared-token" }]);
+  }));
+});
 
 describe("UpstreamClient business errors", () => {
   test("取证文本检查屏蔽配置凭据与当前测试会话，不返回凭据值", async () => {
@@ -271,16 +455,20 @@ describe("UpstreamClient business errors", () => {
     const file = join(directory, "credentials.json");
     await mkdir(file);
     const requestTokens: string[] = [];
+    const requestUserNames: string[] = [];
     const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file }, async (_input, init) => {
       requestTokens.push(String((init?.headers as Record<string, string>)["x-token"]));
+      requestUserNames.push(String((init?.headers as Record<string, string>).name));
       return new Response(JSON.stringify({ code: 200, msg: {} }), { status: 200, headers: { "content-type": "application/json" } });
     });
 
     try {
-      await expect(client.updateCredential("primary", "unpersisted-primary-token")).rejects.toBeInstanceOf(Error);
+      await expect(client.updateCredential("primary", "unpersisted-primary-token", "unpersisted-primary-user")).rejects.toBeInstanceOf(Error);
       await client.get("/api/test", { pid: "PH" });
 
       expect(requestTokens).toEqual(["unpersisted-primary-token", "test-token"]);
+      expect(requestUserNames).toEqual(["unpersisted-primary-user", "primary-user"]);
+      expect(client.credentialStatus()[0].userName).toBe("primary-user");
       expect((await readdir(directory)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });

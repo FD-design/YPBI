@@ -58,6 +58,7 @@ async function installMaintenanceFixtures(page, options = {}) {
   let rejectNextActionWith401 = false;
   let loginAttempts = 0;
   const requests = [];
+  let sources = sourceStatuses().map(source => options.unconfiguredPrimary && source.site === "primary" ? { ...source, configured: false, userName: "", tokenHint: "未配置" } : source);
   await page.route("**/api/bi/admin/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -92,7 +93,7 @@ async function installMaintenanceFixtures(page, options = {}) {
       return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ success: false, error: { code: "MAINTENANCE_LOGIN_REQUIRED", message: "维护登录已失效，请重新登录" } }) });
     }
     if (url.pathname.endsWith("/data-sources/status")) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: sourceStatuses() }) });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: sources }) });
     }
     if (url.pathname.endsWith("/data-preview/status")) {
       return route.fulfill({
@@ -135,7 +136,10 @@ async function installMaintenanceFixtures(page, options = {}) {
     }
     if (url.pathname.endsWith("/data-sources/token")) {
       if (options.unknownSave) return route.abort("failed");
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: { ...sourceStatuses("••••0002")[0], updatedAt: "2026-09-08T01:01:00.000Z" } }) });
+      if (options.rejectCandidateSave) return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ success: false, error: { code: "UPSTREAM_AUTH_FAILED", message: "后台拒绝候选凭据", requestId: "fake-credential-probe-1" } }) });
+      const updated = { ...sources.find(source => source.site === body.site), configured: true, userName: body.userName ?? sources.find(source => source.site === body.site).userName, tokenHint: "••••0002", updatedAt: "2026-09-08T01:01:00.000Z" };
+      sources = sources.map(source => source.site === body.site ? updated : source);
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true, data: updated }) });
     }
     return route.abort();
   });
@@ -172,6 +176,94 @@ test("当前连接的20秒正常探针保持等待并展示真实成功，不误
   } finally {
     finish?.();
   }
+});
+
+for (const width of [1280, 1024, 390]) {
+  test(`${width}像素后台账号成对保存、刷新记住并在后续Token更新沿用`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const fixture = await installMaintenanceFixtures(page, { authorized: true });
+    await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
+    const primary = page.locator(".v2-source-card").first();
+    const secondary = page.locator(".v2-source-card").nth(1);
+    await primary.getByRole("button", { name: "修改", exact: true }).click();
+    const username = primary.getByLabel("候选后台用户名");
+    await expect(username).toHaveValue("fake-primary-user");
+    await username.fill("fake-own-primary-user");
+    await primary.getByLabel("候选 Token").fill(fakeCandidate);
+    await primary.getByRole("button", { name: "测试当前连接", exact: true }).click();
+    await expect(primary).toContainText("当前凭证探针通过");
+    expect(fixture.requests.filter(item => item.pathname.endsWith("/data-sources/test")).at(-1).body).toEqual({ site: "primary" });
+    await primary.getByRole("button", { name: "仅验证，不保存", exact: true }).click();
+    await expect(primary).toContainText("未保存");
+    expect(fixture.requests.filter(item => item.pathname.endsWith("/data-sources/test")).at(-1).body).toEqual({ site: "primary", token: fakeCandidate, userName: "fake-own-primary-user" });
+    await expect(primary.locator(".v2-source-facts")).toContainText("fake-primary-user");
+    await primary.getByRole("button", { name: "验证并保存", exact: true }).click();
+    await expect(page.getByRole("dialog")).toContainText("全站");
+    await page.getByRole("dialog").getByRole("button", { name: "确认验证并保存" }).click();
+    await expect(primary.locator(".v2-source-facts")).toContainText("fake-own-primary-user");
+    await expect(primary.getByLabel("候选 Token")).toHaveValue("");
+    await expect(primary.getByLabel("候选后台用户名")).toHaveCount(0);
+    await expect(secondary.locator(".v2-source-facts")).toContainText("fake-secondary-user");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(primary.locator(".v2-source-facts")).toContainText("fake-own-primary-user");
+    await expect(primary.getByLabel("候选后台用户名")).toHaveCount(0);
+    await primary.getByLabel("候选 Token").fill("fake-next-rotated-token-0005");
+    await primary.getByRole("button", { name: "验证并保存", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "确认验证并保存" }).click();
+    await expect(primary.getByLabel("候选 Token")).toHaveValue("");
+    expect(fixture.requests.filter(item => item.pathname.endsWith("/data-sources/token")).at(-1).body).toEqual({ site: "primary", token: "fake-next-rotated-token-0005" });
+    await expect(primary.locator(".v2-source-facts")).toContainText("fake-own-primary-user");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(fakeCandidate);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `/private/tmp/ypbi-20261020-credential-pair-${width}.png`, fullPage: true });
+  });
+}
+
+test("换账号保存被拒绝保留完整草稿和旧账号，不污染另一个站点", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page, { authorized: true, rejectCandidateSave: true });
+  await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
+  const primary = page.locator(".v2-source-card").first();
+  const secondary = page.locator(".v2-source-card").nth(1);
+  await primary.getByRole("button", { name: "修改", exact: true }).click();
+  await primary.getByLabel("候选后台用户名").fill("fake-rejected-user");
+  await primary.getByLabel("候选 Token").fill(fakeCandidate);
+  await secondary.getByLabel("候选 Token").fill("fake-other-site-token-0004");
+  await primary.getByRole("button", { name: "验证并保存", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "确认验证并保存" }).click();
+  await expect(primary.getByRole("alert")).toContainText("原后台账号与 Token 保持不变");
+  await expect(primary.getByRole("alert")).toContainText("UPSTREAM_AUTH_FAILED");
+  await expect(primary.getByRole("alert")).toContainText("fake-credential-probe-1");
+  await expect(primary.getByLabel("候选后台用户名")).toHaveValue("fake-rejected-user");
+  await expect(primary.getByLabel("候选 Token")).toHaveValue(fakeCandidate);
+  await expect(primary.locator(".v2-source-facts")).toContainText("fake-primary-user");
+  await expect(secondary.getByLabel("候选 Token")).toHaveValue("fake-other-site-token-0004");
+  expect(fixture.requests.filter(item => item.method === "PUT")).toHaveLength(1);
+});
+
+test("首次配置必须填写账号，取消修改恢复原账号且不丢Token草稿", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page, { authorized: true, unconfiguredPrimary: true });
+  await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
+  const primary = page.locator(".v2-source-card").first();
+  await expect(primary.getByRole("button", { name: "测试当前连接", exact: true })).toBeDisabled();
+  await primary.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(primary.getByLabel("候选后台用户名")).toHaveValue("");
+  await primary.getByLabel("候选 Token").fill(fakeCandidate);
+  await expect(primary.getByRole("button", { name: "验证并保存", exact: true })).toBeDisabled();
+  await primary.getByLabel("候选后台用户名").fill("fake-first-account");
+  await primary.getByRole("button", { name: "验证并保存", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "确认验证并保存" }).click();
+  await expect(primary.locator(".v2-source-facts")).toContainText("fake-first-account");
+  await expect(primary.getByRole("button", { name: "测试当前连接", exact: true })).toBeEnabled();
+  await primary.getByLabel("候选 Token").fill("fake-rotating-after-cancel-0001");
+  await primary.getByRole("button", { name: "修改", exact: true }).click();
+  await primary.getByLabel("候选后台用户名").fill("fake-cancelled-account");
+  await primary.getByRole("button", { name: "取消修改", exact: true }).click();
+  await expect(primary.getByLabel("候选后台用户名")).toHaveCount(0);
+  await expect(primary.getByLabel("候选 Token")).toHaveValue("fake-rotating-after-cancel-0001");
+  await primary.getByRole("button", { name: "仅验证，不保存", exact: true }).click();
+  await expect(primary).toContainText("未保存");
+  expect(fixture.requests.filter(item => item.pathname.endsWith("/data-sources/test")).at(-1).body).toEqual({ site: "primary", token: "fake-rotating-after-cancel-0001" });
 });
 
 test("临时测试 Token 只创建当前会话并可明确切回正式数据", async ({ page }) => {
@@ -233,7 +325,7 @@ test("维护登录后区分当前测试、候选验证和验证并保存", async
   await expect(tokenInput).toHaveValue(fakeCandidate);
 
   await primaryCard.getByRole("button", { name: "仅验证，不保存" }).click();
-  await expect(primaryCard.getByText("候选 Token 验证通过，未保存，当前凭证未改变")).toBeVisible();
+  await expect(primaryCard.getByText("候选凭据验证通过，未保存，当前凭证未改变")).toBeVisible();
   await expect(tokenInput).toHaveValue(fakeCandidate);
   const candidateTest = fixture.requests.filter((item) => item.pathname.endsWith("/data-sources/test")).at(-1);
   expect(candidateTest.body).toEqual({ site: "primary", token: fakeCandidate });
@@ -241,7 +333,7 @@ test("维护登录后区分当前测试、候选验证和验证并保存", async
 
   const saveButton = primaryCard.getByRole("button", { name: "验证并保存", exact: true });
   await saveButton.click();
-  const dialog = page.getByRole("dialog", { name: "确认替换站1当前 Token？" });
+  const dialog = page.getByRole("dialog", { name: "确认更新站1共享凭据？" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("button", { name: "取消" })).toBeFocused();
   await dialog.getByRole("button", { name: "取消" }).click();
@@ -255,8 +347,8 @@ test("维护登录后区分当前测试、候选验证和验证并保存", async
   expect(fixture.requests.filter((item) => item.method === "PUT")).toHaveLength(0);
 
   await saveButton.click();
-  await page.getByRole("dialog", { name: "确认替换站1当前 Token？" }).getByRole("button", { name: "确认验证并保存" }).click();
-  await expect(primaryCard.getByText("候选 Token 已验证、保存并立即生效")).toBeVisible();
+  await page.getByRole("dialog", { name: "确认更新站1共享凭据？" }).getByRole("button", { name: "确认验证并保存" }).click();
+  await expect(primaryCard.getByText("候选凭据已验证、保存并立即生效")).toBeVisible();
   await expect(primaryCard.getByText("••••0002", { exact: true })).toBeVisible();
   await expect(tokenInput).toHaveValue("");
   expect(fixture.requests.filter((item) => item.method === "PUT")).toHaveLength(1);
@@ -305,9 +397,9 @@ test("390 像素下单列展示、保存对话框支持 Esc 且无横向溢出",
   await primaryCard.getByLabel("候选 Token").fill(fakeCandidate);
   const saveButton = primaryCard.getByRole("button", { name: "验证并保存", exact: true });
   await saveButton.click();
-  await expect(page.getByRole("dialog", { name: "确认替换站1当前 Token？" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "确认更新站1共享凭据？" })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "确认替换站1当前 Token？" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "确认更新站1共享凭据？" })).toHaveCount(0);
   await expect(saveButton).toBeFocused();
   await expect(page.locator(".v2-skip-link")).not.toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

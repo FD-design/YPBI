@@ -313,7 +313,11 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     if (!maintenanceAuth.authenticate(request.ip, securityContext, request.headers.cookie)) return reply.code(401).send({ success: false, error: { code: "MAINTENANCE_LOGIN_REQUIRED", message: "维护登录已失效，请重新登录" } });
     return null;
   };
-  const credentialSchema = z.object({ site: z.enum(["primary", "secondary"]), token: z.string().trim().min(16).max(4096).optional() });
+  const credentialSchema = z.object({
+    site: z.enum(["primary", "secondary"]),
+    token: z.string().trim().min(16).max(4096).optional(),
+    userName: z.string().trim().min(1).max(256).regex(/^[^\u0000-\u001f\u007f]+$/u).optional()
+  });
   app.post("/api/bi/admin/auth/login", async (request, reply) => {
     const principal = adminPrincipals.get(request)!;
     const securityContext = maintenanceSecurityContext(principal);
@@ -406,16 +410,17 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
     reply.header("cache-control", "no-store");
     const parsed = credentialSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点或 Token 格式不合法" } });
-    try { return { success: true, data: await upstream.verifyCredential(parsed.data.site, parsed.data.token) }; }
+    if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点、后台用户名或 Token 格式不合法" } });
+    if (parsed.data.userName && !parsed.data.token) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "修改后台用户名时请同时提供对应 Token" } });
+    try { return { success: true, data: await upstream.verifyCredential(parsed.data.site, parsed.data.token, parsed.data.userName) }; }
     catch (error) { if (error instanceof UpstreamError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } }); throw error; }
   });
   app.put("/api/bi/admin/data-sources/token", async (request, reply) => {
     const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
     reply.header("cache-control", "no-store");
     const parsed = credentialSchema.extend({ token: z.string().trim().min(16).max(4096) }).safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点或 Token 格式不合法" } });
-    try { return { success: true, data: await upstream.updateCredential(parsed.data.site, parsed.data.token) }; }
+    if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点、后台用户名或 Token 格式不合法" } });
+    try { return { success: true, data: await upstream.updateCredential(parsed.data.site, parsed.data.token, parsed.data.userName) }; }
     catch (error) { if (error instanceof UpstreamError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } }); throw error; }
   });
   const previewTokenSchema = z.object({ token: z.string().trim().min(16).max(4096) }).strict();

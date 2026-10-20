@@ -262,7 +262,7 @@ describe("V2 数据源维护客户端", () => {
     });
   });
 
-  test("当前测试、候选测试与保存使用三个明确请求", async () => {
+  test("当前测试忽略候选用户名，候选测试与保存仅在改账号时提交用户名", async () => {
     const observed: Array<{ path: string; method?: string; body?: string; csrfToken: string | null }> = [];
     globalThis.fetch = (async (input, init) => {
       observed.push({
@@ -277,14 +277,18 @@ describe("V2 数据源维护客户端", () => {
       return jsonResponse({ success: true, data: { ...statuses[0], tokenHint: "••••0002", updatedAt: "2026-09-08T01:01:00.000Z" } });
     }) as typeof fetch;
 
-    await testDataSource("primary", CSRF_TOKEN);
+    await testDataSource("primary", CSRF_TOKEN, undefined, "must-not-be-sent");
     await testDataSource("primary", CSRF_TOKEN, "fake-candidate-token-0002");
+    await testDataSource("primary", CSRF_TOKEN, "fake-candidate-token-0002", "candidate-primary-user");
     await updateDataSourceToken("primary", "fake-candidate-token-0002", CSRF_TOKEN);
+    await updateDataSourceToken("primary", "fake-candidate-token-0002", CSRF_TOKEN, "candidate-primary-user");
 
     expect(observed).toEqual([
       { path: "/api/bi/admin/data-sources/test", method: "POST", body: JSON.stringify({ site: "primary" }), csrfToken: CSRF_TOKEN },
       { path: "/api/bi/admin/data-sources/test", method: "POST", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002" }), csrfToken: CSRF_TOKEN },
-      { path: "/api/bi/admin/data-sources/token", method: "PUT", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002" }), csrfToken: CSRF_TOKEN }
+      { path: "/api/bi/admin/data-sources/test", method: "POST", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002", userName: "candidate-primary-user" }), csrfToken: CSRF_TOKEN },
+      { path: "/api/bi/admin/data-sources/token", method: "PUT", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002" }), csrfToken: CSRF_TOKEN },
+      { path: "/api/bi/admin/data-sources/token", method: "PUT", body: JSON.stringify({ site: "primary", token: "fake-candidate-token-0002", userName: "candidate-primary-user" }), csrfToken: CSRF_TOKEN }
     ]);
   });
 
