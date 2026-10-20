@@ -806,7 +806,26 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         return { date, value: (denominator == null ? numerator : numerator / denominator) / (mapping.resultDivisor ?? 1), state: "available", inputs };
     };
     const nonChannelTask = Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
-    const channelDependencyTask = operatingSnapshot ? nonChannelTask.then(() => {
+    const channelDependencyTask = operatingSnapshot ? (async () => {
+      const channelIds = sourceIds.filter(id => mappings[id].channel);
+      const inputIds = sourceMetricIds(channelIds.flatMap(id => mappings[id].fallbackFrom ?? []));
+      const selectionIds = [...channelIds, ...inputIds];
+      const dependencyApis = new Set(sourceApis(inputIds));
+      if (channelIds.some(id => mappings[id].biV1Metric)) dependencyApis.add(BI_V1_METRICS_API);
+      const tasksByApi = new Map<string, Promise<unknown>>([
+        [P_DAY_SUM_API, dailyTask], [RETENTION_PLUS_API, cohortTask], [CHANNEL_V2_API, channelTask],
+        [PAYMENT_RATE_API, paymentTask], [CHECKIN_OVERVIEW_API, checkinTask], [REALTIME_API, watchTask],
+        [BI_V1_PLAYBACK_API, playbackTask],
+        [BI_V1_METRICS_API, Promise.all([
+          ...(selectionIds.some(id => mappings[id].biV1Metric && mappings[id].biV1Metric !== "M018") ? [biV1MetricTask] : []),
+          ...(selectionIds.some(id => mappings[id].biV1Metric === "M018") ? [monthlyTask] : [])
+        ])]
+      ]);
+      await Promise.all([...dependencyApis].map(api => {
+        const task = tasksByApi.get(api);
+        if (!task) throw new Error("Channel selection source task missing");
+        return task;
+      }));
       for (const date of dates) {
         const needsLegacy = sourceIds.some(id => {
           if (!mappings[id].channel) return false;
@@ -815,7 +834,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         });
         if (!needsLegacy) channelControllers.get(date)?.abort();
       }
-    }) : undefined;
+    })() : undefined;
     const [[acquisitionGroups]] = await Promise.all([nonChannelTask, channelTask, channelDependencyTask]);
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     const result = dailyDashboardV2SuccessSchema.parse({ success: true, data: {

@@ -72,17 +72,25 @@ export function operatingLiveColumns(live: LiveDashboardReading | null, resource
 }
 export function operatingLiveRows(live: LiveDashboardReading, resources: OperatingResources, selectedPlatform = "all"): DetailRow[] {
   const date = live.query.dateRange[1];
+  const previousDay = shiftDate(date, -1), previousWeek = shiftDate(date, -7);
+  const metricIds = new Set(live.metricIds), environment = operatingDataEnvironment(live);
   const metadata = operatingColumnMetadata(live, resources, selectedPlatform);
   return (live.platforms ?? [{ pid: live.query.pid, name: live.platformName }]).map(platform => {
-    const resource = operatingResource(resources[platform.pid], platform.pid, date, operatingDataEnvironment(live));
+    const resource = operatingResource(resources[platform.pid], platform.pid, date, environment);
+    const seriesById = new Map<string, DailyDashboardSuccess["data"]["series"][number]>();
+    for (const series of resource?.status === "success" ? resource.data.data.series : []) {
+      // Duplicate IDs retain the same first match as the source array lookup.
+      const id = series.metric.id;
+      if (!seriesById.has(id)) seriesById.set(id, series);
+    }
     const failure = resource?.status === "failure" ? resource : resource?.status === "success" ? resource.refreshError : null;
     const requestFailure = failure && (failure.code || failure.requestId)
       ? { ...(failure.code ? { code: failure.code } : {}), ...(failure.requestId ? { requestId: failure.requestId } : {}) }
       : undefined;
     const values = DETAIL_COLUMNS.map((column): DetailValue => {
       const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
-      if (!id || !live.metricIds.includes(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
-      const series = resource?.status === "success" ? resource.data.data.series.find(series => series.metric.id === id) : undefined;
+      if (!id || !metricIds.has(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
+      const series = seriesById.get(id);
       const unitConflict = (metadata.get(id)?.units.size ?? 0) > 1;
       const point = (day: string) => series?.points.find(point => point.date === day);
       const readable = (value: ReturnType<typeof point>) => value && (!value.sourceStatus || value.sourceStatus === "READY") && (value.state === "available" || value.state === "zero_denominator");
@@ -108,10 +116,10 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
           evidence: { current: { ...current, date: month?.label ?? `${date.slice(0, 7)} 自然月 · 查询范围尚未返回`,
             label: current.state === "no_record" ? "本月未返回记录" : current.label,
             sourceNote: [current.sourceNote, month?.point.monthlyMetadata ? "统计截止日包含当天，不是来源数据水位或最近成功加工日；月份状态表示自然月是否结束，加工就绪以指标数据状态为准。" : "实际查询截止不是来源数据水位；来源数据水位未返回。"].filter(Boolean).join(" ") },
-          previousDay: inapplicable(shiftDate(date, -1)), previousWeek: inapplicable(shiftDate(date, -7)) } };
+          previousDay: inapplicable(previousDay), previousWeek: inapplicable(previousWeek) } };
       }
-      return { current: resultValue(date), previousDay: resultValue(shiftDate(date, -1)), previousWeek: resultValue(shiftDate(date, -7)),
-        evidence: { current: evidence(date), previousDay: evidence(shiftDate(date, -1)), previousWeek: evidence(shiftDate(date, -7)) } };
+      return { current: resultValue(date), previousDay: resultValue(previousDay), previousWeek: resultValue(previousWeek),
+        evidence: { current: evidence(date), previousDay: evidence(previousDay), previousWeek: evidence(previousWeek) } };
     });
     return { pid: platform.pid, name: platform.name, state: "部分", productMode: null, promotionStatus: null, values };
   });

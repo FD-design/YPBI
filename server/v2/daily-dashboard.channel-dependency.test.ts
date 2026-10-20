@@ -33,6 +33,9 @@ function fixture(options: {
   modernGate?: Promise<void>;
   dailyGate?: Promise<void>;
   playbackGate?: Promise<void>;
+  monthlyGate?: Promise<void>;
+  cohortGate?: Promise<void>;
+  paymentGate?: Promise<void>;
   metricsFailure?: boolean;
   zeroInputs?: boolean;
 } = {}) {
@@ -49,6 +52,7 @@ function fixture(options: {
     if (path === BI_V1_METRICS_API || path === BI_V1_PLAYBACK_API) {
       if (path === BI_V1_METRICS_API) {
         await options.modernGate;
+        if (params.granularity === "summary") await options.monthlyGate;
         if (options.metricsFailure) throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture unavailable");
       } else await options.playbackGate;
       const filters = JSON.parse(params.dimensionFilters ?? "{}");
@@ -74,8 +78,8 @@ function fixture(options: {
       return { msg: { totalCount: allDates.length, pageData: allDates.map(sumDate => ({ pid: "PH", sumDate,
         loginUserCount: 100, registerUserCount: 10, watchUserCount: 60 })) } };
     }
-    if (path.includes("reletionsStatPlus")) return { data: [] };
-    if (path === PAYMENT_RATE_API) return { msg: { pid: "PH", sumDate: params.startTime.slice(0, 10), pageData: [], totalAllCount: 4, totalSurCount: 2 } };
+    if (path.includes("reletionsStatPlus")) { await options.cohortGate; return { data: [] }; }
+    if (path === PAYMENT_RATE_API) { await options.paymentGate; return { msg: { pid: "PH", sumDate: params.startTime.slice(0, 10), pageData: [], totalAllCount: 4, totalSurCount: 2 } }; }
     return { msg: [] };
   } };
   const logger = { info: (value: (typeof logs)[number]) => { logs.push(value); } };
@@ -175,22 +179,83 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     expect(point(result, "M006")).toMatchObject({ value: 1.5, state: "available" });
   });
 
-  test("日汇总完成前不取消渠道，避免用未完成输入判定回退", async () => {
-    const daily = deferred(), held = fixture({ dailyGate: daily.promise, holdChannel: true });
+  for (const gate of ["dailyGate", "modernGate"] as const) test(`${gate}完成前保留渠道，使用完整输入判定回退`, async () => {
+    const dependency = deferred(), held = fixture({ [gate]: dependency.promise, holdChannel: true });
     const pending = held.service.execute(query); await flush();
     expect(held.channels.every(read => !read.signal?.aborted)).toBe(true);
-    daily.resolve(); await pending;
+    dependency.resolve(); await pending;
     expect(held.channels.every(read => read.signal?.aborted)).toBe(true);
     held.channels.forEach(read => read.resolve());
   });
 
-  test("全部非渠道来源稳定后才进行依赖判断", async () => {
-    const playback = deferred(), held = fixture({ playbackGate: playback.promise, holdChannel: true });
-    const pending = held.service.execute(query); await flush();
-    expect(held.channels.every(read => !read.signal?.aborted)).toBe(true);
-    playback.resolve(); await pending;
-    expect(held.channels.every(read => read.signal?.aborted)).toBe(true);
+  for (const gate of ["playbackGate", "monthlyGate", "cohortGate", "paymentGate"] as const) test(`${gate}未完成时已无用途渠道立即释放，完整投影保持`, async () => {
+    const unrelated = deferred(), held = fixture({ [gate]: unrelated.promise, holdChannel: true });
+    const pending = held.service.execute(query); let completed = false;
+    void pending.then(() => { completed = true; });
+    await flush();
+    const cancelled = held.channels.map(read => read.signal?.aborted);
+    const completedBeforeRelease = completed;
+    unrelated.resolve();
+    const result = await pending;
+    expect(cancelled).toEqual([true, true, true]);
+    expect(completedBeforeRelease).toBe(false);
+    assertProjection(result, await fixture().service.execute(query));
     held.channels.forEach(read => read.resolve());
+  });
+
+  test("无关慢来源保持读取时按日期释放渠道，保留仍需旧源的日期", async () => {
+    const playback = deferred();
+    const status = (_code: string, date: string): ModernStatus => date === selectedDates[1] ? "SOURCE_INCOMPLETE" : "READY";
+    const held = fixture({ status, playbackGate: playback.promise, holdChannel: true });
+    const pending = held.service.execute(query);
+    await flush();
+    const cancelled = held.channels.map(read => read.signal?.aborted);
+    held.channels[1].resolve();
+    playback.resolve();
+    const result = await pending;
+    expect(cancelled).toEqual([true, false, true]);
+    assertProjection(result, await fixture({ status }).service.execute(query));
+    held.channels.forEach(read => read.resolve());
+  });
+
+  test("无关慢播放仍在途时释放三个物理槽供后续读取使用，默认40容量保持", async () => {
+    const base = fixture();
+    const playback = deferred(), background = deferred();
+    const physicalChannels: AbortSignal[] = [];
+    const dispatched: string[] = [];
+    let active = 0, peak = 0;
+    const upstream = new UpstreamClient({ ...loadEnv({ NODE_ENV: "test", UPSTREAM_API_BASE_URL: "https://in-memory.invalid",
+      UPSTREAM_USER_NAME: "fixture-user", UPSTREAM_X_TOKEN: "fixture-token",
+      UPSTREAM_CREDENTIALS_FILE: `/private/tmp/ypbi-channel-capacity-absent-${randomUUID()}.json` }), REQUEST_TIMEOUT_MS: 1000 }, async (input, init) => {
+      const url = new URL(String(input)), params = Object.fromEntries(url.searchParams);
+      active++; peak = Math.max(peak, active); dispatched.push(url.pathname);
+      try {
+        if (url.pathname === CHANNEL_V2_API) {
+          physicalChannels.push(init!.signal!);
+          return await new Promise<Response>((_resolve, reject) => {
+            init!.signal!.addEventListener("abort", () => reject(new DOMException("fixture cancelled", "AbortError")), { once: true });
+          });
+        }
+        if (url.pathname === "/api/fixture/background") { await background.promise; return Response.json({ code: 200 }); }
+        if (url.pathname === "/api/fixture/later") { await background.promise; return Response.json({ code: 200 }); }
+        if (url.pathname === BI_V1_PLAYBACK_API) await playback.promise;
+        return Response.json(await base.client.get(url.pathname, params));
+      } finally { active--; }
+    });
+    const pending = new DailyDashboardService(upstream, now, undefined, { sourceReadTimeoutMs: 1000 }).execute(query);
+    await flush();
+    const blockers = Array.from({ length: 36 }, (_, index) => upstream.get("/api/fixture/background", { pid: "PH", index: String(index) }));
+    const later = Array.from({ length: 3 }, (_, index) => upstream.get("/api/fixture/later", { pid: "PH", index: String(index) }));
+    await flush();
+    const dispatchedBeforePlayback = dispatched.filter(path => path === "/api/fixture/later").length;
+    const cancelledBeforePlayback = physicalChannels.map(signal => signal.aborted);
+    playback.resolve(); background.resolve();
+    const [result] = await Promise.all([pending, ...blockers, ...later]);
+    expect(dispatchedBeforePlayback).toBe(3);
+    expect(cancelledBeforePlayback).toEqual([true, true, true]);
+    expect(peak).toBe(40);
+    expect(active).toBe(0);
+    assertProjection(result, await fixture().service.execute(query));
   });
 
   test("默认121整板保留全部渠道日期与独立旧源指标", async () => {
@@ -224,13 +289,18 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const healthyController = new AbortController();
     const params = { pid: "PH", page: "1", count: "1", sumDateBegin: selectedDates[0] + " 00:00:00", sumDateEnd: "2026-10-06 00:00:00" };
     const healthy = upstream.get(CHANNEL_V2_API, params, undefined, healthyController.signal);
-    const base = fixture();
+    const playback = deferred(), base = fixture({ playbackGate: playback.promise });
     const client = { get: (path: string, values: Record<string, string>, token?: string, signal?: AbortSignal) => path === CHANNEL_V2_API
       ? upstream.get(path, values, token, signal) : base.client.get(path, values, token, signal) };
-    const result = await new DailyDashboardService(client, now, undefined, { sourceReadTimeoutMs: 1000 }).execute(query);
+    const pending = new DailyDashboardService(client, now, undefined, { sourceReadTimeoutMs: 1000 }).execute(query);
+    await flush();
+    const cancelledBeforePlayback = physical.map(read => read.signal?.aborted);
+    playback.resolve();
+    const result = await pending;
     expect(result.data.series).toHaveLength(93);
     expect(physical).toHaveLength(3);
     expect(physical.map(read => read.signal?.aborted)).toEqual([false, true, true]);
+    expect(cancelledBeforePlayback).toEqual([false, true, true]);
     physical[0].resolve();
     expect(await healthy).toEqual(channelPayload(selectedDates[0]));
     expect(healthyController.signal.aborted).toBe(false);
