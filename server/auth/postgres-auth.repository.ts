@@ -1,4 +1,4 @@
-import type { ReservedSql, Sql } from "postgres";
+import type { Sql } from "postgres";
 import { biRoleSchema, type BiRole } from "../../contracts/bi-auth";
 import { markIdentityLookupPhase, recordIdentityStorageFailure } from "../identity/identity-lookup-diagnostics";
 import type {
@@ -86,29 +86,6 @@ const userColumns = `
   credential_version, must_change_password, status, failed_login_count, failed_login_window_started_at,
   locked_until, created_at, updated_at
 `;
-
-/** Acquire a ready connection without cancelling the driver's startup query. */
-async function reserveIdentityConnection(sql: Sql, signal?: AbortSignal): Promise<ReservedSql> {
-  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
-  const pending = sql.reserve();
-  if (!signal) return await pending;
-  let onAbort: () => void = () => undefined;
-  const aborted = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) onAbort();
-  });
-  try {
-    return await Promise.race([pending, aborted]);
-  } catch (error) {
-    // Abandoned reservations still resolve when startup or pool waiting ends.
-    // Return the slot without sending a stale identity query.
-    void pending.then(connection => connection.release(), () => undefined).catch(() => undefined);
-    throw error;
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-  }
-}
 
 export class PostgresAuthRepository implements AuthRepository {
   constructor(private readonly sql: Sql) {}
@@ -200,18 +177,12 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async findAuthenticatedSession(tokenHash: string, now: Date, signal?: AbortSignal): Promise<AuthenticatedSessionRecord | null> {
-    markIdentityLookupPhase(signal, "acquire");
-    const connection = await reserveIdentityConnection(this.sql, signal).catch(error => {
-      recordIdentityStorageFailure(signal, error);
-      throw error;
-    });
     try {
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
+      // Query covers driver queueing, startup and execution. The driver owns
+      // connection recovery; submitted reads settle without protocol cancellation.
       markIdentityLookupPhase(signal, "query");
-      // PostgreSQL CancelRequest targets a connection, not a query. A late cancel
-      // can abort its next borrower. Keep this read reserved until it settles
-      // under the database statement timeout; the caller owns the HTTP deadline.
-      const rows = await connection.unsafe<(SessionRow & UserRow)[]>(
+      const rows = await this.sql.unsafe<(SessionRow & UserRow)[]>(
       `select
         s.session_id, s.user_id, s.token_hash,
         s.credential_version, s.created_at, s.expires_at, s.revoked_at,
@@ -239,8 +210,6 @@ export class PostgresAuthRepository implements AuthRepository {
     } catch (error) {
       recordIdentityStorageFailure(signal, error);
       throw error;
-    } finally {
-      connection.release();
     }
   }
 

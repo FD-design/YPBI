@@ -20,6 +20,7 @@ const integer = (value: number) => { const bytes = Buffer.alloc(4); bytes.writeI
 interface MemoryWire {
   releaseStartup: boolean;
   sockets: MemorySocket[];
+  cancelPackets: number;
 }
 
 class MemorySocket extends EventEmitter {
@@ -36,6 +37,11 @@ class MemorySocket extends EventEmitter {
     const bytes = Buffer.from(chunk);
     if (!this.startupWritten) {
       this.startupWritten = true;
+      if (bytes.readInt32BE(4) === 80877102) {
+        this.wire.cancelPackets++;
+        this.end();
+        return true;
+      }
       if (this.wire.releaseStartup) queueMicrotask(() => this.startupReady());
     } else {
       const responses: Buffer[] = [];
@@ -87,7 +93,7 @@ async function withDatabase(
   options: { max?: number; holdStartup?: boolean; fetchTypes?: boolean },
   run: (sql: Sql, repository: PostgresAuthRepository, wire: MemoryWire) => Promise<void>
 ) {
-  const wire: MemoryWire = { releaseStartup: !options.holdStartup, sockets: [] };
+  const wire: MemoryWire = { releaseStartup: !options.holdStartup, sockets: [], cancelPackets: 0 };
   const configuration = {
     host: "memory.invalid", database: "memory", user: "unit", max: options.max ?? 4,
     idle_timeout: 20, connect_timeout: 10, max_lifetime: null, fetch_types: options.fetchTypes ?? true,
@@ -125,42 +131,55 @@ describe("PostgreSQL 身份查询冷连接取消", () => {
     });
   });
 
-  for (const [max, count] of [[1, 1], [4, 20]] as const) test(`冷握手${max}连接/${count}等待取消后，晚到连接不查身份且后续查询恢复`, async () => {
+  for (const [max, count] of [[1, 1], [4, 20]] as const) test(`冷握手${max}连接/${count}请求取消后外层及时结束，迟到读取不授予身份且后续恢复`, async () => {
     await withDatabase({ max, holdStartup: true }, async (_sql, repository, wire) => {
       const controllers = Array.from({ length: count }, () => new AbortController());
       let settled = 0;
-      const pending = controllers.map(controller => lookup(repository, controller.signal)
+      let storageSettled = 0;
+      const provider: IdentityProvider = { resolve: async ({ signal }) => {
+        await lookup(repository, signal).finally(() => { storageSettled++; });
+        return { status: "unauthenticated" };
+      } };
+      const pending = controllers.map(controller => resolveIdentity(provider, { headers: {}, ip: "127.0.0.1", signal: controller.signal })
         .then(() => "fulfilled", () => "rejected").finally(() => { settled++; }));
       await until(() => wire.sockets.length === max && wire.sockets.every(socket => socket.startupWritten), "冷连接未启动");
       controllers.forEach(controller => controller.abort(new Error("test_identity_deadline")));
       await until(() => settled === count, "取消未及时结束调用方等待");
       expect(await Promise.all(pending)).toEqual(Array(count).fill("rejected"));
+      expect(storageSettled).toBe(0);
       wire.releaseStartup = true;
       wire.sockets.forEach(socket => socket.startupReady());
+      await until(() => storageSettled === count, "已提交读取未自然结算");
       await probe(repository);
-      // One metadata fetch per connection, plus only the final healthy probe.
-      expect(wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0)).toBe(max + 1);
+      // Startup metadata, each submitted read exactly once, then a healthy probe.
+      expect(wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0)).toBe(max + count + 1);
       expect(wire.sockets.length).toBe(max);
+      expect(wire.cancelPackets).toBe(0);
     });
   });
 
-  test("ready连接被占用时取消排队者，晚到reservation只释放且不影响后续查询", async () => {
+  test("连接被占用时取消排队请求，外层及时结束且驱动自然结算后仍可查询", async () => {
     await withDatabase({ max: 1 }, async (sql, repository, wire) => {
       const held = await sql.reserve();
       try {
         const before = wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0);
         const controller = new AbortController();
         let settled = false;
-        const waiting = lookup(repository, controller.signal).then(() => "fulfilled", () => "rejected")
+        const provider: IdentityProvider = { resolve: async ({ signal }) => {
+          await lookup(repository, signal);
+          return { status: "unauthenticated" };
+        } };
+        const waiting = resolveIdentity(provider, { headers: {}, ip: "127.0.0.1", signal: controller.signal }).then(() => "fulfilled", () => "rejected")
           .finally(() => { settled = true; });
         await pause();
-        controller.abort(new Error("test_acquire_cancelled"));
+        controller.abort(new Error("test_queued_query_cancelled"));
         await until(() => settled, "pool等待取消未及时返回");
         expect(await waiting).toBe("rejected");
         expect(wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0)).toBe(before);
       } finally { held.release(); }
       await probe(repository);
-      expect(wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0)).toBe(2);
+      expect(wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0)).toBe(3);
+      expect(wire.cancelPackets).toBe(0);
     });
   });
 
@@ -181,7 +200,8 @@ describe("PostgreSQL 身份查询冷连接取消", () => {
       const recovered = await resolveIdentity(provider, { headers: {}, ip: "127.0.0.1" }, 200);
       expect(recovered).toEqual({ status: "unauthenticated" });
       expect(wire.sockets).toHaveLength(1);
-      expect(wire.sockets[0].queryWrites).toBe(2);
+      expect(wire.sockets[0].queryWrites).toBe(3);
+      expect(wire.cancelPackets).toBe(0);
     });
   });
 

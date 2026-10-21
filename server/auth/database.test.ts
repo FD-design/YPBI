@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { AUTH_RUNTIME_DATABASE_LIMITS, createAuthRuntimeDatabase, validateAuthDatabaseUrl } from "./database";
 
 describe("auth database URL", () => {
-  test("运行池固定类型加载，URL不能破坏冷连接reservation就绪及认证池限制", async () => {
+  test("运行池固定类型加载，URL不能覆盖类型加载及认证池限制", async () => {
     for (const suffix of ["", "?fetch_types=false"]) {
       const sql = createAuthRuntimeDatabase(`postgres://unit@memory.invalid/unit${suffix}`);
       try {

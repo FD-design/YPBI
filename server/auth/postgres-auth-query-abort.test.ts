@@ -84,6 +84,14 @@ class MemorySocket extends EventEmitter {
     this.activeIdentity = false;
     this.emit("data", Buffer.concat([statementTimeout ? cancelled() : complete(), ready()]));
   }
+  disconnect(code?: "ECONNRESET" | "EPIPE") {
+    if (this.destroyed) return;
+    this.activeIdentity = false;
+    if (code) this.emit("error", Object.assign(new Error("memory transport failure"), { code }));
+    this.destroyed = true;
+    this.readyState = "closed";
+    queueMicrotask(() => this.emit("close", Boolean(code)));
+  }
   end() {
     if (!this.destroyed) {
       this.destroyed = true;
@@ -125,7 +133,53 @@ async function withDatabase(max: number, run: (repository: PostgresAuthRepositor
 }
 
 describe("PostgreSQL 身份查询取消与连接复用", () => {
-  test("客户端取消不发送协议cancel，原SELECT结算前保留连接且不影响下一健康身份查询", async () => {
+  for (const code of [undefined, "ECONNRESET", "EPIPE"] as const) {
+    for (const cancelFirst of [false, true]) {
+      test(`${code ?? "CONNECTION_CLOSED"}关闭${cancelFirst ? "已取消" : "在途"}身份连接后，后续多次查询使用新连接恢复`, async () => {
+        await withDatabase(1, async (repository, wire) => {
+          const controller = new AbortController();
+          const first = outcome(lookup(repository, controller.signal));
+          await until(() => wire.identityWrites === 1, "身份SELECT未开始");
+          if (cancelFirst) controller.abort(new Error("memory client disconnected"));
+          wire.sockets[0].disconnect(code);
+          const failed = await first;
+          expect(failed.status).toBe("rejected");
+          if (failed.status === "rejected") expect(failed.error.code).toBe(code ?? "CONNECTION_CLOSED");
+          wire.holdIdentity = false;
+          const recovered = await Promise.all(Array.from({ length: 20 }, () => lookup(repository)));
+          expect(recovered.every(value => value === null)).toBe(true);
+          expect(await lookup(repository)).toBeNull();
+          expect(wire.sockets).toHaveLength(2);
+          expect(wire.sockets[0].destroyed).toBe(true);
+          expect(wire.identityWrites).toBe(22);
+          expect(wire.cancelPackets).toBe(0);
+        });
+      });
+    }
+  }
+
+  test("4连接中单一连接断开时其他查询正常，排队请求和后续查询继续恢复", async () => {
+    await withDatabase(4, async (repository, wire) => {
+      const initial = Array.from({ length: 4 }, () => outcome(lookup(repository)));
+      await until(() => wire.identityWrites === 4, "4条身份SELECT未占满池");
+      const queued = Promise.all(Array.from({ length: 20 }, () => lookup(repository)));
+      await pause();
+      expect(wire.identityWrites).toBe(4);
+      wire.holdIdentity = false;
+      wire.sockets[0].disconnect("ECONNRESET");
+      wire.sockets.slice(1).forEach(socket => socket.finish());
+      const settled = await Promise.all(initial);
+      expect(settled.filter(result => result.status === "rejected")).toHaveLength(1);
+      expect(settled.filter(result => result.status === "fulfilled")).toHaveLength(3);
+      expect((await queued).every(value => value === null)).toBe(true);
+      expect((await Promise.all(Array.from({ length: 20 }, () => lookup(repository)))).every(value => value === null)).toBe(true);
+      expect(wire.sockets.filter(socket => !socket.destroyed)).toHaveLength(4);
+      expect(wire.identityWrites).toBe(44);
+      expect(wire.cancelPackets).toBe(0);
+    });
+  });
+
+  test("客户端取消不发送协议cancel，驱动等待原SELECT结算且不影响下一健康身份查询", async () => {
     await withDatabase(1, async (repository, wire) => {
       const controller = new AbortController();
       let firstSettled = false;
@@ -148,7 +202,7 @@ describe("PostgreSQL 身份查询取消与连接复用", () => {
     });
   });
 
-  test("已取消SELECT等待数据库57014结算后释放，后续查询恢复且不新增取消连接", async () => {
+  test("已取消SELECT等待数据库57014结算后，后续查询恢复且不新增取消连接", async () => {
     await withDatabase(1, async (repository, wire) => {
       const controller = new AbortController();
       const first = outcome(lookup(repository, controller.signal));
@@ -165,28 +219,29 @@ describe("PostgreSQL 身份查询取消与连接复用", () => {
     });
   });
 
-  test("4连接20并发取消时仅已提交4条等待结算，晚到reservation不发送过期SQL且池可复用", async () => {
+  test("4连接20次已提交读取取消后自然结算且全部拒绝身份，后续查询可复用连接池", async () => {
     await withDatabase(4, async (repository, wire) => {
       const controllers = Array.from({ length: 20 }, () => new AbortController());
       let settled = 0;
       const pending = controllers.map(controller => outcome(lookup(repository, controller.signal)).finally(() => { settled++; }));
       await until(() => wire.identityWrites === 4, "4条身份SELECT未占满池");
       controllers.forEach(controller => controller.abort(new Error("memory cancelled batch")));
-      await until(() => settled === 16, "等待reservation的16个调用未及时取消");
+      await pause();
+      expect(settled).toBe(0);
       expect(wire.identityWrites).toBe(4);
       expect(wire.cancelPackets).toBe(0);
+      wire.holdIdentity = false;
       wire.sockets.filter(socket => socket.activeIdentity).forEach(socket => socket.finish(true));
       expect((await Promise.all(pending)).every(result => result.status === "rejected")).toBe(true);
-      wire.holdIdentity = false;
       const recovered = await Promise.all(Array.from({ length: 20 }, () => lookup(repository)));
       expect(recovered.every(value => value === null)).toBe(true);
-      expect(wire.identityWrites).toBe(24);
+      expect(wire.identityWrites).toBe(40);
       expect(wire.cancelPackets).toBe(0);
       expect(wire.sockets).toHaveLength(4);
     });
   });
 
-  test("外层deadline及时失败关闭，已提交SELECT未结算时不释放且迟到结果不授予身份", async () => {
+  test("外层deadline及时失败关闭，已提交SELECT由驱动结算且迟到结果不授予身份", async () => {
     await withDatabase(1, async (repository, wire) => {
       const provider: IdentityProvider = { resolve: async ({ signal }) => {
         await lookup(repository, signal);

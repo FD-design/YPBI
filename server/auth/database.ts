@@ -62,7 +62,7 @@ export function validateAuthDatabaseUrl(databaseUrl: string) {
 export function createAuthRuntimeDatabase(databaseUrl: string): Sql {
   return postgres(validateAuthDatabaseUrl(databaseUrl), {
     max: 4,
-    // Ready reservations use the driver's startup type metadata path.
+    // Keep driver startup type metadata enabled across URL configurations.
     fetch_types: true,
     idle_timeout: 20,
     connect_timeout: 10,
