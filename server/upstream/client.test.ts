@@ -570,3 +570,78 @@ describe("UpstreamClient HTTP 参数拒绝兼容", () => {
     expect(isBiV1MetricSelectionRejection(error)).toBe(false);
   });
 });
+
+describe("UpstreamClient 业务码类型准入", () => {
+  const path = "/api/admin/statistics/todayVideos/getMany";
+  const rejectedMessage = "请检查当前用户是否正常";
+  const invalidCodes = [
+    ["状态枚举对象", { 0: "Unknown", 1: "Fail", 200: "OK" }],
+    ["普通对象", {}],
+    ["数字数组", [200]],
+    ["字符串数组", ["200"]],
+    ["嵌套数组", [[200]]],
+    ["null", null],
+    ["true", true],
+    ["false", false]
+  ] as const;
+  const jsonResponse = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
+    status, headers: { "content-type": "application/json" }
+  });
+
+  for (const [label, code] of invalidCodes) {
+    test(`HTTP200 ${label}失败关闭，不猜认证、不写入成功缓存`, async () => {
+      let fetchCount = 0;
+      const healthy = { code: 200, msg: { pageData: [{ value: 7 }], totalCount: 1 } };
+      const client = new UpstreamClient(env, async () => jsonResponse(++fetchCount === 1
+        ? { code, err: rejectedMessage, msg: { pageData: [], totalCount: 0 } }
+        : healthy));
+
+      const error = await client.get(path, {}).catch(error => error);
+      expect(error).toBeInstanceOf(UpstreamError);
+      expect(error).toMatchObject({ code: "UPSTREAM_FAILED", statusCode: 502, message: "后台业务状态格式无效" });
+      expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+      expect(fetchCount).toBe(1);
+      await expect(client.get(path, {})).resolves.toEqual(healthy);
+      await expect(client.get(path, {})).resolves.toEqual(healthy);
+      expect(fetchCount).toBe(2);
+    });
+  }
+
+  for (const [label, codeFields] of [
+    ["数字200", { code: 200 }],
+    ["字符串200", { code: "200" }],
+    ["旧接口缺少code", {}]
+  ] as const) {
+    test(`${label}继续返回并缓存原成功结果`, async () => {
+      let fetchCount = 0;
+      const payload = { ...codeFields, msg: { pageData: [], totalCount: 0 } };
+      const client = new UpstreamClient(env, async () => { fetchCount++; return jsonResponse(payload); });
+      await expect(client.get(path, {})).resolves.toEqual(payload);
+      await expect(client.get(path, {})).resolves.toEqual(payload);
+      expect(fetchCount).toBe(1);
+    });
+  }
+
+  for (const code of [400, "400", 422, "422", 500, "500"]) {
+    test(`HTTP200 合法标量业务拒绝${JSON.stringify(code)}保留原分类和说明`, async () => {
+      const client = new UpstreamClient(env, async () => jsonResponse({ code, err: rejectedMessage }));
+      const error = await client.get(path, {}).catch(error => error);
+      expect(error).toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message: rejectedMessage });
+      expect(isBiV1MetricSelectionRejection(error)).toBe(false);
+    });
+  }
+
+  for (const code of [[200], null]) {
+    test(`畸形业务码${JSON.stringify(code)}不能进入留存空结果兼容`, async () => {
+      const client = new UpstreamClient(env, async () => jsonResponse({ code, err: "没有该平台当日数据" }));
+      await expect(client.get("/api/admin/statistics/reletionsStatPlus/getDays", {}))
+        .rejects.toMatchObject({ code: "UPSTREAM_FAILED", statusCode: 502 });
+    });
+  }
+
+  test("畸形成功码不能通过凭据探针", async () => {
+    const client = new UpstreamClient(env, async () => jsonResponse({ code: [200], err: rejectedMessage, msg: {} }));
+    await expect(client.verifyCredential("primary"))
+      .rejects.toMatchObject({ code: "UPSTREAM_FAILED", statusCode: 502, message: "后台业务状态格式无效" });
+  });
+});

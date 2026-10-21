@@ -49,7 +49,10 @@ function monthlyPoint(message: BiV1MetricMessage): BiV1MetricPoint {
 
 function monthlyMetadata(message: BiV1MetricMessage, scope: MonthlyQueryScope, today: string): MonthlyMetricMetadata | undefined {
   if (message.rows.length !== 1) return undefined;
-  const row = message.rows[0];
+  return validateBiV1MonthlyMetadata(message.rows[0], scope, today);
+}
+
+export function validateBiV1MonthlyMetadata(row: Record<string, unknown>, scope: MonthlyQueryScope, today: string): MonthlyMetricMetadata | undefined {
   const fields = ["month", "cutoffDate", "isComplete"] as const;
   const supplied = fields.filter(field => row[field] !== undefined);
   if (!supplied.length) return undefined;

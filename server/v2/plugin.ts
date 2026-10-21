@@ -32,6 +32,9 @@ import { dailyDashboardCatalog, dailyDashboardMatchesMapping, type DailyDashboar
 import { dailyDashboardQuerySchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery } from "../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS } from "../../contracts/operating-detail-projection";
 import { runWithUpstreamRequestProfile, type UpstreamRequestProfile } from "../upstream/request-profile";
+import { BiQueryJobError, type BiQueryJobService } from "./query-jobs.service";
+import { QueryJobBusinessError } from "../upstream/query-jobs";
+import { biQueryJobHandleSchema } from "../../contracts/query-jobs";
 
 export interface V2MetricQueryExecutor {
   execute(query: V2MetricQuery): Promise<V2MetricQuerySuccess>;
@@ -47,6 +50,7 @@ export interface V2BiPluginOptions {
   coreOverviewQueryEnabled?: boolean;
   coreOverviewQueryService?: V2CoreOverviewQueryExecutor;
   dailyDashboardService?: DailyDashboardExecutor;
+  queryJobService?: Pick<BiQueryJobService, "create" | "status" | "result">;
   productionDailyDashboardEnabled?: boolean;
   dataEnvironmentResolver?: {
     testAvailable: boolean;
@@ -311,6 +315,41 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
       unbindClientAbort();
     }
   });
+
+  const queryJobHandler = (operation: "create" | "status" | "result") => async (request: FastifyRequest, reply: FastifyReply) => {
+    const context = await requireContext(request, reply);
+    if (!context) return;
+    if (!options.queryJobService || context.environment.mode === "production" && !options.productionDailyDashboardEnabled) {
+      return sendV2Error(request, reply, 422, "QUERY_JOBS_DISABLED", "当前环境尚未启用异步查询");
+    }
+    const handle = operation === "create" ? null : biQueryJobHandleSchema.safeParse((request.params as { handle?: unknown }).handle);
+    if (handle && !handle.success) return sendV2Error(request, reply, 400, "QUERY_JOB_INVALID", "查询任务编号格式不合法");
+    const controller = new AbortController();
+    const unbind = bindClientRequestAbort(request.raw, reply.raw, controller, "query_job_request_aborted");
+    try {
+      return await runInEnvironment<unknown>(context, () => operation === "create"
+        ? options.queryJobService!.create(context.principal, request.body, controller.signal)
+        : options.queryJobService![operation](context.principal, handle && handle.success ? handle.data : "", controller.signal));
+    } catch (error) {
+      if (error instanceof BiQueryJobError) return sendV2Error(request, reply, error.statusCode, error.code, error.message);
+      if (error instanceof QueryJobBusinessError) {
+        // Project numeric evidence only; upstream errors can reflect credentials or request payloads.
+        const status = [400, 404, 409].includes(error.businessCode) ? error.businessCode : 502;
+        return reply.code(status).send({ success: false, error: { code: "QUERY_JOB_UPSTREAM_REJECTED", message: "数据源未完成查询任务请求", requestId: request.id,
+          upstreamBusinessCode: error.businessCode, upstreamHttpStatus: error.httpStatus } });
+      }
+      if (error instanceof UpstreamError) {
+        if (error.code === "UPSTREAM_QUERY_JOB_CONTEXT_CHANGED") return sendV2Error(request, reply, 409, "QUERY_JOB_CONTEXT_CHANGED", "数据源或会话已变化，请重新查询");
+        const failure = mapUpstreamFailure(error);
+        return sendV2Error(request, reply, failure.statusCode, failure.code, failure.message);
+      }
+      request.log.warn({ operation, errorCode: "query_job_unknown_failure" }, "BI query job request failed");
+      return sendV2Error(request, reply, 502, "QUERY_JOB_RESULT_INVALID", "查询任务响应未通过校验");
+    } finally { unbind(); }
+  };
+  app.post("/queries/jobs", { bodyLimit: 60 * 1024 }, queryJobHandler("create"));
+  app.get("/queries/jobs/:handle", queryJobHandler("status"));
+  app.get("/queries/jobs/:handle/result", queryJobHandler("result"));
 
   app.get("/catalog/metric-definitions", async (request, reply) => {
     const context = await requireContext(request, reply);

@@ -1,17 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import Fastify, { type FastifyInstance } from "fastify";
+import { EventEmitter } from "node:events";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { biAuthErrorResponseSchema } from "../../contracts/bi-auth";
 import {
   BI_SESSION_COOKIE,
   LOCAL_BI_SESSION_COOKIE,
   resolveSessionCookieConfiguration
 } from "./cookies";
-import { biAuthPlugin, type BiAuthPluginOptions } from "./plugin";
+import { authenticatedSession, biAuthPlugin, type BiAuthPluginOptions } from "./plugin";
 import { MemoryAuthRepository } from "./repository";
 import { permissionsByRole } from "./roles";
 import { BiAccountAdminService, BiAuthService } from "./service";
 import { PasswordWorkCapacityError, type ScryptParameters } from "./password";
-import { markIdentityLookupPhase } from "../identity/identity-lookup-diagnostics";
+import { identityLookupFailureDiagnostics, markIdentityLookupPhase } from "../identity/identity-lookup-diagnostics";
 
 const testScryptParameters: ScryptParameters = {
   N: 2 ** 10,
@@ -289,7 +290,32 @@ describe("biAuthPlugin", () => {
     expect(session.headers["set-cookie"]).toBeUndefined();
   });
 
-  test("会话查询超过期限时取消底层查询并稳定返回 503", async () => {
+  for (const timing of ["提前", "同步", "微任务"] as const) {
+    test(`会话结算与${timing}取消竞争时拒绝结果并清理请求监听`, async () => {
+      const rawRequest = Object.assign(new EventEmitter(), { aborted: timing === "提前" });
+      const rawResponse = Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false });
+      const request = {
+        headers: { cookie: `${BI_SESSION_COOKIE}=${"a".repeat(43)}` }, raw: rawRequest
+      } as unknown as FastifyRequest;
+      const reply = { raw: rawResponse } as unknown as FastifyReply;
+      let calls = 0;
+      const service = { resolveSession: () => {
+        calls++;
+        if (timing === "同步") rawRequest.emit("aborted");
+        else if (timing === "微任务") queueMicrotask(() => rawRequest.emit("aborted"));
+        return Promise.resolve(null);
+      } } as unknown as BiAuthService;
+
+      await expect(authenticatedSession(request, reply, service, BI_SESSION_COOKIE, 3000))
+        .rejects.toThrow("auth_request_aborted");
+      expect(calls).toBe(timing === "提前" ? 0 : 1);
+      expect(identityLookupFailureDiagnostics(request)).toMatchObject({ failureCode: "client_aborted", phase: "resolve" });
+      expect(rawRequest.listenerCount("aborted")).toBe(0);
+      expect(rawResponse.listenerCount("close")).toBe(0);
+    });
+  }
+
+  test("会话查询超过期限时发出取消信号，底层未结束仍按期限返回503", async () => {
     let lookupSignal: AbortSignal | undefined;
     const logMessages: Record<string, unknown>[] = [];
     const logger = { level: "error", stream: { write: (line: string) => { logMessages.push(JSON.parse(line)); } } };
@@ -297,9 +323,7 @@ describe("biAuthPlugin", () => {
       resolveSession: (_token: string | null, signal?: AbortSignal) => {
         lookupSignal = signal;
         markIdentityLookupPhase(signal, "query");
-        return new Promise<never>((_resolve, reject) => {
-          signal?.addEventListener("abort", () => reject(new Error("query_cancelled")), { once: true });
-        });
+        return new Promise<never>(() => undefined);
       }
     } as unknown as BiAuthService;
     const app = Fastify({ logger });

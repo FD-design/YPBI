@@ -110,26 +110,6 @@ async function reserveIdentityConnection(sql: Sql, signal?: AbortSignal): Promis
   }
 }
 
-async function queryWithAbort<T>(
-  query: PromiseLike<T> & { cancel(): void },
-  signal?: AbortSignal
-): Promise<T> {
-  if (!signal) return await query;
-  const cancel = () => {
-    void Promise.resolve(query.cancel() as unknown).catch(() => undefined);
-  };
-  if (signal.aborted) {
-    cancel();
-    return await query;
-  }
-  signal.addEventListener("abort", cancel, { once: true });
-  try {
-    return await query;
-  } finally {
-    signal.removeEventListener("abort", cancel);
-  }
-}
-
 export class PostgresAuthRepository implements AuthRepository {
   constructor(private readonly sql: Sql) {}
 
@@ -228,7 +208,10 @@ export class PostgresAuthRepository implements AuthRepository {
     try {
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
       markIdentityLookupPhase(signal, "query");
-      const rows = await queryWithAbort(connection.unsafe<(SessionRow & UserRow)[]>(
+      // PostgreSQL CancelRequest targets a connection, not a query. A late cancel
+      // can abort its next borrower. Keep this read reserved until it settles
+      // under the database statement timeout; the caller owns the HTTP deadline.
+      const rows = await connection.unsafe<(SessionRow & UserRow)[]>(
       `select
         s.session_id, s.user_id, s.token_hash,
         s.credential_version, s.created_at, s.expires_at, s.revoked_at,
@@ -243,7 +226,8 @@ export class PostgresAuthRepository implements AuthRepository {
         and u.status = 'active'
         and u.credential_version = s.credential_version`,
       [tokenHash, now]
-    ), signal);
+    );
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
       markIdentityLookupPhase(signal, "map");
       const row = rows[0];
       if (!row) return null;

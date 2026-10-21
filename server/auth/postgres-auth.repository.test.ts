@@ -70,18 +70,17 @@ function transactionHarness(unsafeResponses: unknown[][], revokeError?: Error) {
 }
 
 describe("PostgresAuthRepository 账号权限维护", () => {
-  test("身份查询收到 AbortSignal 后取消底层 PostgreSQL query", async () => {
+  for (const hasRow of [false, true]) test(`身份查询取消后持有连接直到SQL结束，丢弃${hasRow ? "身份" : "空"}结果且不发送迟到取消`, async () => {
     let cancelled = false;
     let released = 0;
     let started: () => void = () => undefined;
     const queryStarted = new Promise<void>(resolve => { started = resolve; });
-    let rejectQuery: (error: Error) => void = () => undefined;
+    let finishQuery: (rows: unknown[]) => void = () => undefined;
     const pending = Object.assign(
-      new Promise<never>((_resolve, reject) => { rejectQuery = reject; }),
+      new Promise<unknown[]>(resolve => { finishQuery = resolve; }),
       {
         cancel: () => {
           cancelled = true;
-          rejectQuery(new Error("query cancelled"));
         }
       }
     );
@@ -100,10 +99,40 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     await queryStarted;
     const frozen = freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
     expect(frozen.phase).toBe("query");
-    controller.abort();
+    const abortReason = new Error("identity deadline exceeded");
+    controller.abort(abortReason);
+    await Promise.resolve();
+    expect(cancelled).toBe(false);
+    expect(released).toBe(0);
 
-    await expect(lookup).rejects.toThrow("query cancelled");
-    expect(cancelled).toBe(true);
+    finishQuery(hasRow ? [{ ...userRow(), session_id: "session-test", token_hash: "a".repeat(64),
+      user_created_at: new Date(), expires_at: new Date(), revoked_at: null }] : []);
+    await expect(lookup).rejects.toBe(abortReason);
+    expect(cancelled).toBe(false);
+    expect(released).toBe(1);
+    expect(freezeIdentityLookupFailure(controller.signal)).toBe(frozen);
+  });
+
+  test("取消后SQL达到数据库语句期限仍归还连接，并保留已冻结的身份超时诊断", async () => {
+    let released = 0;
+    let rejectQuery: (error: Error) => void = () => undefined;
+    let started: () => void = () => undefined;
+    const queryStarted = new Promise<void>(resolve => { started = resolve; });
+    const pending = Object.assign(new Promise<never>((_resolve, reject) => { rejectQuery = reject; }), {
+      cancel: () => { throw new Error("identity must not send protocol cancellation"); }
+    });
+    const connection = { unsafe: () => { started(); return pending; }, release: () => { released++; } };
+    const repository = new PostgresAuthRepository({ reserve: async () => connection } as unknown as Sql);
+    const controller = new AbortController();
+    beginIdentityLookupDiagnostics(controller.signal, 3000);
+    const lookup = repository.findAuthenticatedSession("a".repeat(64), new Date(), controller.signal);
+    await queryStarted;
+    const frozen = freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
+    controller.abort(new Error("identity deadline exceeded"));
+    expect(released).toBe(0);
+    const statementTimeout = Object.assign(new Error("statement deadline exceeded"), { code: "57014" });
+    rejectQuery(statementTimeout);
+    await expect(lookup).rejects.toBe(statementTimeout);
     expect(released).toBe(1);
     expect(freezeIdentityLookupFailure(controller.signal)).toBe(frozen);
   });

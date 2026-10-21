@@ -63,6 +63,7 @@ import { AdvertisingOverview, advertisingSheet } from "./AdvertisingOverview";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { liveMetricModel, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
 import { useOperatingLive } from "./useOperatingLive";
+import { OperatingReadProgress } from "./OperatingReadProgress";
 import { operatingLiveSummary, operatingLiveColumnSummary, operatingLiveExportRows, operatingLiveCalculationRows, OPERATING_LIVE_IDS } from "./operating-live-model";
 
 type ComparisonMode = "previous" | "week" | "month" | "year" | "none";
@@ -685,7 +686,7 @@ function CoreOverviewDesignFixture() {
     <AdvertisingOverview range={appliedFilters} audience={adAudience} onAudience={setAdAudience} compared={appliedFilters.comparison!=="none"} mixed={mode==="mixed"} pending={hasPendingFilters} onOpen={(title,content)=>setReading({title,content})}/>
     <section className="core-review__section core-review__detail" aria-labelledby="core-operating-detail">
       <header>
-        <div><DashboardSectionHeading title="经营明细" id="core-operating-detail" badge={!live && <DataOriginBadge />} /><p>当日快照 · 平台筛选仅作用于本区域</p></div>
+        <div><DashboardSectionHeading title="经营明细" id="core-operating-detail" badge={!live && <DataOriginBadge />} /><p>当日快照 · 平台筛选仅作用于本区域</p><OperatingReadProgress notice={operating.notice} /></div>
         <div className="core-review__detail-actions"><time dateTime={detailDate}>数据日 {detailDate}</time>
           <MenuSelect label="平台" ariaLabel="经营明细平台" density="compact" value={detailPlatform}
             groups={[{ label: "经营明细平台", options: [{ value: "all", label: "全部平台" }, ...detailRows.map(row => ({ value: row.pid, label: row.name }))] }]}

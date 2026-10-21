@@ -69,6 +69,7 @@ const dimensionFilterSchema = z.object({
   paymentMethod: z.enum(["ali_pay", "wx_pay", "usdt_pay", "unknown"]).optional()
 }).strict();
 const dimensionNameSchema = z.enum(["clientPlatform", "userCohort", "sourceType", "paymentMethod"]);
+export { dimensionNameSchema as biV1MetricDimensionNameSchema, dimensionFilterSchema as biV1MetricDimensionFilterSchema };
 export type BiV1MetricDimensionFilters = z.infer<typeof dimensionFilterSchema>;
 export type BiV1MetricDimension = z.infer<typeof dimensionNameSchema>;
 

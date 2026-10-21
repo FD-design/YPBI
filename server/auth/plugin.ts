@@ -102,21 +102,23 @@ export async function authenticatedSession(
     timeoutMs
   );
   timeout.unref();
-  const aborted = new Promise<never>((_resolve, reject) => {
-    const rejectForAbort = () => {
-      reject(controller.signal.reason instanceof Error
-        ? controller.signal.reason
-        : new Error("auth_session_lookup_aborted"));
-    };
-    if (controller.signal.aborted) rejectForAbort();
-    else controller.signal.addEventListener("abort", rejectForAbort, { once: true });
-  });
 
   try {
+    controller.signal.throwIfAborted();
+    const aborted = new Promise<never>((_resolve, reject) => {
+      const rejectForAbort = () => {
+        reject(controller.signal.reason instanceof Error
+          ? controller.signal.reason
+          : new Error("auth_session_lookup_aborted"));
+      };
+      if (controller.signal.aborted) rejectForAbort();
+      else controller.signal.addEventListener("abort", rejectForAbort, { once: true });
+    });
     const session = await Promise.race([
       service.resolveSession(token, controller.signal),
       aborted
     ]);
+    controller.signal.throwIfAborted();
     markIdentityLookupPhase(controller.signal, "complete");
     return { token, session };
   } catch (error) {

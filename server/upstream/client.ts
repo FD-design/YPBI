@@ -6,6 +6,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { enabledPlatformsForSite, getEnabledPlatformByPid, type PlatformSiteId } from "../platforms/registry";
 import { currentUpstreamRequestProfile } from "./request-profile";
 import { RequestWorkQueue } from "./request-work-queue";
+import {
+  queryJobCreateRequestSchema, queryJobTaskIdSchema,
+  type QueryJobContext, type QueryJobOperation
+} from "./query-jobs.contract";
 
 export type CredentialSite = PlatformSiteId;
 interface StoredCredential { token: string; userName?: string; updatedAt: string }
@@ -27,6 +31,12 @@ interface ConsumerSignal {
 export class UpstreamError extends Error {
   constructor(public readonly code: string, message: string, public readonly statusCode = 502) {
     super(message);
+  }
+}
+
+export class QueryJobBusinessError extends UpstreamError {
+  constructor(public readonly businessCode: number, public readonly httpStatus: number) {
+    super("UPSTREAM_QUERY_JOB_REJECTED", "后台拒绝查询任务请求", [400, 404, 409, 500].includes(businessCode) ? businessCode : 502);
   }
 }
 
@@ -241,6 +251,50 @@ export class UpstreamClient {
     return request;
   }
 
+  queryJobContext(authorizedPid: string): QueryJobContext {
+    const platform = getEnabledPlatformByPid(authorizedPid);
+    if (!platform) throw new UpstreamError("UPSTREAM_PID_NOT_AVAILABLE", "所选业务 PID 不存在或已停用", 422);
+    const requestProfile = currentUpstreamRequestProfile();
+    const profile = this.selectProfile(authorizedPid);
+    if (!profile.token || !validUserName(profile.userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源账号尚未完整配置", 503);
+    const environment = requestProfile?.environment ?? "production";
+    const accountRef = createHash("sha256").update(JSON.stringify([new URL(profile.baseUrl).origin, profile.userName])).digest("hex");
+    const sourceRef = createHash("sha256").update(JSON.stringify([accountRef, environment, platform.siteId, profile.token, requestProfile?.cachePartition ?? null])).digest("hex");
+    return Object.freeze({ routingPid: authorizedPid, siteId: platform.siteId, environment, accountRef, sourceRef });
+  }
+
+  /** Fixed read-only query-job operations, with no metric cache, in-flight reuse or automatic retry. */
+  async requestQueryJob(context: QueryJobContext, operation: QueryJobOperation, signal?: AbortSignal): Promise<unknown> {
+    if (signal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504);
+    const current = this.queryJobContext(context.routingPid);
+    if (current.siteId !== context.siteId || current.environment !== context.environment
+      || current.accountRef !== context.accountRef || current.sourceRef !== context.sourceRef) {
+      throw new UpstreamError("UPSTREAM_QUERY_JOB_CONTEXT_CHANGED", "查询任务数据源上下文已变化", 409);
+    }
+    let path = "/api/admin/bi/v1/queryJobs";
+    let body: string | undefined;
+    if (operation.kind === "create") {
+      const parsed = queryJobCreateRequestSchema.safeParse(operation.body);
+      if (!parsed.success) throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "查询任务参数不符合契约", 400);
+      if (parsed.data.queries.some(unit => unit.query.pid.split(",").some(pid => getEnabledPlatformByPid(pid)?.siteId !== context.siteId))) {
+        throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "查询任务 PID 必须属于绑定站点", 400);
+      }
+      body = JSON.stringify(parsed.data);
+    } else if (operation.kind === "status" || operation.kind === "result") {
+      if (!queryJobTaskIdSchema.safeParse(operation.taskId).success) throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "查询任务编号无效", 400);
+      path += `/${encodeURIComponent(operation.taskId)}${operation.kind === "result" ? "/result" : ""}`;
+    } else {
+      throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "查询任务操作无效", 400);
+    }
+    const profile = this.selectProfile(context.routingPid);
+    const url = new URL(path, profile.baseUrl);
+    return this.requestWorkQueue.run(
+      remainingMs => this.fetchJson(url, profile.token, profile.userName, remainingMs, signal, { queryJob: true, body }),
+      this.env.REQUEST_TIMEOUT_MS,
+      signal
+    );
+  }
+
   private watchConsumer(signal: AbortSignal, onAbort: () => void) {
     let observed = this.consumerSignals.get(signal);
     if (!observed) {
@@ -298,7 +352,8 @@ export class UpstreamClient {
     return { baseUrl: this.env.UPSTREAM_API_BASE_URL, token, userName };
   }
 
-  private async fetchJson(url: URL, token?: string, userName?: string, timeoutMs = this.env.REQUEST_TIMEOUT_MS, signal?: AbortSignal): Promise<unknown> {
+  private async fetchJson(url: URL, token?: string, userName?: string, timeoutMs = this.env.REQUEST_TIMEOUT_MS, signal?: AbortSignal,
+    operation?: { queryJob: true; body?: string }): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const onConsumerAbort = () => controller.abort();
@@ -308,24 +363,38 @@ export class UpstreamClient {
       const headers: Record<string, string> = {};
       if (token) headers["x-token"] = token;
       if (userName) headers.name = userName;
+      if (operation?.body !== undefined) headers["content-type"] = "application/json";
       const response = await this.fetcher(url, {
         headers,
-        signal: controller.signal
+        signal: controller.signal,
+        ...(operation ? { method: operation.body === undefined ? "GET" : "POST", body: operation.body, cache: "no-store" as const, redirect: "error" as const } : {})
       });
       if (response.status === 401 || response.status === 403) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
       if (response.status === 429) throw new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429);
-      if (!response.ok && ![400, 422].includes(response.status)) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+      if (!response.ok && !(operation ? [400, 404, 409, 500] : [400, 422]).includes(response.status)) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
       const payload = await response.json().catch((error: unknown) => {
         if (!response.ok && error instanceof SyntaxError) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
         throw error;
       });
-      const rawCode = payload && typeof payload === "object" ? Reflect.get(payload, "code") : undefined;
-      const businessCode = String(rawCode ?? "200");
+      const hasCode = payload !== null && typeof payload === "object" && Object.hasOwn(payload, "code");
+      const rawCode = hasCode ? Reflect.get(payload, "code") : undefined;
+      if (hasCode && typeof rawCode !== "number" && typeof rawCode !== "string") {
+        throw new UpstreamError("UPSTREAM_FAILED", response.ok ? "后台业务状态格式无效" : `后台接口返回 ${response.status}`);
+      }
+      const businessCode = hasCode ? String(rawCode) : "200";
+      if (operation && (!hasCode || typeof rawCode !== "number" || !Number.isSafeInteger(rawCode))) {
+        throw new UpstreamError("UPSTREAM_INVALID_RESPONSE", "查询任务业务状态格式无效", 502);
+      }
       const rawMessage = payload && typeof payload === "object" ? Reflect.get(payload, "err") : undefined;
       const message = Array.isArray(rawMessage) ? rawMessage.map(String).join("；") : String(rawMessage ?? "后台请求失败");
       if (businessCode === "2002") {
         if (/ip\s*限制|IP\s*限制/i.test(message)) throw new UpstreamError("UPSTREAM_IP_RESTRICTED", "服务器出口 IP 未加入后台白名单", 403);
         throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效，请更新 Token", 401);
+      }
+      if (operation) {
+        if (rawCode !== 200) throw new QueryJobBusinessError(rawCode as number, response.status);
+        if (!response.ok) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+        return payload;
       }
       if (!response.ok) {
         const validMessage = typeof rawMessage === "string" ? rawMessage.trim().length > 0

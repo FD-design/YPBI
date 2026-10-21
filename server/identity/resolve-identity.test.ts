@@ -4,6 +4,40 @@ import { resolveIdentity } from "./resolve-identity";
 import { identityLookupFailureDiagnostics, markIdentityLookupPhase } from "./identity-lookup-diagnostics";
 
 describe("resolveIdentity cancellation boundary", () => {
+  const authenticated = {
+    status: "authenticated",
+    principal: { subjectId: "identity-unit-user", roles: ["reader"], permissions: ["bi:read"], pidScope: "all" }
+  } as const;
+
+  test("已取消请求不调用provider，也不接受立即返回的有效身份", async () => {
+    const external = new AbortController();
+    const reason = new Error("identity request already cancelled");
+    external.abort(reason);
+    let calls = 0;
+    const provider: IdentityProvider = { resolve: async () => { calls++; return authenticated; } };
+
+    await expect(resolveIdentity(provider, { headers: {}, ip: "127.0.0.1", signal: external.signal }))
+      .rejects.toBe(reason);
+    expect(calls).toBe(0);
+    expect(identityLookupFailureDiagnostics(external.signal)).toMatchObject({ failureCode: "client_aborted", phase: "resolve" });
+  });
+
+  for (const timing of ["同步", "微任务"] as const) {
+    test(`provider成功与${timing}取消竞争时仍失败关闭`, async () => {
+      const external = new AbortController();
+      const reason = new Error("identity request cancelled while resolving");
+      const provider: IdentityProvider = { resolve: () => {
+        if (timing === "同步") external.abort(reason);
+        else queueMicrotask(() => external.abort(reason));
+        return Promise.resolve(authenticated);
+      } };
+
+      await expect(resolveIdentity(provider, { headers: {}, ip: "127.0.0.1", signal: external.signal }))
+        .rejects.toBe(reason);
+      expect(identityLookupFailureDiagnostics(external.signal)).toMatchObject({ failureCode: "client_aborted", phase: "resolve" });
+    });
+  }
+
   test("将外层客户端取消传递给身份提供者", async () => {
     const external = new AbortController();
     let providerObservedAbort = false;

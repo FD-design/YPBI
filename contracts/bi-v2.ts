@@ -612,6 +612,14 @@ export const v2ApiErrorCodeSchema = z.enum([
   "DAILY_READING_DISABLED",
   "DAILY_BOARD_NOT_READY",
   "DAILY_SOURCE_CONFLICT",
+  "QUERY_JOBS_DISABLED",
+  "QUERY_JOB_INVALID",
+  "QUERY_JOB_FORBIDDEN",
+  "QUERY_JOB_NOT_FOUND",
+  "QUERY_JOB_CONTEXT_CHANGED",
+  "QUERY_JOB_CAPACITY",
+  "QUERY_JOB_RESULT_INVALID",
+  "QUERY_JOB_UPSTREAM_REJECTED",
   "INVALID_V2_METRIC_QUERY",
   "INVALID_CORE_OVERVIEW_QUERY",
   "V2_REQUEST_TOO_LARGE",
@@ -639,7 +647,9 @@ export const v2ApiErrorSchema = z.object({
   error: z.object({
     code: v2ApiErrorCodeSchema,
     message: boundedText(1_000),
-    requestId: boundedText(256)
+    requestId: boundedText(256),
+    upstreamBusinessCode: z.number().int().optional(),
+    upstreamHttpStatus: z.number().int().min(100).max(599).optional()
   }).strict()
 }).strict();
 

@@ -60,6 +60,7 @@ export async function resolveIdentity(
   }, timeoutMs);
   timer.unref();
   try {
+    controller.signal.throwIfAborted();
     const aborted = new Promise<never>((_resolve, reject) => {
       const rejectForAbort = () => reject(controller.signal.reason instanceof Error
         ? controller.signal.reason
@@ -71,6 +72,7 @@ export async function resolveIdentity(
       identityProvider.resolve({ ...providerContext, signal: controller.signal }),
       aborted
     ]);
+    controller.signal.throwIfAborted();
     const parsed = identityResolutionSchema.safeParse(rawResolution);
     if (!parsed.success) {
       freezeIdentityLookupFailure(controller.signal, "invalid_resolution");

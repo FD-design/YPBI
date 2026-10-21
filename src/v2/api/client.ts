@@ -81,7 +81,7 @@ async function metricDefinitionsContentHashIsValid(payload: z.infer<typeof v2Met
   return await sha256(JSON.stringify(canonicalize(hashInput))) === contentSha256;
 }
 
-async function parseResponse<T>(response: Response, successSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+export async function parseResponse<T>(response: Response, successSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   signal?.throwIfAborted();
   if (response.status === 401) notifyAuthenticationRequired();
   let payload: unknown;

@@ -102,6 +102,47 @@ async function expectPartialInput(page: Page, denominator = 6) {
   await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
 }
 
+for (const width of [1280, 1024, 390]) test(`经营查询进度与指标状态分离并保留93列（${width}）`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 950 });
+  const control = await fixtures(page);
+  try {
+    await page.goto(url);
+    const notice = local(page).locator(".core-review__operating-progress");
+    await expect(notice).toContainText("平台查询已结束 1/2");
+    await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
+    await notice.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`operating-query-progress-${width}.png`) });
+    const bounds = await notice.boundingBox();
+    expect(bounds).not.toBeNull(); expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    control.release();
+    await expect(cell(page)).toHaveText("来源不完整");
+    await expect(notice).toHaveCount(0);
+    await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
+  } finally { control.release(); }
+});
+
+test("刷新失败收起查询计数，但保留上次结果原读取时间", async ({ page }, info) => {
+  const control = await fixtures(page, platforms.slice(0, 1), 24);
+  control.release();
+  try {
+    await page.goto(url); await expect(cell(page)).toHaveText("4");
+    const notice = local(page).locator(".core-review__operating-progress");
+    await expect(notice).toHaveCount(0);
+    control.hold();
+    await page.getByRole("button", { name: "刷新看板", exact: true, includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
+    await expect(notice).toContainText("平台查询已结束 0/1");
+    await expect(notice).toContainText("1 个平台保留上次结果");
+    await expect(notice.locator("time")).toHaveAttribute("datetime", "2026-10-14T00:00:00.000Z");
+    control.release("failure");
+    await expect(notice).not.toContainText("平台查询已结束");
+    await expect(notice).toContainText("读取时间");
+    await expect(notice.locator("time")).toHaveAttribute("datetime", "2026-10-14T00:00:00.000Z");
+    await expect(cell(page)).toHaveText("4");
+    await notice.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath("operating-query-retained-time.png") });
+  } finally { control.release(); }
+});
+
 for (const width of [1280, 1024, 390]) test(`PH读取中打开M087详情，响应后不关闭即更新来源状态和分母（${width}）`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 950 });
   // One readable PID makes the first real response supply the column metadata too.

@@ -588,7 +588,7 @@ test("已验数响应缺少可信水位时前端拒绝展示业务值", async ({
   await expect(page.locator(".v2-result-table")).toHaveCount(0);
 });
 
-test("503 身份来源不可用时失败关闭并显示请求 ID", async ({ page }) => {
+test("503 身份来源不可用时失败关闭并显示请求编号", async ({ page }) => {
   await page.route("**/api/bi/v2/catalog/metric-definitions", (route) => route.fulfill({
     status: 503,
     contentType: "application/json",
@@ -605,7 +605,7 @@ test("503 身份来源不可用时失败关闭并显示请求 ID", async ({ page
   await page.goto(`${baseUrl}/data/metrics`, { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "身份能力暂不可用" })).toBeVisible();
   await expect(page.getByText("错误代码：IDENTITY_PROVIDER_UNAVAILABLE")).toBeVisible();
-  await expect(page.getByText("请求 ID：req-qa-503")).toBeVisible();
+  await expect(page.getByText("请求编号：req-qa-503")).toBeVisible();
   await expect(page.locator(".v2-table-surface")).toHaveCount(0);
   await page.screenshot({ path: "/private/tmp/ypbi-v2-identity-unavailable.png", fullPage: false });
 });

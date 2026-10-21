@@ -542,6 +542,15 @@
   padding: 13px 14px;
 }
 
+.core-review__detail > header .core-review__operating-progress {
+  margin: 6px 0 0;
+  color: var(--color-text-3);
+  font-size: var(--font-size-body-sm);
+  font-weight: var(--font-weight-regular);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .core-review__detail-actions {
   flex: 0 0 auto;
   display: flex;
