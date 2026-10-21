@@ -257,6 +257,9 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
         signal: clientAbortController.signal
       });
     } catch {
+      // A disconnected Bun response may still have writableEnded=false.
+      // Hijacking ends Fastify's hook chain before any response or admin action.
+      if (clientAbortController.signal.aborted) return reply.hijack();
       request.log.error({ requestId: request.id, outcome: "admin_identity_failed" }, "admin identity resolution failed");
       return reply.code(503).send({
         success: false,
