@@ -44,7 +44,7 @@ type AccessState =
 
 type Operation =
   | { kind: "idle" }
-  | { kind: "login" | "logout" | "preview_activate" | "preview_deactivate" }
+  | { kind: "login" | "logout" | "preview_activate" | "preview_deactivate" | "preview_check" }
   | { kind: "current" | "candidate" | "save"; site: CredentialSite };
 
 interface SiteNotice {
@@ -164,10 +164,43 @@ export function DataSourceMaintenancePage() {
   const [confirmingSite, setConfirmingSite] = useState<CredentialSite | null>(null);
   const [previewToken, setPreviewToken] = useState("");
   const [previewNotice, setPreviewNotice] = useState<{ tone: "neutral" | "pending" | "success" | "danger"; message: string }>({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" });
+  const [previewVerification, setPreviewVerification] = useState<"confirmed" | "checking" | "unknown">("checking");
+  const statusGeneration = useRef(0);
+  const statusController = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  const deferredCheck = useRef(false);
+  const latest = useRef({ access, operation, dataEnvironment });
+  latest.current = { access, operation, dataEnvironment };
+
+  const invalidateStatusCheck = () => {
+    statusGeneration.current++;
+    statusController.current?.abort();
+    statusController.current = null;
+  };
+  const beginOperation = (next: Operation) => {
+    if (statusController.current) deferredCheck.current = true;
+    invalidateStatusCheck();
+    if (next.kind === "preview_activate") setPreviewVerification("checking");
+    latest.current.operation = next;
+    setOperation(next);
+  };
+  const finishOperation = () => {
+    if (!mounted.current) return;
+    latest.current.operation = { kind: "idle" };
+    setOperation({ kind: "idle" });
+  };
+
+  const focusAfterRender = (id: string) => {
+    const previousFocus = document.activeElement;
+    window.requestAnimationFrame(() => {
+      if (!mounted.current || document.activeElement !== previousFocus && document.activeElement !== document.body) return;
+      document.getElementById(id)?.focus();
+    });
+  };
 
   const closeSaveConfirmation = (site: CredentialSite) => {
     setConfirmingSite(null);
-    window.requestAnimationFrame(() => document.getElementById(`save-token-${site}`)?.focus());
+    focusAfterRender(`save-token-${site}`);
   };
 
   const clearSensitiveState = () => {
@@ -181,7 +214,7 @@ export function DataSourceMaintenancePage() {
 
   const focusSiteFeedback = (site: CredentialSite, target: "status" | "token" | "userName") => {
     const id = target === "status" ? `probe-status-${site}` : target === "userName" ? `username-${site}` : `token-${site}`;
-    window.requestAnimationFrame(() => document.getElementById(id)?.focus());
+    focusAfterRender(id);
   };
 
   const handleAccessError = (error: unknown) => {
@@ -194,15 +227,58 @@ export function DataSourceMaintenancePage() {
   };
 
   const loadStatus = async (signal?: AbortSignal) => {
-    const [sources, preview] = await Promise.all([
-      fetchDataSourceStatus(signal),
-      fetchDataPreviewStatus(signal)
-    ]);
-    setPageError(null);
-    setAccess({ status: "ready", sources, preview });
+    invalidateStatusCheck();
+    const generation = ++statusGeneration.current;
+    const controller = new AbortController();
+    statusController.current = controller;
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    const isCurrent = () => mounted.current && generation === statusGeneration.current && !controller.signal.aborted;
+    setPreviewVerification("checking");
+    try {
+      const [sources, returned] = await Promise.all([fetchDataSourceStatus(controller.signal), fetchDataPreviewStatus(controller.signal)]);
+      if (!isCurrent()) return;
+      const preview = returned.active && (!returned.expiresAt || Date.parse(returned.expiresAt) <= Date.now())
+        ? { ...returned, active: false, expiresAt: null } : returned;
+      const previous = latest.current.access;
+      setPageError(null);
+      setAccess({ status: "ready", sources, preview });
+      setPreviewVerification("confirmed");
+      setPreviewNotice(current => preview.active && current.tone === "success" ? current : { tone: "neutral", message: preview.active ? "测试临时会话有效，数据查询仍按所选环境执行"
+        : previous.status === "ready" && previous.preview.active || latest.current.dataEnvironment.state.mode === "test"
+          ? "测试数据会话未启用或已失效，请重新验证测试 Token" : "测试 Token 仅用于当前登录会话，不会替换正式凭据" });
+      if (!preview.active && latest.current.dataEnvironment.state.mode === "test" && latest.current.dataEnvironment.state.status === "ready") void latest.current.dataEnvironment.refresh();
+      return preview;
+    } catch (error) {
+      if (!isCurrent()) return;
+      setPreviewVerification("unknown");
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      if (statusController.current === controller) statusController.current = null;
+    }
+  };
+
+  const recheckStatus = () => {
+    if (!secureContext || !mounted.current || document.visibilityState !== "visible" || latest.current.access.status !== "ready") return;
+    if (latest.current.operation.kind !== "idle") { deferredCheck.current = true; return; }
+    if (statusController.current) return;
+    void loadStatus().catch(error => {
+      const problem = asAdminError(error, "暂时无法确认测试数据会话");
+      if (["login_required", "disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) handleAccessError(problem);
+      else setPreviewNotice({ tone: "danger", message: "暂时无法确认测试数据会话；当前状态待确认，请恢复网络后重新检查" });
+    });
   };
 
   useEffect(() => {
+    if (operation.kind !== "idle" || !deferredCheck.current) return;
+    deferredCheck.current = false;
+    recheckStatus();
+  }, [operation.kind, access.status]);
+
+  useEffect(() => {
+    mounted.current = true;
     if (!secureContext) {
       setAccess({
         status: "failure",
@@ -214,13 +290,51 @@ export function DataSourceMaintenancePage() {
     loadStatus(controller.signal).catch((error) => {
       if (!controller.signal.aborted) handleAccessError(error);
     });
-    return () => controller.abort();
+    window.addEventListener("focus", recheckStatus);
+    window.addEventListener("pageshow", recheckStatus);
+    document.addEventListener("visibilitychange", recheckStatus);
+    return () => {
+      mounted.current = false;
+      invalidateStatusCheck();
+      controller.abort();
+      window.removeEventListener("focus", recheckStatus);
+      window.removeEventListener("pageshow", recheckStatus);
+      document.removeEventListener("visibilitychange", recheckStatus);
+    };
   }, [secureContext]);
+
+  const previewExpiresAt = access.status === "ready" && access.preview.active ? access.preview.expiresAt : null;
+  useEffect(() => {
+    if (!previewExpiresAt) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const expire = () => {
+      const remaining = Date.parse(previewExpiresAt) - Date.now();
+      if (remaining > 0) { timer = setTimeout(expire, Math.min(remaining, 2_147_000_000)); return; }
+      if (latest.current.operation.kind === "preview_activate") { deferredCheck.current = true; return; }
+      if (latest.current.access.status !== "ready" || latest.current.access.preview.expiresAt !== previewExpiresAt) return;
+      setAccess(current => current.status === "ready" && current.preview.expiresAt === previewExpiresAt
+        ? { ...current, preview: { ...current.preview, active: false, expiresAt: null } } : current);
+      setPreviewNotice({ tone: "neutral", message: "测试数据会话已到期，请重新验证测试 Token" });
+      recheckStatus();
+    };
+    timer = setTimeout(expire, Math.max(0, Math.min(Date.parse(previewExpiresAt) - Date.now(), 2_147_000_000)));
+    return () => clearTimeout(timer);
+  }, [previewExpiresAt]);
+
+  useEffect(() => {
+    if (dataEnvironment.state.mode !== "test") return;
+    if (dataEnvironment.state.status === "expired") {
+      setAccess(current => current.status === "ready" ? { ...current, preview: { ...current.preview, active: false, expiresAt: null } } : current);
+      setPreviewNotice({ tone: "danger", message: dataEnvironment.state.message });
+    } else if (dataEnvironment.state.status === "unconfirmed") {
+      setPreviewNotice({ tone: "danger", message: dataEnvironment.state.message });
+    }
+  }, [dataEnvironment.state]);
 
   const login = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (operation.kind !== "idle" || password.length < 12) return;
-    setOperation({ kind: "login" });
+    beginOperation({ kind: "login" });
     try {
       await loginMaintenance(password, csrfToken);
       setPassword("");
@@ -231,13 +345,13 @@ export function DataSourceMaintenancePage() {
       else setAccess({ status: "signed_out", error: problem });
     } finally {
       setPassword("");
-      setOperation({ kind: "idle" });
+      finishOperation();
     }
   };
 
   const logout = async () => {
     if (operation.kind !== "idle") return;
-    setOperation({ kind: "logout" });
+    beginOperation({ kind: "logout" });
     setPageError(null);
     clearSensitiveState();
     try {
@@ -248,7 +362,7 @@ export function DataSourceMaintenancePage() {
       if (["disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) handleAccessError(problem);
       else setPageError(problem);
     } finally {
-      setOperation({ kind: "idle" });
+      finishOperation();
     }
   };
 
@@ -275,7 +389,7 @@ export function DataSourceMaintenancePage() {
       focusSiteFeedback(site, "userName");
       return;
     }
-    setOperation({ kind, site });
+    beginOperation({ kind, site });
     setNotices((current) => ({ ...current, [site]: { tone: "pending", message: kind === "save" ? "正在再次验证并保存…" : "正在验证凭证探针…" } }));
     try {
       if (kind === "save") {
@@ -322,7 +436,7 @@ export function DataSourceMaintenancePage() {
       }
     } finally {
       if (kind === "save") setConfirmingSite(null);
-      setOperation({ kind: "idle" });
+      finishOperation();
     }
   };
 
@@ -333,26 +447,28 @@ export function DataSourceMaintenancePage() {
       setPreviewNotice({ tone: "danger", message: "测试 Token 长度应为 16～4096 个字符" });
       return;
     }
-    setOperation({ kind: "preview_activate" });
+    beginOperation({ kind: "preview_activate" });
     setPreviewNotice({ tone: "pending", message: "正在验证测试后台并创建临时会话…" });
     try {
       const activated = await activateDataPreview(token, csrfToken);
       setPreviewToken("");
       setAccess((current) => current.status === "ready" ? { ...current, preview: { enabled: true, active: true, userName: activated.userName, expiresAt: activated.expiresAt } } : current);
+      setPreviewVerification("confirmed");
       dataEnvironment.activateTest({ mode: "test", testAvailable: true, userName: activated.userName, expiresAt: activated.expiresAt });
       setPreviewNotice({ tone: "success", message: "测试数据模式已开启；当前浏览器会话中的新版 BI 查询将使用本次测试 Token" });
     } catch (error) {
       const problem = asAdminError(error, "测试数据模式开启失败");
+      setPreviewVerification("unknown");
       if (problem.kind === "login_required") handleAccessError(problem);
       else setPreviewNotice({ tone: "danger", message: `${problem.message}；未切换数据环境，正式数据保持不变` });
     } finally {
-      setOperation({ kind: "idle" });
+      finishOperation();
     }
   };
 
   const deactivatePreview = async () => {
     if (operation.kind !== "idle" || access.status !== "ready") return;
-    setOperation({ kind: "preview_deactivate" });
+    beginOperation({ kind: "preview_deactivate" });
     setPreviewNotice({ tone: "pending", message: "正在退出测试数据模式…" });
     try {
       await deactivateDataPreview(csrfToken);
@@ -363,8 +479,23 @@ export function DataSourceMaintenancePage() {
       const problem = asAdminError(error, "退出测试数据模式失败");
       setPreviewNotice({ tone: "danger", message: problem.message });
     } finally {
-      setOperation({ kind: "idle" });
+      finishOperation();
     }
+  };
+
+  const enterExistingPreview = async () => {
+    if (latest.current.operation.kind !== "idle") return;
+    beginOperation({ kind: "preview_check" });
+    try {
+      const preview = await loadStatus();
+      if (preview?.active && preview.userName && preview.expiresAt && Date.parse(preview.expiresAt) > Date.now()) {
+        latest.current.dataEnvironment.activateTest({ mode: "test", testAvailable: true, userName: preview.userName, expiresAt: preview.expiresAt });
+      }
+    } catch (error) {
+      const problem = asAdminError(error, "暂时无法确认测试数据会话");
+      if (["login_required", "disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) handleAccessError(problem);
+      else setPreviewNotice({ tone: "danger", message: "暂时无法确认测试数据会话，未切换数据环境" });
+    } finally { finishOperation(); }
   };
 
   if (access.status === "checking") {
@@ -408,6 +539,7 @@ export function DataSourceMaintenancePage() {
   }
 
   const busy = operation.kind !== "idle";
+  const displayedVerification = dataEnvironment.state.mode === "test" && dataEnvironment.state.status === "unconfirmed" ? "unknown" : previewVerification;
   return <div className="v2-page" data-page="data-source-maintenance">
     <header className="v2-page-head">
       <div><span className="v2-eyebrow">管理中心</span><h1>数据源维护</h1><p>所有已登录用户均可在此维护共享凭据；保存后对全站查询生效。日常查询由 BI 后端自动携带凭证。</p></div>
@@ -476,16 +608,16 @@ export function DataSourceMaintenancePage() {
       })}
     </section>
 
-    <section className={`v2-preview-source${access.preview.active ? " is-active" : ""}`} aria-labelledby="test-data-preview-title">
+    <section className={`v2-preview-source${access.preview.active && displayedVerification === "confirmed" ? " is-active" : ""}`} aria-labelledby="test-data-preview-title">
       <div className="v2-preview-source__head">
         <div className="v2-source-title"><TestTubeDiagonal aria-hidden="true" /><div><h2 id="test-data-preview-title">临时测试数据</h2><span>仅当前用户、当前浏览器会话生效</span></div></div>
-        <span className={`v2-status-pill ${access.preview.active ? "is-configured" : "is-unconfigured"}`}>{access.preview.active ? "测试模式中" : access.preview.enabled ? "未启用" : "服务未开放"}</span>
+        <span className={`v2-status-pill ${access.preview.active && displayedVerification === "confirmed" ? "is-configured" : "is-unconfigured"}`}>{displayedVerification === "checking" ? "正在确认" : displayedVerification === "unknown" ? "状态待确认" : access.preview.active ? "测试模式中" : access.preview.enabled ? "未启用" : "服务未开放"}</span>
       </div>
       {!access.preview.enabled ? <div className="v2-inline-alert" role="status"><AlertTriangle aria-hidden="true" /><span>服务器尚未开放测试数据模式。正式数据查询不受影响。</span></div> : <>
         <dl className="v2-source-facts">
           <div><dt>测试后台账号</dt><dd>{access.preview.userName}</dd></div>
           <div><dt>当前页面数据环境</dt><dd>{dataEnvironment.state.mode === "test" ? "测试数据" : "正式数据"}</dd></div>
-          <div><dt>临时会话到期</dt><dd>{access.preview.active ? formatTimestamp(access.preview.expiresAt) : "尚未创建"}</dd></div>
+          <div><dt>临时会话到期</dt><dd>{displayedVerification !== "confirmed" ? "待确认" : access.preview.active ? formatTimestamp(access.preview.expiresAt) : "尚未创建"}</dd></div>
           <div><dt>影响范围</dt><dd>不改正式 Token，不影响其他用户</dd></div>
         </dl>
         <div className={`v2-probe-status is-${previewNotice.tone}`} role={previewNotice.tone === "danger" ? "alert" : "status"} aria-live="polite">
@@ -493,7 +625,7 @@ export function DataSourceMaintenancePage() {
           <span><b>环境隔离</b>{previewNotice.message}</span>
         </div>
         {access.preview.active ? <div className="v2-preview-source__actions">
-          {dataEnvironment.state.mode !== "test" && <button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={() => dataEnvironment.activateTest({ mode: "test", testAvailable: true, userName: access.preview.userName!, expiresAt: access.preview.expiresAt! })} disabled={busy}>进入测试数据</button>}
+          {dataEnvironment.state.mode !== "test" && <button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={enterExistingPreview} disabled={busy || displayedVerification !== "confirmed"}>进入测试数据</button>}
           <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={deactivatePreview} disabled={busy}>{operation.kind === "preview_deactivate" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <LogOut aria-hidden="true" />}{operation.kind === "preview_deactivate" ? "正在退出" : "结束测试会话"}</button>
         </div> : <div className="v2-token-editor">
           <label htmlFor="preview-token"><span>测试 Token</span><input id="preview-token" type="password" autoComplete="off" data-1p-ignore="true" data-lpignore="true" autoCapitalize="none" spellCheck={false} minLength={16} maxLength={4096} placeholder="粘贴测试后台 Token" value={previewToken} onChange={(event) => { setPreviewToken(event.target.value); setPreviewNotice({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" }); }} disabled={busy} /></label>

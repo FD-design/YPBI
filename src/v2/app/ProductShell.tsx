@@ -159,8 +159,8 @@ export function ProductShell({ children, contextualNavigation = false, previewDa
         <span>{routeArea(pathname)}</span><ChevronRight aria-hidden="true" /><b>{routeTitle(pathname)}</b>
       </nav> : <ProductTopNavigation groups={navigationGroups} activeId={activeId} secondaryId={activeSecondaryId} />}
       <div className="v2-topbar-actions">
-        <div className={`v2-data-environment${dataEnvironment.state.mode === "test" ? " is-test" : ""}${dataEnvironment.state.status === "expired" ? " is-expired" : ""}`}>
-          <span>{dataEnvironment.state.status === "expired" ? "测试数据已失效" : dataEnvironment.state.mode === "test" ? "测试数据" : "正式数据"}</span>
+        <div className={`v2-data-environment${dataEnvironment.state.mode === "test" ? " is-test" : ""}${dataEnvironment.state.status === "expired" || dataEnvironment.state.status === "unconfirmed" ? " is-expired" : ""}`}>
+          <span>{dataEnvironment.state.status === "expired" ? "测试数据已失效" : dataEnvironment.state.status === "unconfirmed" ? "测试会话待确认" : dataEnvironment.state.mode === "test" ? "测试数据" : "正式数据"}</span>
           {dataEnvironment.state.mode === "test"
             ? <button type="button" onClick={dataEnvironment.useProduction}>切回正式</button>
             : dataEnvironment.state.testAvailable && canMaintainDataSources

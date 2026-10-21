@@ -17,7 +17,7 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, "sessionStorage");
   setDataEnvironmentPreference("production");
 });
-const flush = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 const testEnvironment = (userName = "current-session"): TestEnvironment => ({ mode: "test", testAvailable: true, expiresAt: "2099-01-01T00:00:00Z", userName });
 const productionEnvironment: V2DataEnvironmentSuccess["data"] = { mode: "production", testAvailable: true, expiresAt: null, userName: null };
 
@@ -143,4 +143,112 @@ test("当前有效测试检查失败仍进入失效状态，正常正式检查�
   const current = rendered.value.refresh();
   rendered.pending[1].succeed(productionEnvironment); await current; await flush();
   expect(rendered.value.state).toMatchObject({ status: "ready", mode: "production" });
+});
+
+function browserLifecycle() {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window"), originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const windowTarget = new EventTarget(), documentTarget = new EventTarget();
+  let visibility = "visible";
+  Object.defineProperty(documentTarget, "visibilityState", { get: () => visibility });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: windowTarget });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: documentTarget });
+  const restore = () => {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow); else Reflect.deleteProperty(globalThis, "window");
+    if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument); else Reflect.deleteProperty(globalThis, "document");
+  };
+  return { visibility(value: string) { visibility = value; }, focus() { windowTarget.dispatchEvent(new Event("focus")); },
+    show() { windowTarget.dispatchEvent(new Event("pageshow")); }, visible() { documentTarget.dispatchEvent(new Event("visibilitychange")); }, restore };
+}
+
+function controlledClock() {
+  const originalNow = Date.now, originalSet = globalThis.setTimeout, originalClear = globalThis.clearTimeout;
+  let now = Date.parse("2026-10-21T02:00:00Z"), next = 0;
+  const timers = new Map<number, { due: number; callback: () => void }>();
+  Date.now = () => now;
+  globalThis.setTimeout = ((callback: () => void, delay = 0) => { const id = ++next; timers.set(id, { due: now + delay, callback }); return id; }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((id: number) => { timers.delete(id); }) as unknown as typeof clearTimeout;
+  return { expiry(milliseconds: number) { return new Date(now + milliseconds).toISOString(); },
+    advance(milliseconds: number) { now += milliseconds; for (const [id, timer] of [...timers]) if (timer.due <= now) { timers.delete(id); timer.callback(); } },
+    restore() { Date.now = originalNow; globalThis.setTimeout = originalSet; globalThis.clearTimeout = originalClear; } };
+}
+
+test("可见focus、pageshow、visibility事件合并单飞，重启失效只读复核且不切正式", async () => {
+  const browser = browserLifecycle(), rendered = provider();
+  try {
+    rendered.pending[0].succeed(); await flush();
+    const scope = rendered.value.dataScopeKey;
+    browser.focus(); browser.show(); browser.visible(); browser.focus();
+    expect(rendered.pending).toHaveLength(2);
+    rendered.pending[1].fail(); await flush();
+    expect(rendered.value.state).toMatchObject({ status: "expired", mode: "test" });
+    expect(rendered.value.dataScopeKey).toBe(scope);
+    expect(currentDataEnvironmentPreference()).toBe("test");
+  } finally { rendered.dispose(); browser.restore(); }
+});
+
+test("后台不发复核请求，恢复前台成功不改变scope或期限", async () => {
+  const browser = browserLifecycle(), rendered = provider();
+  try {
+    rendered.pending[0].succeed(); await flush();
+    const scope = rendered.value.dataScopeKey, expiresAt = rendered.value.state.expiresAt;
+    browser.visibility("hidden"); browser.focus(); browser.show(); browser.visible();
+    expect(rendered.pending).toHaveLength(1);
+    browser.visibility("visible"); browser.visible();
+    expect(rendered.pending).toHaveLength(2);
+    rendered.pending[1].succeed(); await flush();
+    expect(rendered.value.state).toMatchObject({ status: "ready", mode: "test", expiresAt });
+    expect(rendered.value.dataScopeKey).toBe(scope);
+  } finally { rendered.dispose(); browser.restore(); }
+});
+
+test("复核网络失败是待确认而非成功，保留原期限并在到期后失效", async () => {
+  const browser = browserLifecycle(), clock = controlledClock(), rendered = provider();
+  try {
+    const expiresAt = clock.expiry(1_000);
+    rendered.pending[0].succeed({ ...testEnvironment(), expiresAt }); await flush();
+    browser.focus(); rendered.pending[1].fail("V2_UPSTREAM_TIMEOUT"); await flush();
+    expect(rendered.value.state).toMatchObject({ status: "unconfirmed", mode: "test", expiresAt });
+    browser.visibility("hidden"); clock.advance(1_001); await flush();
+    expect(rendered.value.state).toMatchObject({ status: "expired", mode: "test" });
+    expect(rendered.pending).toHaveLength(2);
+    browser.visibility("visible"); browser.show();
+    expect(rendered.pending).toHaveLength(3);
+    rendered.pending[2].fail("V2_UPSTREAM_TIMEOUT"); await flush();
+    expect(rendered.value.state.status).toBe("expired");
+  } finally { rendered.dispose(); clock.restore(); browser.restore(); }
+});
+
+test("已到期期限不能由成功响应恢复ready，当前可见期限只触发一次GET", async () => {
+  const browser = browserLifecycle(), clock = controlledClock(), rendered = provider();
+  try {
+    const expiresAt = clock.expiry(1_000);
+    rendered.pending[0].succeed({ ...testEnvironment(), expiresAt }); await flush();
+    clock.advance(1_001); await flush();
+    expect(rendered.pending).toHaveLength(2);
+    expect(rendered.value.state.status).toBe("expired");
+    rendered.pending[1].succeed({ ...testEnvironment(), expiresAt }); await flush();
+    expect(rendered.value.state.status).toBe("expired");
+    clock.advance(60_000); await flush();
+    expect(rendered.pending).toHaveLength(2);
+  } finally { rendered.dispose(); clock.restore(); browser.restore(); }
+});
+
+test("前台旧检查在新会话激活、切生产、卸载后均取消且不能回写", async () => {
+  const browser = browserLifecycle(), rendered = provider();
+  try {
+    rendered.pending[0].succeed(); await flush();
+    browser.focus();
+    rendered.value.activateTest(testEnvironment("new-session")); await flush();
+    expect(rendered.pending[1].signal?.aborted).toBe(true);
+    rendered.pending[1].fail(); await flush();
+    expect(rendered.value.state).toMatchObject({ status: "ready", userName: "new-session" });
+    browser.focus(); rendered.value.useProduction(); await flush();
+    rendered.pending[2].succeed(); await flush();
+    expect(rendered.value.state).toMatchObject({ status: "ready", mode: "production" });
+    const count = rendered.pending.length; browser.focus(); expect(rendered.pending).toHaveLength(count);
+    rendered.value.activateTest(testEnvironment()); await flush(); browser.show();
+    rendered.dispose(); const writes = rendered.writes;
+    rendered.pending[3].succeed(); await flush();
+    expect(rendered.pending[3].signal?.aborted).toBe(true); expect(rendered.writes).toBe(writes);
+  } finally { rendered.dispose(); browser.restore(); }
 });

@@ -14,10 +14,12 @@ export class BiQueryJobError extends Error {
 type Port = Pick<QueryJobsClient, "contextForPid" | "create" | "status" | "result">;
 type Binding = { handle: string; principalKey: string; source: QueryJobContext; request: BiQueryJobRequest; taskId: string; createdAt: number; terminal: boolean };
 type Created = { success: true; data: { handle: string; reused: boolean } };
-type PendingCreation = { promise: Promise<Created>; controller: AbortController; consumers: Set<symbol>; done: boolean };
+type PendingOperation<T> = { promise: Promise<T>; controller: AbortController; consumers: Set<symbol>; done: boolean };
 const MAX_BINDINGS = 512;
 const METADATA_TTL = 60 * 60_000;
+// Local admission reservation only; expiry does not declare an upstream task terminal.
 const ACTIVE_BUDGET = 7 * 60_000;
+const STATUS_RECHECK_TIMEOUT = 5_000;
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function principalKey(principal: Principal) {
   const pidScope = principal.pidScope === "all" ? "all" : [...new Set(principal.pidScope)].sort();
@@ -66,11 +68,12 @@ function authorize(principal: Principal, request: BiQueryJobRequest) {
 /** Ephemeral access bindings; a restart loses bindings and fails closed, never reconstructs from a client task ID. */
 export class BiQueryJobService {
   private readonly bindings = new Map<string, Binding>();
-  private readonly pending = new Map<string, PendingCreation>();
+  private readonly pending = new Map<string, PendingOperation<Created>>();
+  private readonly statusChecks = new Map<string, PendingOperation<QueryJobStatus["msg"]["status"] | undefined>>();
   private readonly creatingByAccount = new Map<string, number>();
   constructor(private readonly client: Port, private readonly now = Date.now) {}
 
-  private async waitForCreation(pending: PendingCreation, signal?: AbortSignal): Promise<Created> {
+  private async waitForPending<T>(pending: PendingOperation<T>, signal?: AbortSignal): Promise<T> {
     const consumer = Symbol();
     pending.consumers.add(consumer);
     let onAbort: (() => void) | undefined;
@@ -87,6 +90,63 @@ export class BiQueryJobService {
       pending.consumers.delete(consumer);
       if (!pending.done && !pending.consumers.size) pending.controller.abort(new Error("query_job_consumers_cancelled"));
     }
+  }
+
+  private activeBindings(accountRef: string) {
+    return [...this.bindings.values()].filter(binding => binding.source.accountRef === accountRef && !binding.terminal
+      && this.now() - binding.createdAt < ACTIVE_BUDGET);
+  }
+
+  private accountUsage(accountRef: string) {
+    return new Set(this.activeBindings(accountRef).map(binding => binding.taskId)).size + (this.creatingByAccount.get(accountRef) ?? 0);
+  }
+
+  private sourceMatches(source: QueryJobContext) {
+    try { return JSON.stringify(this.client.contextForPid(source.routingPid)) === JSON.stringify(source); }
+    catch { return false; }
+  }
+
+  /** Capacity probes retain the original source binding and never treat an unreadable task as finished. */
+  private async recheck(binding: Binding, signal?: AbortSignal): Promise<QueryJobStatus["msg"]["status"] | undefined> {
+    signal?.throwIfAborted();
+    if (!this.sourceMatches(binding.source)) return undefined;
+    const key = digest([binding.source, binding.taskId]);
+    const waiting = this.statusChecks.get(key);
+    if (waiting && !waiting.controller.signal.aborted) return this.waitForPending(waiting, signal);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("query_job_status_recheck_timeout")), STATUS_RECHECK_TIMEOUT);
+    let onAbort: (() => void) | undefined;
+    const operation = (async () => {
+      try {
+        const aborted = new Promise<never>((_resolve, reject) => {
+          onAbort = () => reject(controller.signal.reason);
+          controller.signal.addEventListener("abort", onAbort, { once: true });
+        });
+        const response = await Promise.race([this.client.status(binding.source, binding.taskId, controller.signal), aborted]);
+        controller.signal.throwIfAborted();
+        if (!this.sourceMatches(binding.source)) return undefined;
+        return this.progress(binding, response.msg).status;
+      } catch { return undefined; }
+    })();
+    const pending: PendingOperation<QueryJobStatus["msg"]["status"] | undefined> = {
+      controller, consumers: new Set(), done: false, promise: operation.finally(() => {
+        clearTimeout(timer);
+        if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+        pending.done = true;
+        if (this.statusChecks.get(key) === pending) this.statusChecks.delete(key);
+      })
+    };
+    this.statusChecks.set(key, pending);
+    return this.waitForPending(pending, signal);
+  }
+
+  private async reconcileCapacity(accountRef: string, signal: AbortSignal) {
+    const tasks = new Map<string, Binding>();
+    for (const binding of this.activeBindings(accountRef)) {
+      if (this.sourceMatches(binding.source) && !tasks.has(binding.taskId)) tasks.set(binding.taskId, binding);
+    }
+    await Promise.all([...tasks.values()].slice(0, 2).map(binding => this.recheck(binding, signal)));
+    signal.throwIfAborted();
   }
 
   async create(principal: Principal, raw: unknown, signal?: AbortSignal) {
@@ -107,16 +167,29 @@ export class BiQueryJobService {
     const source = this.client.contextForPid(routingPid);
     const key = digest([principalKey(principal), source, request]);
     const waiting = this.pending.get(key);
-    if (waiting && !waiting.controller.signal.aborted) return this.waitForCreation(waiting, signal);
+    if (waiting && !waiting.controller.signal.aborted) return this.waitForPending(waiting, signal);
     const now = this.now();
     for (const [handle, binding] of this.bindings) if (now - binding.createdAt >= METADATA_TTL) this.bindings.delete(handle);
     if (this.bindings.size + this.pending.size >= MAX_BINDINGS) throw new BiQueryJobError("QUERY_JOB_CAPACITY", 429, "查询任务访问记录已满，请稍后重试");
-    const active = new Set([...this.bindings.values()].filter(binding => binding.source.accountRef === source.accountRef && !binding.terminal && now - binding.createdAt < ACTIVE_BUDGET).map(binding => binding.taskId)).size;
-    const creating = this.creatingByAccount.get(source.accountRef) ?? 0;
-    if (active + creating >= 2) throw new BiQueryJobError("QUERY_JOB_CAPACITY", 429, "该数据源账号已有查询任务，请等待原任务结束");
-    this.creatingByAccount.set(source.accountRef, creating + 1);
     const controller = new AbortController();
+    let reserved = false;
     const operation = (async () => {
+      const existing = this.activeBindings(source.accountRef).find(binding => digest([binding.principalKey, binding.source, binding.request]) === key);
+      if (existing) {
+        const status = await this.recheck(existing, controller.signal);
+        controller.signal.throwIfAborted();
+        this.access(principal, existing.handle);
+        if (!existing.terminal && this.now() - existing.createdAt < ACTIVE_BUDGET) {
+          if (status === "QUEUED" || status === "RUNNING") return { success: true as const, data: { handle: existing.handle, reused: true } };
+          throw new BiQueryJobError("QUERY_JOB_CAPACITY", 429, "已有查询任务状态暂未确认，请稍后重试");
+        }
+      }
+      if (this.accountUsage(source.accountRef) >= 2) await this.reconcileCapacity(source.accountRef, controller.signal);
+      controller.signal.throwIfAborted();
+      if (!this.sourceMatches(source)) throw new BiQueryJobError("QUERY_JOB_CONTEXT_CHANGED", 409, "数据源或会话已变化，请重新查询");
+      if (this.accountUsage(source.accountRef) >= 2) throw new BiQueryJobError("QUERY_JOB_CAPACITY", 429, "该数据源账号已有查询任务，请等待原任务结束");
+      this.creatingByAccount.set(source.accountRef, (this.creatingByAccount.get(source.accountRef) ?? 0) + 1);
+      reserved = true;
       const created = await this.client.create(source, request, controller.signal);
       controller.signal.throwIfAborted();
       if (JSON.stringify(this.client.contextForPid(routingPid)) !== JSON.stringify(source)) throw new BiQueryJobError("QUERY_JOB_CONTEXT_CHANGED", 409, "数据源或会话已变化，请重新查询");
@@ -124,14 +197,16 @@ export class BiQueryJobService {
       this.bindings.set(handle, { handle, principalKey: principalKey(principal), source, request, taskId: created.msg.taskId, createdAt: now, terminal: false });
       return { success: true as const, data: { handle, reused: created.msg.reused } };
     })();
-    const pending: PendingCreation = { controller, consumers: new Set(), done: false, promise: operation.finally(() => {
+    const pending: PendingOperation<Created> = { controller, consumers: new Set(), done: false, promise: operation.finally(() => {
       pending.done = true;
       if (this.pending.get(key) === pending) this.pending.delete(key);
-      const left = (this.creatingByAccount.get(source.accountRef) ?? 1) - 1;
-      if (left) this.creatingByAccount.set(source.accountRef, left); else this.creatingByAccount.delete(source.accountRef);
+      if (reserved) {
+        const left = (this.creatingByAccount.get(source.accountRef) ?? 1) - 1;
+        if (left) this.creatingByAccount.set(source.accountRef, left); else this.creatingByAccount.delete(source.accountRef);
+      }
     }) };
     this.pending.set(key, pending);
-    return this.waitForCreation(pending, signal);
+    return this.waitForPending(pending, signal);
   }
 
   private access(principal: Principal, handle: string) {

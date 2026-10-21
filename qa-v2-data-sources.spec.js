@@ -55,15 +55,33 @@ function sourceStatuses(primaryHint = "••••0001") {
 async function installMaintenanceFixtures(page, options = {}) {
   let authorized = options.authorized ?? false;
   let previewActive = options.previewActive ?? false;
+  let previewExpiresAt = options.previewExpiresAt ?? "2099-09-08T01:30:00.000Z";
+  let statusFailure = false;
+  let statusGate = null;
   let rejectNextActionWith401 = false;
   let loginAttempts = 0;
   const requests = [];
+  const environmentRequests = [];
   let sources = sourceStatuses().map(source => options.unconfiguredPrimary && source.site === "primary" ? { ...source, configured: false, userName: "", tokenHint: "未配置" } : source);
+  await page.route("**/api/bi/v2/data-environment", route => {
+    const mode = route.request().headers()["x-ypbi-data-environment"];
+    environmentRequests.push(mode);
+    if (statusFailure) return route.fulfill({ status: 503, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "隔离状态检查暂不可用", requestId: "qa-preview-status-unavailable" } } });
+    if (mode === "test" && !previewActive) return route.fulfill({ status: 409, json: { success: false, error: { code: "DATA_PREVIEW_SESSION_REQUIRED", message: "测试数据会话无效，请重新验证测试 Token", requestId: "qa-preview-session-required" } } });
+    return route.fulfill({ json: { success: true, data: mode === "test"
+      ? { mode, testAvailable: true, userName: "fake-test-user", expiresAt: previewExpiresAt }
+      : { mode: "production", testAvailable: true, expiresAt: null, userName: null } } });
+  });
   await page.route("**/api/bi/admin/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const body = request.postDataJSON?.() ?? undefined;
     requests.push({ method: request.method(), pathname: url.pathname, body });
+    const isStatus = url.pathname.endsWith("/status");
+    const returnedPreview = { enabled: options.previewEnabled ?? true, active: previewActive,
+      userName: (options.previewEnabled ?? true) ? "fake-test-user" : null, expiresAt: previewActive ? previewExpiresAt : null };
+    if (isStatus && statusGate) await statusGate;
+    if (isStatus && statusFailure) return route.fulfill({ status: 503, json: { success: false, error: { code: "ADMIN_STATUS_UNAVAILABLE", message: "隔离状态检查暂不可用" } } });
 
     if (url.pathname.endsWith("/auth/login")) {
       loginAttempts += 1;
@@ -101,21 +119,17 @@ async function installMaintenanceFixtures(page, options = {}) {
         contentType: "application/json",
         body: JSON.stringify({
           success: true,
-          data: {
-            enabled: options.previewEnabled ?? true,
-            active: previewActive,
-            userName: (options.previewEnabled ?? true) ? "fake-test-user" : null,
-            expiresAt: previewActive ? "2099-09-08T01:30:00.000Z" : null
-          }
+          data: returnedPreview
         })
       });
     }
     if (url.pathname.endsWith("/data-preview/activate")) {
+      if (options.rejectPreviewActivation) return route.fulfill({ status: 401, json: { success: false, error: { code: "UPSTREAM_AUTH_FAILED", message: "测试后台拒绝候选凭据", requestId: "qa-preview-activation-rejected" } } });
       previewActive = true;
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ success: true, data: { mode: "test", userName: "fake-test-user", expiresAt: "2099-09-08T01:30:00.000Z", checkedAt: "2026-09-08T01:00:00.000Z" } })
+        body: JSON.stringify({ success: true, data: { mode: "test", userName: "fake-test-user", expiresAt: previewExpiresAt, checkedAt: "2026-09-08T01:00:00.000Z" } })
       });
     }
     if (url.pathname.endsWith("/data-preview/deactivate")) {
@@ -144,7 +158,15 @@ async function installMaintenanceFixtures(page, options = {}) {
     return route.abort();
   });
   return {
-    requests,
+    requests, environmentRequests,
+    setPreviewActive(value) { previewActive = value; },
+    setPreviewExpiresAt(value) { previewExpiresAt = value; },
+    setStatusFailure(value) { statusFailure = value; },
+    holdStatus() {
+      let release;
+      statusGate = new Promise(resolve => { release = resolve; });
+      return () => { statusGate = null; release(); };
+    },
     expireOnNextAction() { rejectNextActionWith401 = true; }
   };
 }
@@ -241,16 +263,32 @@ test("换账号保存被拒绝保留完整草稿和旧账号，不污染另一�
   expect(fixture.requests.filter(item => item.method === "PUT")).toHaveLength(1);
 });
 
-test("首次配置必须填写账号，取消修改恢复原账号且不丢Token草稿", async ({ page }) => {
+test("首次配置必须填写账号，取消修改恢复原账号且不丢Token草稿", async ({ page }, info) => {
   const fixture = await installMaintenanceFixtures(page, { authorized: true, unconfiguredPrimary: true });
   await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
   const primary = page.locator(".v2-source-card").first();
   await expect(primary.getByRole("button", { name: "测试当前连接", exact: true })).toBeDisabled();
+  await page.evaluate(() => {
+    const requestFrame = window.requestAnimationFrame.bind(window);
+    const callbacks = [];
+    window.requestAnimationFrame = callback => { callbacks.push(callback); return -callbacks.length; };
+    window.__qaReleaseAccountFocus = () => {
+      window.requestAnimationFrame = requestFrame;
+      for (const callback of callbacks) callback(performance.now());
+      delete window.__qaReleaseAccountFocus;
+    };
+  });
   await primary.getByRole("button", { name: "设置", exact: true }).click();
   await expect(primary.getByLabel("候选后台用户名")).toHaveValue("");
+  await primary.getByLabel("候选 Token").focus();
+  await page.evaluate(() => window.__qaReleaseAccountFocus());
+  await expect(primary.getByLabel("候选 Token")).toBeFocused();
   await primary.getByLabel("候选 Token").fill(fakeCandidate);
   await expect(primary.getByRole("button", { name: "验证并保存", exact: true })).toBeDisabled();
   await primary.getByLabel("候选后台用户名").fill("fake-first-account");
+  await expect(primary.getByLabel("候选 Token")).toHaveValue(fakeCandidate);
+  await expect(primary.getByRole("button", { name: "验证并保存", exact: true })).toBeEnabled();
+  await page.screenshot({ path: info.outputPath("first-credential-draft-ready.png"), fullPage: true });
   await primary.getByRole("button", { name: "验证并保存", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "确认验证并保存" }).click();
   await expect(primary.locator(".v2-source-facts")).toContainText("fake-first-account");
@@ -264,6 +302,7 @@ test("首次配置必须填写账号，取消修改恢复原账号且不丢Token
   await primary.getByRole("button", { name: "仅验证，不保存", exact: true }).click();
   await expect(primary).toContainText("未保存");
   expect(fixture.requests.filter(item => item.pathname.endsWith("/data-sources/test")).at(-1).body).toEqual({ site: "primary", token: "fake-rotating-after-cancel-0001" });
+  await page.screenshot({ path: info.outputPath("first-credential-cancel-keeps-draft.png"), fullPage: true });
 });
 
 test("临时测试 Token 只创建当前会话并可明确切回正式数据", async ({ page }) => {
@@ -294,6 +333,180 @@ test("临时测试 Token 只创建当前会话并可明确切回正式数据", a
   await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
   await expect(preview.getByText("正式数据", { exact: true })).toBeVisible();
   expect(fixture.requests.filter((item) => item.pathname.endsWith("/data-preview/deactivate"))).toHaveLength(1);
+});
+
+async function selectTestEnvironment(page) {
+  await page.addInitScript(() => sessionStorage.setItem("ypbi.data-environment.v1:00000000-0000-4000-8000-000000000001", "test"));
+}
+async function foregroundEvents(page) {
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("pageshow"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+  });
+}
+
+test("旧测试页面恢复前台只读确认重启失效，撤销旧有效状态且保留两站草稿", async ({ page }, info) => {
+  await selectTestEnvironment(page);
+  const fixture = await installMaintenanceFixtures(page, { authorized: true, previewActive: true });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  await expect(preview.getByText("测试模式中", { exact: true })).toBeVisible();
+  const drafts = page.locator(".v2-source-card").getByLabel("候选 Token");
+  await drafts.nth(0).fill("fake-primary-draft-preserved"); await drafts.nth(1).fill("fake-secondary-draft-preserved");
+  fixture.setPreviewActive(false);
+  await foregroundEvents(page);
+  await expect(page.locator(".v2-data-environment")).toContainText("测试数据已失效");
+  await expect(preview.getByText("测试模式中", { exact: true })).toHaveCount(0);
+  await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
+  await expect(preview.getByLabel("测试 Token")).toBeVisible();
+  await expect(preview).not.toHaveClass(/is-active/);
+  await expect(preview).not.toContainText("2099/09/08");
+  await expect(drafts.nth(0)).toHaveValue("fake-primary-draft-preserved");
+  await expect(drafts.nth(1)).toHaveValue("fake-secondary-draft-preserved");
+  expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
+  expect(await page.evaluate(() => sessionStorage.getItem("ypbi.data-environment.v1:00000000-0000-4000-8000-000000000001"))).toBe("test");
+  await page.screenshot({ path: info.outputPath("preview-restart-invalid-keeps-drafts.png"), fullPage: true });
+});
+
+test("前台事件单飞，检查失败显示待确认而非成功且不丢测试Token草稿", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page, { authorized: true });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  const token = preview.getByLabel("测试 Token");
+  await token.fill("fake-preview-draft-preserved");
+  const before = fixture.requests.length, release = fixture.holdStatus();
+  try {
+    await foregroundEvents(page);
+    await expect.poll(() => fixture.requests.length).toBe(before + 2);
+    await expect(preview).toContainText("正在确认");
+    await foregroundEvents(page);
+    expect(fixture.requests).toHaveLength(before + 2);
+    fixture.setStatusFailure(true); release();
+    await expect(preview).toContainText("状态待确认");
+    await expect(preview).toContainText("暂时无法确认测试数据会话");
+    await expect(preview).not.toHaveClass(/is-active/);
+    await expect(token).toHaveValue("fake-preview-draft-preserved");
+    fixture.setStatusFailure(false); await foregroundEvents(page);
+    await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
+    await expect(token).toHaveValue("fake-preview-draft-preserved");
+    expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
+  } finally { release(); }
+});
+
+for (const action of ["current", "candidate", "save"]) {
+  test(`维护操作取消只读检查后补充复核-${action}`, async ({ page }) => {
+    const fixture = await installMaintenanceFixtures(page, { authorized: true, previewActive: true });
+    await page.goto(`${baseUrl}/admin/data-sources`);
+    const preview = page.getByRole("region", { name: "临时测试数据" });
+    const enter = preview.getByRole("button", { name: "进入测试数据", exact: true });
+    const primary = page.locator(".v2-source-card").first();
+    const drafts = page.locator(".v2-source-card").getByLabel("候选 Token");
+    await expect(enter).toBeEnabled();
+    await drafts.nth(0).fill(fakeCandidate);
+    await drafts.nth(1).fill("fake-other-draft-preserved");
+    const before = fixture.requests.filter(request => request.method === "GET").length;
+    const release = fixture.holdStatus();
+    try {
+      await foregroundEvents(page);
+      await expect.poll(() => fixture.requests.filter(request => request.method === "GET").length).toBe(before + 2);
+      await expect(preview).toContainText("正在确认");
+      await primary.getByRole("button", { name: action === "current" ? "测试当前连接" : action === "candidate" ? "仅验证，不保存" : "验证并保存", exact: true }).click();
+      if (action === "save") await page.getByRole("dialog").getByRole("button", { name: "确认验证并保存" }).click();
+      await expect(primary).toContainText(action === "current" ? "当前凭证探针通过" : action === "candidate" ? "候选凭据验证通过" : "候选凭据已验证、保存并立即生效");
+      await expect.poll(() => fixture.requests.filter(request => request.method === "GET").length).toBe(before + 4);
+      release();
+      await expect(enter).toBeEnabled();
+      await expect(preview).not.toContainText("正在确认");
+      await expect(drafts.nth(0)).toHaveValue(action === "save" ? "" : fakeCandidate);
+      await expect(drafts.nth(1)).toHaveValue("fake-other-draft-preserved");
+      expect(fixture.requests.filter(request => request.method !== "GET").map(request => request.pathname)).toEqual([
+        `/api/bi/admin/data-sources/${action === "save" ? "token" : "test"}`
+      ]);
+    } finally { release(); }
+  });
+}
+
+test("测试会话激活失败退出确认中并保留草稿，后续仅只读复核", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page, { authorized: true, rejectPreviewActivation: true });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  const token = preview.getByLabel("测试 Token");
+  await token.fill("fake-rejected-preview-draft");
+  await preview.getByRole("button", { name: "验证并进入测试数据" }).click();
+  await expect(preview).toContainText("测试后台拒绝候选凭据");
+  await expect(preview).toContainText("状态待确认");
+  await expect(preview).not.toContainText("正在确认");
+  await expect(token).toHaveValue("fake-rejected-preview-draft");
+  await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
+  await foregroundEvents(page);
+  await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
+  await expect(token).toHaveValue("fake-rejected-preview-draft");
+  expect(fixture.requests.filter(request => request.method !== "GET").map(request => request.pathname)).toEqual(["/api/bi/admin/data-preview/activate"]);
+});
+
+test("维护操作取消检查后认证失效，不补读旧状态恢复受保护页面", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page, { authorized: true, previewActive: true });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const primary = page.locator(".v2-source-card").first();
+  await expect(primary).toBeVisible();
+  const before = fixture.requests.filter(request => request.method === "GET").length;
+  const release = fixture.holdStatus();
+  try {
+    await foregroundEvents(page);
+    await expect.poll(() => fixture.requests.filter(request => request.method === "GET").length).toBe(before + 2);
+    fixture.expireOnNextAction();
+    await primary.getByRole("button", { name: "测试当前连接", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "进入受保护配置" })).toBeVisible();
+    release();
+    await foregroundEvents(page);
+    await expect(page.getByRole("heading", { name: "进入受保护配置" })).toBeVisible();
+    await expect(page.locator(".v2-source-card")).toHaveCount(0);
+    expect(fixture.requests.filter(request => request.method === "GET")).toHaveLength(before + 2);
+    expect(fixture.requests.filter(request => request.method !== "GET").map(request => request.pathname)).toEqual(["/api/bi/admin/data-sources/test"]);
+  } finally { release(); }
+});
+
+test("测试会话到期自动只读复核，旧期限不延长且不自动退出或重新激活", async ({ page }) => {
+  const issuedAt = new Date("2026-10-21T02:00:00.000Z");
+  await page.clock.install({ time: new Date(issuedAt.getTime() - 1_000) }); await page.clock.pauseAt(issuedAt);
+  await selectTestEnvironment(page);
+  const fixture = await installMaintenanceFixtures(page, { authorized: true, previewActive: true, previewExpiresAt: new Date(issuedAt.getTime() + 5_000).toISOString() });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  await expect(preview.getByText("测试模式中", { exact: true })).toBeVisible();
+  fixture.setPreviewActive(false);
+  await page.clock.fastForward(5_001);
+  await expect(page.locator(".v2-data-environment")).toContainText("测试数据已失效");
+  await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
+  await expect(preview.getByLabel("测试 Token")).toBeVisible();
+  expect(fixture.environmentRequests.length).toBeGreaterThanOrEqual(2);
+  expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
+});
+
+test("旧只读检查晚到不能撤销新激活，进入已有测试会话先核实服务器当前状态", async ({ page }) => {
+  const fixture = await installMaintenanceFixtures(page, { authorized: true });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  await preview.getByLabel("测试 Token").fill("fake-preview-new-session");
+  const before = fixture.requests.length, release = fixture.holdStatus();
+  try {
+    await foregroundEvents(page);
+    await expect.poll(() => fixture.requests.length).toBe(before + 2);
+    await preview.getByRole("button", { name: "验证并进入测试数据" }).click();
+    await expect.poll(() => fixture.requests.filter(request => request.pathname.endsWith("/data-preview/activate")).length).toBe(1);
+    release();
+    await expect(preview.getByText("测试模式中", { exact: true })).toBeVisible();
+    await expect(page.locator(".v2-data-environment")).toContainText("测试数据");
+    await page.locator(".v2-data-environment").getByRole("button", { name: "切回正式", exact: true }).click();
+    await expect(preview.getByRole("button", { name: "进入测试数据", exact: true })).toBeVisible();
+    fixture.setPreviewActive(false);
+    await preview.getByRole("button", { name: "进入测试数据", exact: true }).click();
+    await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
+    await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
+    expect(fixture.requests.filter(request => request.method !== "GET").map(request => request.pathname)).toEqual(["/api/bi/admin/data-preview/activate"]);
+  } finally { release(); }
 });
 
 test("维护登录后区分当前测试、候选验证和验证并保存", async ({ page }) => {

@@ -20,7 +20,7 @@ function fixture() {
   const port = {
     contextForPid: (routingPid: string): QueryJobContext => ({ routingPid, siteId: getEnabledPlatformByPid(routingPid)!.siteId, environment, accountRef: `${environment}-${getEnabledPlatformByPid(routingPid)!.siteId}`, sourceRef: sourceVersion }),
     create: async (_scope: QueryJobContext, request: QueryJobCreateRequest) => { created++; requests.push(request); return { code: 200 as const, msg: { taskId, reused: created > 1 } }; },
-    status: async (_scope: QueryJobContext, id: string): Promise<QueryJobStatus> => { states++; return { code: 200, msg: { taskId: id, status, completedUnits: 0, totalUnits: 1, ...extra } }; },
+    status: async (_scope: QueryJobContext, id: string, _signal?: AbortSignal): Promise<QueryJobStatus> => { states++; return { code: 200, msg: { taskId: id, status, completedUnits: 0, totalUnits: 1, ...extra } }; },
     result: async (_scope: QueryJobContext, id: string): Promise<QueryJobResult> => { resultsRead++; return { code: 200, msg: { taskId: id, status: "SUCCEEDED", completedUnits: 1, totalUnits: 1, results: [{ rows: resultRows, generatedAt: "2020-01-03T00:00:00+08:00" }], ...extra } } as QueryJobResult; }
   };
   const service = new BiQueryJobService(port, () => Date.parse("2020-03-01T00:00:00Z") + time);
@@ -191,6 +191,179 @@ describe("BI任务访问绑定与范围", () => {
     invalid.queries[0].query.endDate = "2020-01-01";
     await expect(f.service.create(principal(), invalid)).rejects.toMatchObject({ code: "QUERY_JOB_INVALID" });
   });
+});
+
+describe("账号任务槽只读复核与复用", () => {
+  async function fullAccount() {
+    const f = fixture();
+    f.task("task-one"); const first = await f.service.create(principal(), body());
+    f.task("task-two"); const second = await f.service.create(principal(), body("PH", "M026"));
+    expect(f.counts()).toEqual({ created: 2, states: 0, resultsRead: 0 });
+    return { ...f, first, second };
+  }
+
+  test("未满额的新请求不增加状态读取，同请求已创建后复用原活跃绑定", async () => {
+    const f = await fullAccount();
+    const reused = await f.service.create(principal(), body());
+    expect(reused.data).toEqual({ handle: f.first.data.handle, reused: true });
+    expect(f.counts()).toEqual({ created: 2, states: 1, resultsRead: 0 });
+  });
+
+  for (const state of ["SUCCEEDED", "FAILED", "EXPIRED"] as const) test(`离页未轮询的${state}任务在容量临界只读释放`, async () => {
+    const f = await fullAccount(); f.state(state); f.task("task-three");
+    const created = await f.service.create(principal(), body("PH", "M020"));
+    expect(created.success).toBe(true);
+    expect(f.counts()).toEqual({ created: 3, states: 2, resultsRead: 0 });
+    expect(created.data.handle).not.toBe(f.first.data.handle);
+  });
+
+  test("相同请求已终态时重新调用上游创建并保留后端reused，不无限返回旧结果", async () => {
+    const f = fixture(), first = await f.service.create(principal(), body());
+    f.state("SUCCEEDED");
+    let creates = 0;
+    f.port.create = async () => { creates++; return { code: 200, msg: { taskId: "fresh-task", reused: false } }; };
+    const next = await f.service.create(principal(), body());
+    expect(next.data.handle).not.toBe(first.data.handle);
+    expect(next.data.reused).toBe(false);
+    expect(creates).toBe(1);
+    expect(f.counts().states).toBe(1);
+  });
+
+  test("reservation窗口内相同请求状态未知不新建副本，其他未知任务不假释放", async () => {
+    const f = await fullAccount();
+    f.port.status = async () => { throw new Error("unavailable"); };
+    await expect(f.service.create(principal(), body())).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    f.setTime(6 * 60_000);
+    await expect(f.service.create(principal(), body("PH", "M020"))).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    expect(f.counts().created).toBe(2);
+  });
+
+  test("状态范围漂移不释放名额", async () => {
+    const f = await fullAccount(); f.state("SUCCEEDED"); f.extra({ taskId: "foreign-task" });
+    await expect(f.service.create(principal(), body("PH", "M020"))).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    expect(f.counts().created).toBe(2);
+  });
+
+  test("来源已变不使用新凭据探测旧任务，不借旧handle绕过身份绑定", async () => {
+    const f = await fullAccount(); f.rotate();
+    await expect(f.service.create(principal(), body())).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    expect(f.counts()).toEqual({ created: 2, states: 0, resultsRead: 0 });
+    await expect(f.service.status(principal(), f.first.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_CONTEXT_CHANGED" });
+  });
+
+  test("来源轮换后7分钟仅结束本地reservation，旧绑定仍重验且不使用新凭据探测", async () => {
+    const f = await fullAccount(); f.rotate();
+    await expect(f.service.create(principal(), body())).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    f.setTime(7 * 60_000); f.task("new-source-task");
+    expect((await f.service.create(principal(), body())).success).toBe(true);
+    expect(f.counts()).toEqual({ created: 3, states: 0, resultsRead: 0 });
+    await expect(f.service.status(principal(), f.first.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_CONTEXT_CHANGED" });
+  });
+
+  test("7分钟后同请求走后台create而不复用旧handle，1小时内旧任务状态仍可重验", async () => {
+    const f = await fullAccount(); f.setTime(7 * 60_000); f.task("fresh-after-reservation");
+    const next = await f.service.create(principal(), body());
+    expect(next.data.handle).not.toBe(f.first.data.handle);
+    expect(f.counts()).toEqual({ created: 3, states: 0, resultsRead: 0 });
+    expect((await f.service.status(principal(), f.first.data.handle)).data.status).toBe("RUNNING");
+    f.setTime(60 * 60_000);
+    await expect(f.service.status(principal(), f.first.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_NOT_FOUND" });
+  });
+
+  test("复核途中跨过7分钟reservation边界也不复用旧handle", async () => {
+    const f = await fullAccount(); f.setTime(7 * 60_000 - 1); f.task("fresh-after-check");
+    f.port.status = async (_source, id) => {
+      f.setTime(7 * 60_000);
+      return { code: 200, msg: { taskId: id, status: "RUNNING", completedUnits: 0, totalUnits: 1 } };
+    };
+    const next = await f.service.create(principal(), body());
+    expect(next.data.handle).not.toBe(f.first.data.handle);
+    expect(f.counts().created).toBe(3);
+  });
+
+  test("另一身份不能复用原handle，原任务RUNNING时保持账号2个名额", async () => {
+    const f = await fullAccount();
+    await expect(f.service.create(principal("another-user"), body())).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    await expect(f.service.status(principal("another-user"), f.first.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_NOT_FOUND" });
+    expect(f.counts().created).toBe(2);
+  });
+
+  test("并发容量复核按任务单飞，等待结束后重新计数不突破2个名额", async () => {
+    const f = await fullAccount();
+    const checks: { id: string; finish: () => void }[] = [];
+    f.port.status = async (_source, id) => {
+      await new Promise<void>(resolve => { checks.push({ id, finish: resolve }); });
+      return { code: 200, msg: { taskId: id, status: "SUCCEEDED", completedUnits: 1, totalUnits: 1 } };
+    };
+    let creates = 0;
+    f.port.create = async () => ({ code: 200, msg: { taskId: `fresh-${++creates}`, reused: false } });
+    const requests = ["M020", "M003", "M005"].map(code => f.service.create(principal(), body("PH", code)));
+    expect(checks.map(check => check.id)).toEqual(["task-one", "task-two"]);
+    checks.forEach(check => check.finish());
+    const results = await Promise.allSettled(requests);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(2);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    expect(results.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "QUERY_JOB_CAPACITY" } });
+    expect(creates).toBe(2);
+  });
+
+  test("取消一个复核消费者不取消另一消费者，且取消者不创建任务", async () => {
+    const f = await fullAccount();
+    const checks: { signal?: AbortSignal; finish: () => void }[] = [];
+    f.port.status = async (_source, id, signal) => {
+      await new Promise<void>(resolve => { checks.push({ signal, finish: resolve }); });
+      return { code: 200, msg: { taskId: id, status: "SUCCEEDED", completedUnits: 1, totalUnits: 1 } };
+    };
+    f.task("task-three");
+    const controller = new AbortController();
+    const first = f.service.create(principal(), body("PH", "M020"), controller.signal);
+    const second = f.service.create(principal(), body("PH", "M003"));
+    controller.abort(new Error("cancel-capacity-check"));
+    await expect(first).rejects.toThrow("cancel-capacity-check");
+    expect(checks).toHaveLength(2);
+    expect(checks.every(check => !check.signal?.aborted)).toBe(true);
+    checks.forEach(check => check.finish());
+    expect((await second).success).toBe(true);
+    expect(f.counts().created).toBe(3);
+  });
+
+  test("全部复核消费者取消后忽略迟到终态，不新建也不假释放", async () => {
+    const f = await fullAccount();
+    const checks: { signal?: AbortSignal; finish: () => void }[] = [];
+    f.port.status = async (_source, id, signal) => {
+      await new Promise<void>(resolve => { checks.push({ signal, finish: resolve }); });
+      return { code: 200, msg: { taskId: id, status: "SUCCEEDED", completedUnits: 1, totalUnits: 1 } };
+    };
+    const controller = new AbortController();
+    const pending = f.service.create(principal(), body("PH", "M020"), controller.signal);
+    controller.abort(new Error("cancel-all-checks"));
+    await expect(pending).rejects.toThrow("cancel-all-checks");
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    expect(checks.every(check => check.signal?.aborted)).toBe(true);
+    checks.forEach(check => check.finish());
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    f.port.status = async (_source, id) => ({ code: 200, msg: { taskId: id, status: "RUNNING", completedUnits: 0, totalUnits: 1 } });
+    await expect(f.service.create(principal(), body("PH", "M020"))).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    expect(f.counts().created).toBe(2);
+  });
+
+  test("复核飞行中来源变化不释放，也不在新来源创建", async () => {
+    const f = await fullAccount();
+    f.port.status = async (_source, id) => {
+      f.rotate();
+      return { code: 200, msg: { taskId: id, status: "SUCCEEDED", completedUnits: 1, totalUnits: 1 } };
+    };
+    await expect(f.service.create(principal(), body("PH", "M020"))).rejects.toMatchObject({ code: "QUERY_JOB_CONTEXT_CHANGED" });
+    expect(f.counts().created).toBe(2);
+    await expect(f.service.create(principal(), body("PH", "M003"))).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+  });
+
+  test("状态复核5秒有界，忽略不响应AbortSignal的来源也不释放名额", async () => {
+    const f = await fullAccount();
+    f.port.status = async () => new Promise<QueryJobStatus>(() => {});
+    await expect(f.service.create(principal(), body("PH", "M020"))).rejects.toMatchObject({ code: "QUERY_JOB_CAPACITY" });
+    expect(f.counts().created).toBe(2);
+  }, 10_000);
 });
 
 describe("2026-10-21部署返回契约", () => {
