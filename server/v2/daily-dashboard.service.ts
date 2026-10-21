@@ -12,7 +12,7 @@ import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { REALTIME_API } from "../upstream/realtime.adapter";
 import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-daily.adapter";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API, aggregateBiV1Playback, projectBiV1PlaybackGroups, queryBiV1Playback, unavailableBiV1PlaybackGroups, type BiV1PlaybackDay, type BiV1PlaybackMetricCode } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, biV1MetricKey, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension, type BiV1MetricQuery } from "../upstream/bi-v1.metrics-adapter";
 import { readBiV1MonthlyMetricDays, type BiV1MonthlyMetricDay } from "../upstream/bi-v1.monthly-adapter";
 import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, supportsAcquisitionGroupMetric, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
@@ -330,6 +330,27 @@ function sourceMetricIds(ids: readonly CandidateId[]): CandidateId[] {
   ids.forEach(visit);
   return [...sources];
 }
+/** The mapping registry owns the modern source groups for both transports. */
+export function dailyDashboardMetricQueries(query: DailyDashboardQuery): BiV1MetricQuery[] {
+  const ids = query.projection === "operating_snapshot" && query.boardId === "5.2"
+    ? OPERATING_METRIC_IDS as readonly CandidateId[] : boardMetrics[query.boardId] ?? [];
+  const groups = new Map<string, { filters: BiV1MetricDimensionFilters; codes: Set<BiV1MetricCode> }>();
+  for (const id of sourceMetricIds(ids)) {
+    const mapping = mappings[id];
+    if (!mapping.biV1Metric || mapping.biV1Metric === "M018") continue;
+    const filters = dimensionFilters(mapping.biV1Dimensions);
+    const key = JSON.stringify(filters);
+    const group = groups.get(key) ?? { filters, codes: new Set<BiV1MetricCode>() };
+    group.codes.add(mapping.biV1Metric);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(group => ({
+    pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1],
+    metricCodes: [...group.codes].sort(), expectedRuleVersions: VALUE_RULE_VERSIONS,
+    dimensions: Object.keys(group.filters) as BiV1MetricDimension[],
+    ...(Object.keys(group.filters).length ? { dimensionFilters: group.filters } : {})
+  }));
+}
 function usesLegacyCohortSource(mapping: CandidateMapping) {
   return Boolean(mapping.cohortDays && !mapping.biV1Only);
 }
@@ -455,10 +476,41 @@ type SourceReadDiagnostics = {
 };
 type DailyDashboardLogger = { info(fields: { queryId: string; boardId: string; sources: SourceReadDiagnostics[] }, message: string): void };
 export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardSuccess> }
+/** Server-only normalized sources; these are never accepted from a browser. */
+export interface OperatingModernSources {
+  pid: string;
+  dateRange: [string, string];
+  metricDays: BiV1MetricDay[];
+  playbackDays: BiV1PlaybackDay[];
+  monthlyDays: BiV1MonthlyMetricDay[];
+}
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
   constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number } = {}) {}
-  async execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
+  execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
+    return this.executeSources(query, consumerSignal);
+  }
+  executeOperating(query: DailyDashboardQuery, sources: Promise<OperatingModernSources>, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
+    if (query.boardId !== "5.2" || query.projection !== "operating_snapshot" || !dailyDashboardQuerySchema.safeParse(query).success) {
+      return Promise.reject(new UpstreamError("INVALID_DAILY_READING_QUERY", "经营快照查询参数不合法", 400));
+    }
+    const checked = sources.then(source => {
+      if (source.pid !== query.pid || !isDeepStrictEqual(source.dateRange, query.dateRange)) {
+        throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "经营异步来源与查询范围不一致", 502);
+      }
+      return source;
+    });
+    const pending = consumerSignal ? new Promise<OperatingModernSources>((resolve, reject) => {
+      const abort = () => reject(new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504));
+      if (consumerSignal.aborted) abort();
+      else consumerSignal.addEventListener("abort", abort, { once: true });
+      checked.then(resolve, reject).finally(() => consumerSignal.removeEventListener("abort", abort));
+    }) : checked;
+    // Attach the rejection before entering the read path, including an already-aborted consumer.
+    void pending.catch(() => undefined);
+    return this.executeSources(query, consumerSignal, pending);
+  }
+  private async executeSources(query: DailyDashboardQuery, consumerSignal?: AbortSignal, operatingSources?: Promise<OperatingModernSources>): Promise<DailyDashboardV2Success> {
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     if (query.projection !== undefined && !dailyDashboardQuerySchema.safeParse(query).success) throw new UpstreamError("INVALID_DAILY_READING_QUERY", "看板查询参数不合法", 400);
     const fetchedAt = this.now().toISOString();
@@ -621,7 +673,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const playbackDays = new Map<string, BiV1PlaybackDay>();
     let playbackFailure = false;
     let playbackGroups: DailyPlaybackGroups | undefined;
-    const playbackTask = readSource("playback", async (client) => {
+    const playbackTask = operatingSources ? operatingSources.then(source => {
+      source.playbackDays.forEach(day => playbackDays.set(day.date, day));
+    }) : readSource("playback", async (client) => {
       if (!sourceIds.some(id => mappings[id].biV1Playback)) return;
       try {
         const scope = { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] };
@@ -639,33 +693,19 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }
     });
     const biV1MetricDays = new Map<string, BiV1MetricDay>();
-    const biV1MetricTask = readSource("metrics", async (client) => {
-      const groups = new Map<string, { filters: BiV1MetricDimensionFilters; codes: Set<BiV1MetricCode> }>();
-      for (const id of sourceIds) {
-        const mapping = mappings[id];
-        if (!mapping.biV1Metric || mapping.biV1Metric === "M018") continue;
-        const filters = dimensionFilters(mapping.biV1Dimensions);
-        const key = JSON.stringify(filters);
-        const group = groups.get(key) ?? { filters, codes: new Set<BiV1MetricCode>() };
-        group.codes.add(mapping.biV1Metric);
-        groups.set(key, group);
-      }
-      const requests = [...groups.values()];
+    const biV1MetricTask = operatingSources ? operatingSources.then(source => {
+      source.metricDays.forEach(day => biV1MetricDays.set(day.date, day));
+    }) : readSource("metrics", async (client) => {
+      const requests = dailyDashboardMetricQueries(query);
       let next = 0;
       // Operating reads submit independent groups to the shared physical-request
       // queue; a slow group does not reserve an otherwise idle source slot.
       const metricWorkers = operatingSnapshot ? requests.length : Math.min(3, requests.length);
       await Promise.all(Array.from({ length: metricWorkers }, async () => {
         while (next < requests.length) {
-          const group = requests[next++];
+          const request = requests[next++];
           try {
-            const result = await readBiV1MetricDays(client, {
-              pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1],
-              metricCodes: [...group.codes].sort(),
-              expectedRuleVersions: VALUE_RULE_VERSIONS,
-              dimensions: Object.keys(group.filters) as BiV1MetricDimension[],
-              ...(Object.keys(group.filters).length ? { dimensionFilters: group.filters } : {})
-            });
+            const result = await readBiV1MetricDays(client, request);
             for (const day of result.days) {
               const existing = biV1MetricDays.get(day.date) ?? { date: day.date, metrics: {} };
               Object.assign(existing.metrics, day.metrics);
@@ -676,7 +716,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             // borrow the overall value or overwrite another group's healthy result.
             for (const date of dates) {
               const existing = biV1MetricDays.get(date) ?? { date, metrics: {} };
-              for (const code of group.codes) existing.metrics[biV1MetricKey(code, group.filters)] = {
+              for (const code of request.metricCodes) existing.metrics[biV1MetricKey(code, request.dimensionFilters)] = {
                 state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null
               };
               biV1MetricDays.set(date, existing);
@@ -686,7 +726,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }));
     });
     const monthlyDays = new Map<string, BiV1MonthlyMetricDay>();
-    const monthlyTask = readSource("monthly", async (client) => {
+    const monthlyTask = operatingSources ? operatingSources.then(source => {
+      source.monthlyDays.forEach(day => monthlyDays.set(day.date, day));
+    }) : readSource("monthly", async (client) => {
       if (!sourceIds.includes("M018")) return;
       try {
         const result = await readBiV1MonthlyMetricDays(client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] }, today);
@@ -721,7 +763,11 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         if (mapping.biV1Playback) {
           const code = id as "M034" | "M036" | "M097";
           const point = playbackDays.get(date)?.metrics[code];
-          const values = code === "M036" ? [point?.numerator ?? null, point?.denominator ?? null] : [point?.value ?? null];
+          const values = code === "M036"
+            ? point?.dataStatus === "SOURCE_INCOMPLETE" && point.diagnosticInputs
+              ? [point.diagnosticInputs.numerator, point.diagnosticInputs.denominator]
+              : [point?.numerator ?? null, point?.denominator ?? null]
+            : [point?.value ?? null];
           return {
             date,
             state: playbackFailure ? "source_failure" : point?.state ?? "no_record",

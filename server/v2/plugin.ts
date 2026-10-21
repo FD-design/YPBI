@@ -35,6 +35,8 @@ import { runWithUpstreamRequestProfile, type UpstreamRequestProfile } from "../u
 import { BiQueryJobError, type BiQueryJobService } from "./query-jobs.service";
 import { QueryJobBusinessError } from "../upstream/query-jobs";
 import { biQueryJobHandleSchema } from "../../contracts/query-jobs";
+import type { OperatingQueryJobService } from "./operating-query-jobs.service";
+import { getEnabledPlatformByPid } from "../platforms/registry";
 
 export interface V2MetricQueryExecutor {
   execute(query: V2MetricQuery): Promise<V2MetricQuerySuccess>;
@@ -51,6 +53,7 @@ export interface V2BiPluginOptions {
   coreOverviewQueryService?: V2CoreOverviewQueryExecutor;
   dailyDashboardService?: DailyDashboardExecutor;
   queryJobService?: Pick<BiQueryJobService, "create" | "status" | "result">;
+  operatingQueryJobService?: Pick<OperatingQueryJobService, "create" | "status" | "result" | "handles">;
   productionDailyDashboardEnabled?: boolean;
   dataEnvironmentResolver?: {
     testAvailable: boolean;
@@ -278,7 +281,15 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
     const context = await requireContext(request, reply);
     if (!context) return;
     const enabled = context.environment.mode === "test" || options.productionDailyDashboardEnabled === true;
-    return dailyDashboardCatalog(enabled && Boolean(options.dailyDashboardService));
+    const catalog = dailyDashboardCatalog(enabled && Boolean(options.dailyDashboardService));
+    const operatingAsyncEnabled = context.environment.mode === "test" && Boolean(options.dailyDashboardService && options.queryJobService && options.operatingQueryJobService);
+    const bySite = new Map<string, string[]>();
+    if (operatingAsyncEnabled) for (const platform of listV2Platforms(context.principal.pidScope)) {
+      const site = getEnabledPlatformByPid(platform.pid)!.siteId;
+      const pids = bySite.get(site) ?? []; pids.push(platform.pid); bySite.set(site, pids);
+    }
+    const operatingAsyncPidGroups = [...bySite.values()].flatMap(pids => Array.from({ length: Math.ceil(pids.length / 20) }, (_, index) => pids.slice(index * 20, (index + 1) * 20)));
+    return { ...catalog, data: { ...catalog.data, operatingAsyncEnabled, ...(operatingAsyncEnabled ? { operatingAsyncPidGroups } : {}) } };
   });
 
   app.post("/queries/dashboards/daily-reading", async (request, reply) => {
@@ -319,17 +330,23 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
   const queryJobHandler = (operation: "create" | "status" | "result") => async (request: FastifyRequest, reply: FastifyReply) => {
     const context = await requireContext(request, reply);
     if (!context) return;
-    if (!options.queryJobService || context.environment.mode === "production" && !options.productionDailyDashboardEnabled) {
+    if (!options.queryJobService || context.environment.mode !== "test") {
       return sendV2Error(request, reply, 422, "QUERY_JOBS_DISABLED", "当前环境尚未启用异步查询");
     }
     const handle = operation === "create" ? null : biQueryJobHandleSchema.safeParse((request.params as { handle?: unknown }).handle);
     if (handle && !handle.success) return sendV2Error(request, reply, 400, "QUERY_JOB_INVALID", "查询任务编号格式不合法");
+    const handleValue = handle && handle.success ? handle.data : "";
+    const operating = operation === "create"
+      ? request.body !== null && typeof request.body === "object" && Reflect.get(request.body, "kind") === "operating-snapshot"
+      : options.operatingQueryJobService?.handles(handleValue) === true;
+    if (operating && !options.operatingQueryJobService) return sendV2Error(request, reply, 422, "QUERY_JOBS_DISABLED", "当前环境尚未启用经营异步查询");
+    const service = operating ? options.operatingQueryJobService! : options.queryJobService;
     const controller = new AbortController();
     const unbind = bindClientRequestAbort(request.raw, reply.raw, controller, "query_job_request_aborted");
     try {
       return await runInEnvironment<unknown>(context, () => operation === "create"
-        ? options.queryJobService!.create(context.principal, request.body, controller.signal)
-        : options.queryJobService![operation](context.principal, handle && handle.success ? handle.data : "", controller.signal));
+        ? service.create(context.principal, request.body, controller.signal)
+        : service[operation](context.principal, handleValue, controller.signal));
     } catch (error) {
       if (error instanceof BiQueryJobError) return sendV2Error(request, reply, error.statusCode, error.code, error.message);
       if (error instanceof QueryJobBusinessError) {

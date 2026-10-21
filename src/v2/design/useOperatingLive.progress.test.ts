@@ -142,3 +142,52 @@ test("日期切换取消旧轮，迟到响应不计入新进度或覆盖新结�
     expect(harness.render(current).notice).toEqual({ progress: null, retained: null });
   });
 });
+
+test("测试模式按服务器站点组运行任务，成功投影保持93列真实状态，失败组不转同步", async () => {
+  const originalFetch = globalThis.fetch, originalEnvironment = currentDataEnvironmentPreference(), harness = hookHarness();
+  setDataEnvironmentPreference("test");
+  const calls: string[] = [], handles = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
+  const live = { ...reading(), dataEnvironment: "test" as const, operatingAsyncPidGroups: [["PH"], ["TT"]] };
+  globalThis.fetch = (async (path, init) => {
+    calls.push(String(path));
+    expect(new Headers(init?.headers).get("x-ypbi-data-environment")).toBe("test");
+    const request = init?.body ? JSON.parse(String(init.body)) : null;
+    const index = request ? request.pids[0] === "PH" ? 0 : 1 : String(path).includes(handles[0]) ? 0 : 1;
+    const scope = { kind: "operating-snapshot", pids: [index ? "TT" : "PH"], date: "2020-01-01", handle: handles[index] };
+    if (request) return Response.json({ success: true, data: { ...scope, reused: false } });
+    const progress = { ...scope, status: index ? "FAILED" : "SUCCEEDED", phase: "query", completedUnits: index ? 2 : 14, totalUnits: 14, attempts: 1 };
+    if (!String(path).endsWith("/result")) return Response.json({ success: true, data: progress });
+    const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2019-12-25", "2020-01-01"], projection: "operating_snapshot" };
+    return Response.json({ success: true, data: { ...progress, phase: "complete", dashboards: [success(query, "PROCESSING", "2026-10-21T02:00:00Z")] } });
+  }) as typeof globalThis.fetch;
+  try {
+    harness.render(live); harness.flushEffects();
+    await new Promise(resolve => setTimeout(resolve, 2100));
+    await until(() => harness.render(live).resources.PH?.status === "success" && harness.render(live).resources.TT?.status === "failure");
+    const current = harness.render(live);
+    expect(current.notice.progress).toBeNull();
+    expect(current.resources.PH.status === "success" && current.resources.PH.data.data.series).toHaveLength(93);
+    expect(current.resources.PH.status === "success" && current.resources.PH.data.data.series[0].points[0].sourceStatus).toBe("PROCESSING");
+    expect(current.resources.TT).toMatchObject({ status: "failure", code: "QUERY_JOB_FAILED", message: "查询任务执行失败" });
+    expect(calls.filter(path => path === "/api/bi/v2/queries/jobs")).toHaveLength(2);
+    expect(calls.some(path => path.includes("daily-reading"))).toBe(false);
+  } finally { harness.unmount(); globalThis.fetch = originalFetch; setDataEnvironmentPreference(originalEnvironment); }
+});
+
+test("异步目录漏平台或重复平台时失败关闭，不偷偷改用同步或查询未授权PID", async () => {
+  const originalFetch = globalThis.fetch, originalEnvironment = currentDataEnvironmentPreference();
+  setDataEnvironmentPreference("test");
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; throw new Error("unexpected request"); }) as typeof globalThis.fetch;
+  try {
+    for (const groups of [[["PH"]], [["PH"], ["PH"]], [["PH"], ["OTHER"]]]) {
+      const harness = hookHarness(), live = { ...reading(), dataEnvironment: "test" as const, operatingAsyncPidGroups: groups };
+      harness.render(live); harness.flushEffects();
+      expect(harness.render(live).resources.PH.status).toBe("failure");
+      expect(harness.render(live).resources.TT.status).toBe("failure");
+      expect(harness.render(live).notice.progress).toBeNull();
+      harness.unmount();
+    }
+    expect(calls).toBe(0);
+  } finally { globalThis.fetch = originalFetch; setDataEnvironmentPreference(originalEnvironment); }
+});

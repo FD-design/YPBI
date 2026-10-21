@@ -15,7 +15,7 @@ async function playbackFixture(page: Page) {
     if (path.endsWith("/catalog/readable-dashboards")) return route.fulfill({ json: { success: true, data: { enabled: true, categories: ["内容消费与互动"], items: [{ id: "5.12", title: "播放与观看质量", category: "内容消费与互动", metricIds: ["M101"], pendingMetricNames: [] }] } } });
     if (path.endsWith("/catalog/platforms")) return route.fulfill({ json: { success: true, data: { items: [{ id: "HX-001", pid: "PH", name: "Pornhub", order: 1 }] } } });
     if (path.endsWith("/queries/dashboards/daily-reading")) {
-      if (control.fail) return route.fulfill({ status: 504, json: { success: false, error: { code: "UPSTREAM_TIMEOUT", message: "播放来源超时", requestId: "qa-playback" } } });
+      if (control.fail) return route.fulfill({ status: 504, json: { success: false, error: { code: "V2_UPSTREAM_TIMEOUT", message: "播放来源超时", requestId: "qa-playback" } } });
       const query = route.request().postDataJSON();
       const count = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
       return route.fulfill({ json: { success: true, data: { schemaVersion: "day-dashboard/v1", query, queryId: "qa-playback", fetchedAt: "2026-09-09T00:00:00Z", timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: ["realtime.stats"],
@@ -81,11 +81,14 @@ test("播放来源刷新失败保留原真实读数，恢复不改变相邻演�
   const startValue = await starts.textContent();
   control.fail = true;
   await page.getByRole("button", { name: "刷新看板", exact: true }).click();
-  await expect(page.getByText("刷新失败，真实区域保留上次结果。", { exact: true })).toBeVisible();
+  const failureNotice = page.getByRole("alert").filter({ hasText: "刷新失败，真实区域保留上次结果。" });
+  await expect(failureNotice).toBeVisible();
+  await expect(failureNotice).toContainText("V2_UPSTREAM_TIMEOUT");
+  await expect(failureNotice).toContainText("qa-playback");
   await expect(attempts.locator(".metric-summary__number strong")).toHaveText("108");
   await expect(starts).toHaveText(startValue!);
   control.fail = false;
   await page.getByRole("button", { name: "刷新看板", exact: true }).click();
-  await expect(page.getByText("刷新失败，真实区域保留上次结果。", { exact: true })).toHaveCount(0);
+  await expect(failureNotice).toHaveCount(0);
   await expect(attempts.locator(".metric-summary__number strong")).toHaveText("108");
 });

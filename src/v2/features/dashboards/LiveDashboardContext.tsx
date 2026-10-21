@@ -24,6 +24,8 @@ export interface LiveDashboardReading {
   dataEnvironment?: DataEnvironmentMode;
   platformName: string;
   platforms?: readonly { pid: string; name: string }[];
+  /** Authorized same-site groups, present only when the server admits test async snapshots. */
+  operatingAsyncPidGroups?: readonly (readonly string[])[];
   controls: { date: ReactNode; scope: ReactNode; comparison: ReactNode; dirty: boolean; acceptsSharedRange: (range: DateRangeValue) => boolean; apply: () => void; export: () => void };
   comparison?: { label: string; query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null>; dataEnvironment?: DataEnvironmentMode };
   dayReference?: { query: DailyDashboardQuery; state: V2ResourceState<DailyDashboardSuccess | null>; dataEnvironment?: DataEnvironmentMode };

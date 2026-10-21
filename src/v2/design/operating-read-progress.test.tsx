@@ -4,7 +4,7 @@ import type { DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { recordDailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import type { OperatingResources } from "./operating-live-model";
-import { completeOperatingPlatformQuery, operatingReadNotice } from "./operating-read-progress";
+import { completeOperatingPlatformQuery, operatingReadNotice, type OperatingReadProgress as Progress } from "./operating-read-progress";
 import { OperatingReadProgress } from "./OperatingReadProgress";
 
 const live: LiveDashboardReading = {
@@ -67,5 +67,26 @@ describe("经营平台查询进度", () => {
     expect(html).toContain("10:01:00");
     const missing = renderToStaticMarkup(<OperatingReadProgress notice={operatingReadNotice(live, { PH: retained("PH", "") }, null, "x")} />);
     expect(missing).toContain("读取时间：未提供");
+  });
+
+  test("异步只展示真实单元进度，投影期保持提示，attempt重置允许进度回退", () => {
+    const initial: Progress = { scopeKey: "async", total: 2, completed: 0, jobs: { one: { settled: false } } };
+    const initialHtml = renderToStaticMarkup(<OperatingReadProgress notice={operatingReadNotice(live, {}, initial, "async")} />);
+    expect(initialHtml).toContain("后台查询中");
+    expect(initialHtml).not.toContain("0/0");
+    const update = (completedUnits: number, attempts: number, phase: "query" | "projection" = "query"): Progress => ({ ...initial, jobs: { one: { settled: false, progress: {
+      kind: "operating-snapshot", handle: "11111111-1111-4111-8111-111111111111", pids: ["PH", "TT"], date: "2020-01-01",
+      status: phase === "projection" ? "SUCCEEDED" : "RUNNING", phase, completedUnits, totalUnits: 14, attempts
+    } } } });
+    const first = operatingReadNotice(live, {}, update(9, 1), "async");
+    expect(first.progress?.completed).toBe(9);
+    const retried = operatingReadNotice(live, {}, update(2, 2), "async");
+    const html = renderToStaticMarkup(<OperatingReadProgress notice={retried} />);
+    expect(html).toContain("查询单元已完成 2/14");
+    expect(html).toContain("第 2 次执行");
+    expect(html).not.toContain("平台查询已结束");
+    const projecting = renderToStaticMarkup(<OperatingReadProgress notice={operatingReadNotice(live, {}, update(14, 2, "projection"), "async")} />);
+    expect(projecting).toContain("正在整理查询结果");
+    expect(operatingReadNotice(live, {}, { ...update(14, 2), completed: 2 }, "async").progress).toBeNull();
   });
 });

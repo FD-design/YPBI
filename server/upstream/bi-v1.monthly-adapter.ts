@@ -10,7 +10,7 @@ import {
   queryBiV1Metrics,
   type BiV1MetricDataStatus,
   type BiV1MetricDay,
-  type BiV1MetricMessage,
+  type BiV1MetricSource,
   type BiV1MetricPoint,
   type BiV1MetricQuery
 } from "./bi-v1.metrics-adapter";
@@ -32,7 +32,7 @@ function emptyPoint(state: BiV1MetricPoint["state"], dataStatus: BiV1MetricDataS
   return { state, dataStatus, value: null, numerator: null, denominator: null, unit: null };
 }
 
-function monthlyPoint(message: BiV1MetricMessage): BiV1MetricPoint {
+function monthlyPoint(message: BiV1MetricSource): BiV1MetricPoint {
   if (!message.rows.length) return emptyPoint(message.dimensionConflicts?.length ? "source_failure" : "no_record");
   if (message.rows.length !== 1) return emptyPoint("invalid_value");
   const row = message.rows[0];
@@ -47,7 +47,7 @@ function monthlyPoint(message: BiV1MetricMessage): BiV1MetricPoint {
   return { state: "available", dataStatus: "READY", value: row.value, numerator: row.value, denominator: 0, unit: "count" };
 }
 
-function monthlyMetadata(message: BiV1MetricMessage, scope: MonthlyQueryScope, today: string): MonthlyMetricMetadata | undefined {
+function monthlyMetadata(message: BiV1MetricSource, scope: MonthlyQueryScope, today: string): MonthlyMetricMetadata | undefined {
   if (message.rows.length !== 1) return undefined;
   return validateBiV1MonthlyMetadata(message.rows[0], scope, today);
 }
@@ -64,6 +64,16 @@ export function validateBiV1MonthlyMetadata(row: Record<string, unknown>, scope:
     throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "月活统计截止日或月份状态与请求自然月不一致", 502);
   }
   return metadata.data;
+}
+
+/** A decoded natural-month result has one display anchor, independently of its transport. */
+export function projectBiV1MonthlyMetricScope(message: BiV1MetricSource, scope: MonthlyQueryScope, today: string): BiV1MonthlyMetricDay {
+  if (!scope.queryStart || !scope.queryEnd) {
+    return { date: scope.anchor, metrics: { M018: emptyPoint("no_value") } };
+  }
+  const metadata = monthlyMetadata(message, scope, today);
+  return { date: scope.anchor, queryStart: scope.queryStart, queryEnd: scope.queryEnd,
+    metrics: { M018: monthlyPoint(message) }, ...(metadata ? { monthlyMetadata: metadata } : {}) };
 }
 
 /**
@@ -111,9 +121,7 @@ export async function readBiV1MonthlyMetricDays(
       });
       // Summary rows may omit businessDate. The shared request adapter validates
       // any supplied date, PID, metric and dimension against this month's scope.
-      const metadata = monthlyMetadata(message, scope, today);
-      anchor.metrics.M018 = monthlyPoint(message);
-      if (metadata) anchor.monthlyMetadata = metadata;
+      Object.assign(anchor, projectBiV1MonthlyMetricScope(message, scope, today));
     } catch (error) {
       if (!(error instanceof UpstreamError)) throw error;
       anchor.metrics.M018 = emptyPoint("source_failure");

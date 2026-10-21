@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { biQueryJobUnitResultSchema } from "../../contracts/query-jobs";
 import { DAILY_PLAYBACK_MAX_GROUPS, DAILY_PLAYBACK_MAX_POINTS, DAILY_PLAYBACK_METRIC_IDS, type DailyPlaybackGroupResult, type DailyPlaybackGroups, type DailyPlaybackPoint, type DailyPlaybackSummary, type DailyReadingMetric } from "../../contracts/daily-dashboard";
 import { UpstreamError, type UpstreamClient } from "./client";
+import { validateBiV1UnitCoverage } from "./bi-v1.metrics-adapter";
 
 export const BI_V1_PLAYBACK_API = "/api/admin/bi/v1/playback";
 export const BI_V1_EFFECTIVE_PLAY_RULE_VERSION = "effective_play_v3";
@@ -43,6 +45,11 @@ const errorSchema = z.object({
 
 export type BiV1MetricRow = z.infer<typeof rowSchema>;
 export type BiV1MetricMessage = z.infer<typeof successSchema>["msg"];
+export type BiV1PlaybackSource = Pick<BiV1MetricMessage, "rows" | "generatedAt"> & {
+  metricVersion?: string;
+  watermark?: string | null;
+  sourceCoverage?: z.infer<typeof biQueryJobUnitResultSchema>["sourceCoverage"];
+};
 
 export interface BiV1MetricQuery {
   pid: string;
@@ -57,6 +64,8 @@ export interface BiV1PlaybackMetricPoint {
   value: number | null;
   numerator: number | null;
   denominator: number | null;
+  /** Validated incomplete ratio inputs are diagnostic only. */
+  diagnosticInputs?: { numerator: number; denominator: number };
 }
 
 export interface BiV1PlaybackDay {
@@ -84,19 +93,8 @@ function assertPlaybackDimensions(row: BiV1MetricRow) {
   }
 }
 
-export async function queryBiV1Playback(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
-  const codes: readonly BiV1PlaybackMetricCode[] = ["M034", "M036", "M097"];
-  const payload = await client.get(BI_V1_PLAYBACK_API, {
-    pid: query.pid,
-    startDate: query.startDate,
-    endDate: nextDate(query.endDate),
-    granularity: "day",
-    metricCodes: codes.join(","),
-    dimensions: "videoType",
-    includeIncomplete: query.includeIncomplete === false ? "false" : "true"
-  });
-  const message = parseEnvelope(payload);
-  const requested = new Set(codes);
+function assertPlaybackMessage(message: BiV1PlaybackSource, query: BiV1MetricQuery) {
+  const requested = new Set<BiV1PlaybackMetricCode>(["M034", "M036", "M097"]);
   for (const row of message.rows) {
     assertPlaybackDimensions(row);
     if (!requested.has(row.metricCode) || row.dimensions.pid !== query.pid) {
@@ -112,6 +110,35 @@ export async function queryBiV1Playback(client: Pick<UpstreamClient, "get">, que
       throw new UpstreamError("BI_V1_VALUE_CONFLICT", "bi-v1 未就绪记录不应返回业务值", 502);
     }
   }
+}
+
+/** Async metadata stays attached to its unit; shared playback rules validate the rows. */
+export function normalizeBiV1PlaybackUnit(payload: unknown, query: BiV1MetricQuery): BiV1PlaybackSource {
+  const unit = biQueryJobUnitResultSchema.safeParse(payload);
+  if (!unit.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 异步单元结构无法识别", 502);
+  const rows = z.array(rowSchema).max(100_000).safeParse(unit.data.rows);
+  if (!rows.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 异步播放行无法识别", 502);
+  if (unit.data.rows.some(row => row.pid !== undefined && row.pid !== query.pid)) {
+    throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
+  }
+  const message = { ...unit.data, rows: rows.data };
+  assertPlaybackMessage(message, query);
+  validateBiV1UnitCoverage(message.sourceCoverage, { ...query, metricCodes: ["M034", "M036", "M097"] });
+  return message;
+}
+
+export async function queryBiV1Playback(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
+  const payload = await client.get(BI_V1_PLAYBACK_API, {
+    pid: query.pid,
+    startDate: query.startDate,
+    endDate: nextDate(query.endDate),
+    granularity: "day",
+    metricCodes: "M034,M036,M097",
+    dimensions: "videoType",
+    includeIncomplete: query.includeIncomplete === false ? "false" : "true"
+  });
+  const message = parseEnvelope(payload);
+  assertPlaybackMessage(message, query);
   return message;
 }
 
@@ -130,7 +157,7 @@ function safeCount(value: number, label: string) {
   return value;
 }
 
-export function aggregateBiV1Playback(message: BiV1MetricMessage, query: Pick<BiV1MetricQuery, "pid" | "startDate" | "endDate">): BiV1PlaybackDay[] {
+export function aggregateBiV1Playback(message: BiV1PlaybackSource, query: Pick<BiV1MetricQuery, "pid" | "startDate" | "endDate">): BiV1PlaybackDay[] {
   const playbackCodes = new Set<BiV1PlaybackMetricCode>(["M034", "M036", "M097"]);
   const globalStatuses = new Map<BiV1PlaybackMetricCode, BiV1DataStatus>();
   const rowsByDate = new Map<string, BiV1MetricRow[]>();
@@ -169,53 +196,79 @@ export function aggregateBiV1Playback(message: BiV1MetricMessage, query: Pick<Bi
     if (videoTypes.includes("") && videoTypes.length > 1) throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "播放总体与视频类型分组不能混合汇总", 502);
     let effective = 0;
     let starts = 0;
+    let ratioNumerator = 0;
+    let ratioDenominator = 0;
+    let diagnosticNumerator = 0;
+    let diagnosticDenominator = 0;
+    let diagnosticRatioValid = true;
     let invalidEffectiveRule = false;
-    let unavailable: BiV1DataStatus | null = null;
+    const unavailable = new Map<BiV1PlaybackMetricCode, BiV1DataStatus>();
     for (const videoType of videoTypes) {
       const find = (code: "M034" | "M036" | "M097") => rows.find((row) => row.metricCode === code && (row.dimensions.videoType ?? "") === videoType);
       const effectiveRow = find("M034"), ratioRow = find("M036"), startsRow = find("M097");
       if (!effectiveRow || !ratioRow || !startsRow) throw new UpstreamError("BI_V1_VALUE_CONFLICT", "播放指标分组记录不完整", 502);
-      const statuses = new Set([effectiveRow.dataStatus, ratioRow.dataStatus, startsRow.dataStatus]);
-      if (statuses.size !== 1) throw new UpstreamError("BI_V1_VALUE_CONFLICT", "播放指标分组状态不一致", 502);
-      const status = effectiveRow.dataStatus;
-      if (status !== "READY") {
-        const priority: Record<BiV1DataStatus, number> = { FAILED: 4, PROCESSING: 3, NOT_MATURE: 2, SOURCE_INCOMPLETE: 1, READY: 0 };
-        if (!unavailable || priority[status] > priority[unavailable]) unavailable = status;
-        continue;
+      const priority: Record<BiV1DataStatus, number> = { FAILED: 4, PROCESSING: 3, NOT_MATURE: 2, SOURCE_INCOMPLETE: 1, READY: 0 };
+      for (const row of [effectiveRow, ratioRow, startsRow]) {
+        if (row.dataStatus === "READY") continue;
+        const previous = unavailable.get(row.metricCode);
+        if (!previous || priority[row.dataStatus] > priority[previous]) unavailable.set(row.metricCode, row.dataStatus);
       }
-      const startsValue = safeCount(startsRow.value!, "成功起播次数");
-      if (startsRow.unit !== "count" || startsRow.numerator !== startsValue || startsRow.denominator !== 0) {
-        throw new UpstreamError("BI_V1_VALUE_CONFLICT", "成功起播次数分子分母不一致", 502);
+      let startsValue: number | undefined;
+      if (startsRow.dataStatus === "READY") {
+        startsValue = safeCount(startsRow.value!, "成功起播次数");
+        if (startsRow.unit !== "count" || startsRow.numerator !== startsValue || startsRow.denominator !== 0) {
+          throw new UpstreamError("BI_V1_VALUE_CONFLICT", "成功起播次数分子分母不一致", 502);
+        }
+        starts = safeCount(starts + startsValue, "成功起播次数合计");
       }
-      starts = safeCount(starts + startsValue, "成功起播次数合计");
-      if (effectiveRow.ruleVersion !== BI_V1_EFFECTIVE_PLAY_RULE_VERSION || ratioRow.ruleVersion !== BI_V1_EFFECTIVE_PLAY_RULE_VERSION) {
+      const effectiveReady = effectiveRow.dataStatus === "READY", ratioReady = ratioRow.dataStatus === "READY";
+      if (effectiveReady && effectiveRow.ruleVersion !== BI_V1_EFFECTIVE_PLAY_RULE_VERSION
+        || ratioReady && ratioRow.ruleVersion !== BI_V1_EFFECTIVE_PLAY_RULE_VERSION) {
         invalidEffectiveRule = true;
         continue;
       }
-      const effectiveValue = safeCount(effectiveRow.value!, "有效观看次数");
-      if (effectiveRow.unit !== "count" || ratioRow.unit !== "ratio"
-        || effectiveRow.numerator !== effectiveValue || effectiveRow.denominator !== 0
-        || effectiveValue > startsValue
-        || ratioRow.numerator !== effectiveValue || ratioRow.denominator !== startsValue
-        || (startsValue === 0 ? ratioRow.value !== null : Math.abs(ratioRow.value! - effectiveValue / startsValue) > 1e-12)) {
-        throw new UpstreamError("BI_V1_VALUE_CONFLICT", "播放指标分子分母不一致", 502);
+      let effectiveValue: number | undefined;
+      if (effectiveReady) {
+        effectiveValue = safeCount(effectiveRow.value!, "有效观看次数");
+        if (effectiveRow.unit !== "count" || effectiveRow.numerator !== effectiveValue || effectiveRow.denominator !== 0
+          || startsValue !== undefined && effectiveValue > startsValue) {
+          throw new UpstreamError("BI_V1_VALUE_CONFLICT", "播放指标分子分母不一致", 502);
+        }
+        effective = safeCount(effective + effectiveValue, "有效观看次数合计");
       }
-      effective = safeCount(effective + effectiveValue, "有效观看次数合计");
+      if (ratioReady) {
+        const numerator = safeCount(ratioRow.numerator, "有效观影率分子"), denominator = safeCount(ratioRow.denominator, "有效观影率分母");
+        if (ratioRow.unit !== "ratio" || numerator > denominator
+          || effectiveValue !== undefined && numerator !== effectiveValue || startsValue !== undefined && denominator !== startsValue
+          || (denominator === 0 ? ratioRow.value !== null : ratioRow.value === null || Math.abs(ratioRow.value - numerator / denominator) > 1e-12)) {
+          throw new UpstreamError("BI_V1_VALUE_CONFLICT", "播放指标分子分母不一致", 502);
+        }
+        ratioNumerator = safeCount(ratioNumerator + numerator, "有效观影率分子合计");
+        ratioDenominator = safeCount(ratioDenominator + denominator, "有效观影率分母合计");
+      }
+      if ((ratioReady || ratioRow.dataStatus === "SOURCE_INCOMPLETE") && ratioRow.unit === "ratio"
+        && ratioRow.ruleVersion === BI_V1_EFFECTIVE_PLAY_RULE_VERSION
+        && Number.isSafeInteger(ratioRow.numerator) && ratioRow.numerator >= 0
+        && Number.isSafeInteger(ratioRow.denominator) && ratioRow.denominator >= ratioRow.numerator) {
+        diagnosticNumerator += ratioRow.numerator;
+        diagnosticDenominator += ratioRow.denominator;
+        diagnosticRatioValid &&= Number.isSafeInteger(diagnosticNumerator) && Number.isSafeInteger(diagnosticDenominator);
+      } else diagnosticRatioValid = false;
     }
-    if (unavailable) {
-      days.push({ date, metrics: {
-        M034: unavailablePoint(unavailable), M036: unavailablePoint(unavailable), M097: unavailablePoint(unavailable)
-      } });
-      continue;
+    const ratioStatus = unavailable.get("M036");
+    const ratioPoint: BiV1PlaybackMetricPoint = ratioStatus ? unavailablePoint(ratioStatus) : invalidEffectiveRule
+      ? { ...unavailablePoint(null, "invalid_value"), dataStatus: "READY" as const }
+      : ratioDenominator === 0
+        ? { dataStatus: "READY" as const, state: "zero_denominator" as const, value: null, numerator: ratioNumerator, denominator: ratioDenominator }
+        : { dataStatus: "READY" as const, state: "available" as const, value: ratioNumerator / ratioDenominator, numerator: ratioNumerator, denominator: ratioDenominator };
+    if (ratioStatus === "SOURCE_INCOMPLETE" && diagnosticRatioValid && !invalidEffectiveRule) {
+      ratioPoint.diagnosticInputs = { numerator: diagnosticNumerator, denominator: diagnosticDenominator };
     }
     days.push({ date, metrics: {
-      M034: invalidEffectiveRule ? { ...unavailablePoint(null, "invalid_value"), dataStatus: "READY" }
+      M034: unavailable.has("M034") ? unavailablePoint(unavailable.get("M034")!) : invalidEffectiveRule ? { ...unavailablePoint(null, "invalid_value"), dataStatus: "READY" }
         : { dataStatus: "READY", state: "available", value: effective, numerator: effective, denominator: 0 },
-      M097: { dataStatus: "READY", state: "available", value: starts, numerator: starts, denominator: 0 },
-      M036: invalidEffectiveRule ? { ...unavailablePoint(null, "invalid_value"), dataStatus: "READY" }
-        : starts === 0
-        ? { dataStatus: "READY", state: "zero_denominator", value: null, numerator: effective, denominator: starts }
-        : { dataStatus: "READY", state: "available", value: effective / starts, numerator: effective, denominator: starts }
+      M097: unavailable.has("M097") ? unavailablePoint(unavailable.get("M097")!) : { dataStatus: "READY", state: "available", value: starts, numerator: starts, denominator: 0 },
+      M036: ratioPoint
     } });
   }
   return days;
@@ -252,7 +305,7 @@ function playbackGroupSummary(metric: DailyReadingMetric, points: DailyPlaybackP
 }
 
 /** Project the same day response independently; malformed groups do not supply or repair the overall result. */
-export function projectBiV1PlaybackGroups(message: BiV1MetricMessage, query: Pick<BiV1MetricQuery, "pid" | "startDate" | "endDate">,
+export function projectBiV1PlaybackGroups(message: BiV1PlaybackSource, query: Pick<BiV1MetricQuery, "pid" | "startDate" | "endDate">,
   today: string, metricFor: (id: BiV1PlaybackMetricCode) => DailyReadingMetric): DailyPlaybackGroups {
   const dates: string[] = [];
   for (let date = query.startDate; date <= query.endDate; date = nextDate(date)) dates.push(date);
@@ -279,7 +332,7 @@ export function projectBiV1PlaybackGroups(message: BiV1MetricMessage, query: Pic
     || [...scopes.values()].some(rows => rows.length !== 1)) return unavailableBiV1PlaybackGroups("invalid_response");
   const scopeRows = [...scopes.values()].flat();
   if (scopeRows.some(row => row.businessDate && scopes.has(identity(row.metricCode)) && scopes.get(identity(row.metricCode))![0].dataStatus !== row.dataStatus)) return unavailableBiV1PlaybackGroups("invalid_response");
-  const day: DailyPlaybackGroupResult["day"] = { state: message.rows.length ? "returned" : "empty", generatedAt: message.generatedAt, watermark: message.watermark,
+  const day: DailyPlaybackGroupResult["day"] = { state: message.rows.length ? "returned" : "empty", generatedAt: message.generatedAt, watermark: message.watermark ?? null,
     scopeStatuses: scopeRows.map(row => ({ metricId: row.metricCode, sourceStatus: row.dataStatus as "PROCESSING" | "NOT_MATURE" | "SOURCE_INCOMPLETE" | "FAILED", ...(row.businessDate ? { businessDate: row.businessDate } : {}) })) };
   return { videoType: { dimension: "videoType", completeness: "unknown", day, groups: [...grouped].map(([key, rows]) => {
     const points = new Map<BiV1PlaybackMetricCode, DailyPlaybackPoint[]>(DAILY_PLAYBACK_METRIC_IDS.map(id => [id, []]));

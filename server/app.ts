@@ -35,6 +35,9 @@ import { bindClientRequestAbort } from "./http/client-request-abort";
 import { PDaySumM016Source } from "./v2/m016-source";
 import { V2MetricQueryService } from "./v2/metric-query.service";
 import { DailyDashboardService } from "./v2/daily-dashboard.service";
+import { QueryJobsClient } from "./upstream/query-jobs";
+import { BiQueryJobService } from "./v2/query-jobs.service";
+import { OperatingQueryJobService } from "./v2/operating-query-jobs.service";
 import { operatingEvidenceQuerySchema } from "../contracts/operating-evidence";
 import { readOperatingEvidence } from "./v2/operating-evidence.service";
 import { runWithUpstreamRequestProfile } from "./upstream/request-profile";
@@ -686,14 +689,20 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const productionDailyReadingEnabled = env.NODE_ENV === "production"
     && env.BI_PRODUCTION_DASHBOARD_READING_ENABLED;
   const formalDailyReadingEnabled = localDailyReadingEnabled || productionDailyReadingEnabled;
+  const dailyDashboardService = formalDailyReadingEnabled || previewEnabled
+    ? new DailyDashboardService(upstream, undefined, app.log, { sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS }) : undefined;
+  const queryJobService = previewEnabled ? new BiQueryJobService(new QueryJobsClient(upstream)) : undefined;
+  const operatingQueryJobService = queryJobService && dailyDashboardService
+    ? new OperatingQueryJobService(queryJobService, dailyDashboardService) : undefined;
+  app.addHook("onClose", async () => { operatingQueryJobService?.close(); });
 
   await app.register(v2BiPlugin, {
     prefix: "/api/bi/v2",
     identityProvider,
     metricQueryService: v2MetricQueryService,
-    dailyDashboardService: formalDailyReadingEnabled || previewEnabled
-      ? new DailyDashboardService(upstream, undefined, app.log, { sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS })
-      : undefined,
+    dailyDashboardService,
+    queryJobService,
+    operatingQueryJobService,
     productionDailyDashboardEnabled: formalDailyReadingEnabled,
     dataEnvironmentResolver: {
       testAvailable: previewEnabled,

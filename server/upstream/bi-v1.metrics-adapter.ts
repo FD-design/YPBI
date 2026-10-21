@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { biQueryJobUnitResultSchema } from "../../contracts/query-jobs";
 import { UpstreamError, type UpstreamClient } from "./client";
 import { canIsolateBiV1Request } from "./bi-v1.request-isolation";
 
@@ -87,6 +88,13 @@ export interface BiV1MetricQuery {
 
 type DimensionConflict = { metricCode: BiV1MetricCode; businessDate?: string };
 export type BiV1MetricMessage = z.infer<typeof successSchema>["msg"] & { dimensionConflicts?: DimensionConflict[] };
+/** Validated business rows shared by synchronous envelopes and asynchronous units. */
+export type BiV1MetricSource = Pick<BiV1MetricMessage, "rows" | "generatedAt"> & {
+  metricVersion?: string;
+  watermark?: string | null;
+  dimensionConflicts?: DimensionConflict[];
+  sourceCoverage?: z.infer<typeof biQueryJobUnitResultSchema>["sourceCoverage"];
+};
 
 export interface BiV1MetricPoint {
   dataStatus: BiV1MetricDataStatus | null;
@@ -217,7 +225,7 @@ function requestedMetricKey(code: BiV1MetricCode, query: BiV1MetricQuery) {
   return groupedFields.length ? `${key}|group:${groupedFields.join(",")}` : key;
 }
 
-function selectDimensionScope(message: BiV1MetricMessage, query: BiV1MetricQuery): BiV1MetricMessage {
+function selectDimensionScope<T extends BiV1MetricSource>(message: T, query: BiV1MetricQuery): T {
   const scope = queryDimensions(query);
   const dimensionConflicts = [...(message.dimensionConflicts ?? [])];
   const rows = message.rows.filter(row => {
@@ -232,22 +240,79 @@ function nextDate(date: string) {
   return new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 }
 
-function parseEnvelope(payload: unknown, query: BiV1MetricQuery): BiV1MetricMessage {
-  const rawSuccess = rawSuccessSchema.safeParse(payload);
+function selectRawDimensionScope(rows: unknown[], query: BiV1MetricQuery) {
   const dimensionConflicts: DimensionConflict[] = [];
   const scope = queryDimensions(query);
+  const selectedRows = rows.filter(rawRow => {
+    const selected = rowDimensionScopeSchema.safeParse(rawRow);
+    // Identity and date remain subject to full validation before values are used.
+    if (!selected.success || matchesDimensionScope(selected.data.dimensions, scope)) return true;
+    dimensionConflicts.push({ metricCode: selected.data.metricCode, ...(selected.data.businessDate ? { businessDate: selected.data.businessDate } : {}) });
+    return false;
+  });
+  return { rows: selectedRows, dimensionConflicts };
+}
+
+function assertMetricScope(rows: unknown[], query: BiV1MetricQuery) {
+  const requested = new Set(query.metricCodes);
+  for (const rawRow of rows) {
+    const parsed = rowScopeSchema.safeParse(rawRow);
+    if (!parsed.success) continue;
+    const row = parsed.data;
+    if (row.metricCode !== undefined && !requested.has(row.metricCode as BiV1MetricCode)
+      || row.dimensions?.pid !== undefined && row.dimensions.pid !== query.pid) {
+      throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
+    }
+    if (row.businessDate && (row.businessDate < query.startDate || row.businessDate > query.endDate)) {
+      throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求日期外的数据", 502);
+    }
+  }
+}
+
+/** Coverage proves a scoped scan only; it never supplies business rows or READY values. */
+export function validateBiV1UnitCoverage(
+  coverage: z.infer<typeof biQueryJobUnitResultSchema>["sourceCoverage"],
+  query: Pick<BiV1MetricQuery, "pid" | "startDate" | "endDate" | "metricCodes">
+) {
+  const seen = new Set<string>();
+  for (const item of coverage ?? []) {
+    const key = JSON.stringify([item.metricCode, item.pid, item.businessDate]);
+    if (!query.metricCodes.includes(item.metricCode) || item.pid !== query.pid
+      || item.businessDate < query.startDate || item.businessDate > query.endDate || seen.has(key)) {
+      throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 覆盖证明与请求范围不一致", 502);
+    }
+    seen.add(key);
+  }
+}
+
+/** Decode the unit's own metadata; no synchronous envelope or watermark is synthesized. */
+export function normalizeBiV1MetricUnit(payload: unknown, query: BiV1MetricQuery): BiV1MetricSource {
+  queryDimensions(query);
+  queryRuleVersions(query);
+  const rawUnit = biQueryJobUnitResultSchema.extend({ rows: z.array(z.unknown()).max(100_000) }).safeParse(payload);
+  if (!rawUnit.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 异步单元结构无法识别", 502);
+  assertMetricScope(rawUnit.data.rows, query);
+  if (rawUnit.data.rows.some(row => row !== null && typeof row === "object" && Reflect.get(row, "pid") !== undefined && Reflect.get(row, "pid") !== query.pid)) {
+    throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
+  }
+  validateBiV1UnitCoverage(rawUnit.data.sourceCoverage, query);
+  const selected = selectRawDimensionScope(rawUnit.data.rows, query);
+  const unit = biQueryJobUnitResultSchema.safeParse({ ...rawUnit.data, rows: selected.rows });
+  if (!unit.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 异步单元结构无法识别", 502);
+  const rows = z.array(metricRowSchema).max(100_000).safeParse(unit.data.rows);
+  if (!rows.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 异步指标行无法识别", 502);
+  return { ...unit.data, rows: rows.data,
+    ...(selected.dimensionConflicts.length ? { dimensionConflicts: selected.dimensionConflicts } : {}) };
+}
+
+function parseEnvelope(payload: unknown, query: BiV1MetricQuery): BiV1MetricMessage {
+  const rawSuccess = rawSuccessSchema.safeParse(payload);
+  const { rows, dimensionConflicts } = selectRawDimensionScope(rawSuccess.success ? rawSuccess.data.msg.rows : [], query);
   const scopedPayload = rawSuccess.success ? {
     ...rawSuccess.data,
     msg: {
       ...rawSuccess.data.msg,
-      rows: rawSuccess.data.msg.rows.filter(rawRow => {
-        const selected = rowDimensionScopeSchema.safeParse(rawRow);
-        // Malformed identity/date fields stay subject to full validation. Valid
-        // out-of-scope dimensions are excluded before business-value parsing.
-        if (!selected.success || matchesDimensionScope(selected.data.dimensions, scope)) return true;
-        dimensionConflicts.push({ metricCode: selected.data.metricCode, ...(selected.data.businessDate ? { businessDate: selected.data.businessDate } : {}) });
-        return false;
-      })
+      rows
     }
   } : payload;
   const success = successSchema.safeParse(scopedPayload);
@@ -334,27 +399,15 @@ export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, quer
     ...(query.dimensionFilters !== undefined ? { dimensionFilters: JSON.stringify(scopeDimensions.filters) } : {}),
     ...(scopeDimensions.dimensions.length ? { dimensions: scopeDimensions.dimensions.join(",") } : {})
   });
-  const requested = new Set(metricCodes);
   // Scope checks precede value validation so a malformed value cannot turn a
   // cross-PID, date or metric conflict into a recoverable schema error.
   const scope = scopeEnvelopeSchema.safeParse(payload);
-  for (const rawRow of scope.success ? scope.data.msg.rows : []) {
-    const parsed = rowScopeSchema.safeParse(rawRow);
-    if (!parsed.success) continue;
-    const row = parsed.data;
-    if (row.metricCode !== undefined && !requested.has(row.metricCode as BiV1MetricCode)
-      || row.dimensions?.pid !== undefined && row.dimensions.pid !== query.pid) {
-      throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
-    }
-    if (row.businessDate && (row.businessDate < query.startDate || row.businessDate > query.endDate)) {
-      throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求日期外的数据", 502);
-    }
-  }
+  assertMetricScope(scope.success ? scope.data.msg.rows : [], query);
   return parseEnvelope(payload, query);
 }
 
 export function aggregateBiV1MetricDays(
-  message: BiV1MetricMessage,
+  message: BiV1MetricSource,
   query: BiV1MetricQuery
 ): BiV1MetricDay[] {
   const requested = [...new Set(query.metricCodes)];

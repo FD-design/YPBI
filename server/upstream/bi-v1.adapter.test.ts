@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { aggregateBiV1Playback, queryBiV1Playback, type BiV1MetricRow } from "./bi-v1.adapter";
+import { readFileSync } from "node:fs";
+import { aggregateBiV1Playback, normalizeBiV1PlaybackUnit, queryBiV1Playback, type BiV1MetricRow } from "./bi-v1.adapter";
 
 const row = (metricCode: "M034" | "M036" | "M097", videoType: string, value: number | null, numerator: number, denominator: number): BiV1MetricRow => ({
   metricCode,
@@ -26,6 +27,60 @@ const group = (videoType = "default", effective = 7, starts = 8) => [
   row("M036", videoType, starts ? effective / starts : null, effective, starts),
   row("M097", videoType, starts, starts, 0)
 ];
+
+describe("异步播放来源及逐指标状态", () => {
+  const evidence = JSON.parse(readFileSync(new URL("../v2/fixtures/query-jobs-http-20261021.json", import.meta.url), "utf8"));
+  const scope = { pid: "PH", startDate: "2026-10-17", endDate: "2026-10-17" };
+  const unit = evidence.result.msg.results[4];
+
+  test("实际混合状态保留起播6及有效率4/6诊断，coverage READY不晋升指标", async () => {
+    const normalized = normalizeBiV1PlaybackUnit(unit, scope);
+    expect(Object.hasOwn(normalized, "metricVersion")).toBe(false);
+    expect(normalized.sourceCoverage).toEqual(unit.sourceCoverage);
+    const points = aggregateBiV1Playback(normalized, scope)[0].metrics;
+    expect(points.M097).toMatchObject({ dataStatus: "READY", state: "available", value: 6 });
+    expect(points.M034).toMatchObject({ dataStatus: "SOURCE_INCOMPLETE", value: null, numerator: null });
+    expect(points.M036).toMatchObject({ dataStatus: "SOURCE_INCOMPLETE", value: null, numerator: null, denominator: null,
+      diagnosticInputs: { numerator: 4, denominator: 6 } });
+    const sync = await queryBiV1Playback({ get: async () => ({ code: 200, msg: { ...unit, metricVersion: "bi-v1" } }) }, scope);
+    expect(aggregateBiV1Playback(sync, scope)[0].metrics).toEqual(points);
+  });
+
+  test("实际空rows不造类型桶或0，coverage仍是独立证明", () => {
+    const empty = normalizeBiV1PlaybackUnit(evidence.extraResult.msg.results[0], scope);
+    expect(empty.rows).toEqual([]);
+    expect(empty.sourceCoverage).toHaveLength(3);
+    expect(Object.values(aggregateBiV1Playback(empty, scope)[0].metrics).every(point => point.state === "no_record" && point.value === null)).toBe(true);
+    const absent = { ...unit }; delete absent.watermark;
+    expect(Object.hasOwn(normalizeBiV1PlaybackUnit(absent, scope), "watermark")).toBe(false);
+  });
+
+  test("各指标跨类型按自身状态聚合，不以未就绪诊断计算正式比率", () => {
+    const rows = [...group("short_video", 4, 6).map(item => ({ ...item, businessDate: scope.startDate,
+      ...(item.metricCode === "M097" ? {} : { value: null, dataStatus: "SOURCE_INCOMPLETE" as const }) })),
+    ...group("long_video", 2, 4).map(item => ({ ...item, businessDate: scope.startDate }))];
+    const points = aggregateBiV1Playback(message(rows), scope)[0].metrics;
+    expect(points.M097).toMatchObject({ value: 10, state: "available" });
+    expect(points.M036).toMatchObject({ value: null, numerator: null, diagnosticInputs: { numerator: 6, denominator: 10 } });
+    const independent = group().map(item => item.metricCode === "M097" ? { ...item, value: null, dataStatus: "PROCESSING" as const } : item);
+    const alternate = aggregateBiV1Playback(message(independent), query)[0].metrics;
+    expect(alternate.M097).toMatchObject({ value: null, dataStatus: "PROCESSING" });
+    expect(alternate.M034.value).toBe(7);
+    expect(alternate.M036.value).toBe(7 / 8);
+  });
+
+  test("越界或重复coverage、坏行级版本及未就绪非空值失败关闭", () => {
+    for (const coverage of [
+      [{ ...unit.sourceCoverage[0], pid: "TT" }], [{ ...unit.sourceCoverage[0], businessDate: "2026-10-18" }],
+      [unit.sourceCoverage[0], unit.sourceCoverage[0]], [{ ...unit.sourceCoverage[0], reason: "unknown" }]
+    ]) expect(() => normalizeBiV1PlaybackUnit({ ...unit, sourceCoverage: coverage }, scope)).toThrow();
+    for (const rows of [
+      unit.rows.map((row: BiV1MetricRow) => ({ ...row, metricVersion: "bi-v2" })),
+      unit.rows.map((row: BiV1MetricRow) => ({ ...row, dimensions: { ...row.dimensions, pid: "TT" } })),
+      unit.rows.map((row: BiV1MetricRow) => ({ ...row, ...(row.metricCode === "M036" ? { value: 4 / 6 } : {}) }))
+    ]) expect(() => normalizeBiV1PlaybackUnit({ ...unit, rows }, scope)).toThrow();
+  });
+});
 
 describe("bi-v1 adapter", () => {
   test("v3 的 7 次有效观看与 8 次起播保留同批比率及请求范围", async () => {

@@ -43,7 +43,7 @@ export class BiQueryJobTerminalError extends Error {
   }
 }
 
-function invalidScope(): never {
+export function invalidQueryJobScope(): never {
   throw new V2RequestError("查询任务响应与本次查询范围不一致", { kind: "error", code: "INVALID_V2_QUERY_RESPONSE", status: 200 });
 }
 
@@ -67,16 +67,29 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Independent protocol client; existing dashboard reads do not opt in automatically. */
-export function createBiQueryJobRunner(runtime: BiQueryJobRuntime = {}) {
+interface QueryJobProtocol<Request, Progress extends BiQueryJobProgress, Created extends { success: true; data: { handle: string } }, Result extends { success: true; data: Progress }, Completed> {
+  requestSchema: z.ZodType<Request>;
+  createdSchema: z.ZodType<Created>;
+  statusSchema: z.ZodType<{ success: true; data: Progress }>;
+  resultSchema: z.ZodType<Result>;
+  validateCreated: (created: Created, request: Request) => boolean;
+  validateProgress: (progress: Progress, request: Request) => boolean;
+  progressSnapshot: (progress: Progress) => Progress;
+  finish: (result: Result, request: Request) => Completed | null;
+}
+
+/** Shared bounded lifecycle; each public protocol validates its own request and result scope. */
+export function createQueryJobProtocolRunner<Request, Progress extends BiQueryJobProgress, Created extends { success: true; data: { handle: string } }, Result extends { success: true; data: Progress }, Completed>(
+  protocol: QueryJobProtocol<Request, Progress, Created, Result, Completed>, runtime: BiQueryJobRuntime = {}
+) {
   const fetcher = runtime.fetch ?? ((input, init) => fetch(input, init));
   const now = runtime.now ?? (() => performance.now());
   const pause = runtime.sleep ?? sleep;
-  return async function run(request: BiQueryJobRequest, options: BiQueryJobRunOptions = {}): Promise<BiQueryJobCompleted> {
+  return async function run(request: Request, options: { signal?: AbortSignal; onProgress?: (progress: Readonly<Progress>) => void } = {}): Promise<Completed> {
     options.signal?.throwIfAborted();
-    const parsedRequest = biQueryJobRequestSchema.safeParse(request);
+    const parsedRequest = protocol.requestSchema.safeParse(request);
     if (!parsedRequest.success) throw new V2RequestError("查询任务参数不合法", { kind: "error", code: "QUERY_JOB_INVALID", status: 400 });
-    const requestBody = JSON.stringify(parsedRequest.data), expectedUnits = parsedRequest.data.queries.length;
+    const requestBody = JSON.stringify(parsedRequest.data);
     const headers = dataEnvironmentHeaders({ accept: "application/json", "content-type": "application/json" });
     const controller = new AbortController(), deadline = now() + LOCAL_WAIT_MS;
     let handle: string | undefined, readRetries = 0;
@@ -118,36 +131,35 @@ export function createBiQueryJobRunner(runtime: BiQueryJobRuntime = {}) {
         }
       }
     };
-    const progress = (value: BiQueryJobProgress) => {
+    const progress = (value: Progress) => {
       check();
-      if (value.handle !== handle || value.totalUnits !== undefined && value.totalUnits !== expectedUnits
-        || value.completedUnits !== undefined && (value.completedUnits > expectedUnits
-          || value.status === "SUCCEEDED" && value.completedUnits !== expectedUnits)) return invalidScope();
-      const snapshot = Object.freeze(biQueryJobProgressSchema.parse(value));
+      if (value.handle !== handle || !protocol.validateProgress(value, parsedRequest.data)) return invalidQueryJobScope();
+      const snapshot = Object.freeze(protocol.progressSnapshot(value));
       options.onProgress?.(snapshot);
       check();
       if (value.status === "FAILED" || value.status === "EXPIRED") throw new BiQueryJobTerminalError(snapshot);
     };
     try {
-      const created = await exchange("/api/bi/v2/queries/jobs", biQueryJobCreatedSchema, requestBody);
+      const created = await exchange("/api/bi/v2/queries/jobs", protocol.createdSchema, requestBody);
       check();
+      if (!protocol.validateCreated(created, parsedRequest.data)) return invalidQueryJobScope();
       handle = created.data.handle;
       const path = `/api/bi/v2/queries/jobs/${encodeURIComponent(handle)}`;
       for (let polls = 0; polls < MAX_POLLS; polls++) {
         await delay();
         check();
-        const state = await read(path, biQueryJobStatusSchema);
+        const state = await read(path, protocol.statusSchema);
         check();
         progress(state.data);
         if (state.data.status !== "SUCCEEDED") continue;
-        const result = await read(`${path}/result`, biQueryJobResultSchema);
+        const result = await read(`${path}/result`, protocol.resultSchema);
         check();
-        if (result.data.status === "SUCCEEDED" && (!result.data.results || result.data.results.length !== expectedUnits)) return invalidScope();
         progress(result.data);
         if (result.data.status !== "SUCCEEDED") continue;
-        if (!result.data.results) return invalidScope();
+        const completed = protocol.finish(result, parsedRequest.data);
+        if (completed === null) continue;
         check();
-        return { ...result, data: { ...result.data, status: "SUCCEEDED", results: result.data.results } };
+        return completed;
       }
       throw new BiQueryJobWaitError(handle);
     } finally {
@@ -155,6 +167,23 @@ export function createBiQueryJobRunner(runtime: BiQueryJobRuntime = {}) {
       options.signal?.removeEventListener("abort", onAbort);
     }
   };
+}
+
+/** Independent explicit-metric protocol; dashboards opt in through their scoped protocol. */
+export function createBiQueryJobRunner(runtime: BiQueryJobRuntime = {}) {
+  return createQueryJobProtocolRunner<BiQueryJobRequest, BiQueryJobProgress, z.infer<typeof biQueryJobCreatedSchema>, ResultEnvelope, BiQueryJobCompleted>({
+    requestSchema: biQueryJobRequestSchema, createdSchema: biQueryJobCreatedSchema,
+    statusSchema: biQueryJobStatusSchema, resultSchema: biQueryJobResultSchema,
+    validateCreated: () => true,
+    validateProgress: (value, request) => (value.totalUnits === undefined || value.totalUnits === request.queries.length)
+      && (value.completedUnits === undefined || value.completedUnits <= request.queries.length
+        && (value.status !== "SUCCEEDED" || value.completedUnits === request.queries.length)),
+    progressSnapshot: value => biQueryJobProgressSchema.parse(value),
+    finish: (result, request) => {
+      if (!result.data.results || result.data.results.length !== request.queries.length) return invalidQueryJobScope();
+      return { ...result, data: { ...result.data, status: "SUCCEEDED", results: result.data.results } };
+    }
+  }, runtime);
 }
 
 export const runBiQueryJob = createBiQueryJobRunner();

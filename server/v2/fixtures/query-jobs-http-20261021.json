@@ -1,0 +1,834 @@
+{
+  "source": "Developer test HTTP evidence 2026-10-21; no authentication headers or business user records.",
+  "capturedAt": "2026-10-21T04:19:08.484Z",
+  "request": {
+    "queries": [
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M016,M026,M081"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M016,M026,M081",
+          "dimensions": "clientPlatform,userCohort",
+          "dimensionFilters": "{\"clientPlatform\":\"android\",\"userCohort\":\"old\"}"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M090"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-01",
+          "endDate": "2026-10-21",
+          "granularity": "summary",
+          "includeIncomplete": true,
+          "metricCodes": "M018"
+        }
+      },
+      {
+        "domain": "playback",
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M034,M036,M097",
+          "dimensions": "videoType"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "summary",
+          "includeIncomplete": true,
+          "metricCodes": "M016"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M020"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M115",
+          "dimensions": "retentionDay",
+          "dimensionFilters": "{\"retentionDay\":\"D1\"}"
+        }
+      }
+    ]
+  },
+  "created": {
+    "code": 200,
+    "msg": {
+      "taskId": "02623523be93be07ae74d152db2147a5",
+      "reused": false
+    }
+  },
+  "result": {
+    "code": 200,
+    "msg": {
+      "taskId": "02623523be93be07ae74d152db2147a5",
+      "status": "SUCCEEDED",
+      "completedUnits": 8,
+      "totalUnits": 8,
+      "createdAtMs": 1792556349502,
+      "startedAtMs": 1792556350001,
+      "finishedAtMs": 1792556354177,
+      "expiresAtMs": 1792559949502,
+      "attempts": 1,
+      "results": [
+        {
+          "rows": [
+            {
+              "metricCode": "M016",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 3,
+              "numerator": 3,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "日活跃用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M026",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 2,
+              "numerator": 2,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "观影用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M081",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 0.3333333333333333,
+              "numerator": 1,
+              "denominator": 3,
+              "unit": "ratio",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "活跃用户观影率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-20 23:40:01.267",
+          "generatedAt": "2026-10-21T04:19:10.648Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M016",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "clientPlatform": "android",
+                "userCohort": "old",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-d0-platform-v1",
+              "metricName": "日活跃用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M026",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "clientPlatform": "android",
+                "userCohort": "old",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 1,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-d0-platform-v1",
+              "metricName": "观影用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M081",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "clientPlatform": "android",
+                "userCohort": "old",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "unit": "ratio",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-d0-platform-v1",
+              "metricName": "活跃用户观影率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-20 23:40:01.986",
+          "generatedAt": "2026-10-21T04:19:12.247Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M090",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "unit": "ratio",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "payment-source-pending-v1",
+              "sourceDiagnostics": [
+                "credit_final_failure_mapping_unconfirmed",
+                "credit_rule_version_unconfirmed",
+                "credit_rule_effective_date_unconfirmed"
+              ],
+              "timeoutCount": 0,
+              "lateCreditCount": 0,
+              "metricName": "支付提交-充值到账转化率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "generatedAt": "2026-10-21T04:19:12.495Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M018",
+              "businessDate": "2026-10-20",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 58,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "FAILED",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "mau-login-success-v1",
+              "month": "2026-10",
+              "cutoffDate": "2026-10-20",
+              "isComplete": false,
+              "mau": null,
+              "metricName": "月活跃用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-20",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-21 01:10:02.359",
+          "generatedAt": "2026-10-21T04:19:12.685Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M034",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "videoType": "long_video",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 4,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "effective_play_v3",
+              "metricName": "有效观看次数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M036",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "videoType": "long_video",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 4,
+              "denominator": 6,
+              "unit": "ratio",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "effective_play_v3",
+              "metricName": "有效观影率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M097",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "videoType": "long_video",
+                "pid": "PH"
+              },
+              "value": 6,
+              "numerator": 6,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "effective_play_v3",
+              "metricName": "起播次数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-20 23:40:02.335",
+          "sourceCoverage": [
+            {
+              "metricCode": "M034",
+              "pid": "PH",
+              "businessDate": "2026-10-17",
+              "dataStatus": "READY",
+              "reason": "COMPLETE_SOURCE_SCAN"
+            },
+            {
+              "metricCode": "M036",
+              "pid": "PH",
+              "businessDate": "2026-10-17",
+              "dataStatus": "READY",
+              "reason": "COMPLETE_SOURCE_SCAN"
+            },
+            {
+              "metricCode": "M097",
+              "pid": "PH",
+              "businessDate": "2026-10-17",
+              "dataStatus": "READY",
+              "reason": "COMPLETE_SOURCE_SCAN"
+            }
+          ],
+          "generatedAt": "2026-10-21T04:19:12.924Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M016",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 3,
+              "numerator": 3,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "日活跃用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-20 23:40:01.267",
+          "generatedAt": "2026-10-21T04:19:13.692Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M020",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 151,
+              "unit": "ratio",
+              "dataStatus": "PROCESSING",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "retention-d1-v1",
+              "observationDate": "2026-10-18",
+              "isMature": true,
+              "metricName": "注册用户D1留存率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-21 01:10:11.973",
+          "generatedAt": "2026-10-21T04:19:13.914Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M115",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "retentionDay": "D1",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 151,
+              "unit": "count",
+              "dataStatus": "PROCESSING",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "retention-d1-v1",
+              "observationDate": "2026-10-18",
+              "isMature": true,
+              "metricName": "注册留存用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-21 01:10:11.973",
+          "generatedAt": "2026-10-21T04:19:14.174Z"
+        }
+      ]
+    }
+  },
+  "extraRequest": {
+    "queries": [
+      {
+        "domain": "playback",
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": false,
+          "metricCodes": "M034,M036,M097",
+          "dimensions": "videoType",
+          "dimensionFilters": "{\"videoType\":\"short_video\"}"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-20",
+          "endDate": "2026-10-21",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M016,M026,M081"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2026-10-17",
+          "endDate": "2026-10-18",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M008,M020,M058",
+          "dimensions": "sourceType",
+          "dimensionFilters": "{\"sourceType\":\"natural\"}"
+        }
+      },
+      {
+        "query": {
+          "pid": "PH",
+          "startDate": "2020-01-01",
+          "endDate": "2020-01-02",
+          "granularity": "day",
+          "includeIncomplete": true,
+          "metricCodes": "M008,M016,M026,M058,M090"
+        }
+      }
+    ]
+  },
+  "extraResult": {
+    "code": 200,
+    "msg": {
+      "taskId": "57159601d81d4e09d9d4aceeb5ea7234",
+      "status": "SUCCEEDED",
+      "completedUnits": 4,
+      "totalUnits": 4,
+      "createdAtMs": 1792556653163,
+      "startedAtMs": 1792556655014,
+      "finishedAtMs": 1792556657713,
+      "expiresAtMs": 1792560253163,
+      "attempts": 1,
+      "results": [
+        {
+          "rows": [],
+          "sourceCoverage": [
+            {
+              "metricCode": "M034",
+              "pid": "PH",
+              "businessDate": "2026-10-17",
+              "dataStatus": "READY",
+              "reason": "COMPLETE_SOURCE_SCAN"
+            },
+            {
+              "metricCode": "M036",
+              "pid": "PH",
+              "businessDate": "2026-10-17",
+              "dataStatus": "READY",
+              "reason": "COMPLETE_SOURCE_SCAN"
+            },
+            {
+              "metricCode": "M097",
+              "pid": "PH",
+              "businessDate": "2026-10-17",
+              "dataStatus": "READY",
+              "reason": "COMPLETE_SOURCE_SCAN"
+            }
+          ],
+          "generatedAt": "2026-10-21T04:24:15.285Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M016",
+              "businessDate": "2026-10-20",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 3,
+              "numerator": 3,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "日活跃用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-20",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M026",
+              "businessDate": "2026-10-20",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 2,
+              "numerator": 2,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "观影用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-20",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M081",
+              "businessDate": "2026-10-20",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 0,
+              "numerator": 0,
+              "denominator": 3,
+              "unit": "ratio",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "活跃用户观影率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-20",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-21 00:25:00.956",
+          "generatedAt": "2026-10-21T04:24:15.864Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M058",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "sourceType": "natural",
+                "pid": "PH"
+              },
+              "numerator": 0,
+              "denominator": 0,
+              "value": 0,
+              "unit": "currency",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "paid-order-value-rmb-v2",
+              "metricName": "充值金额",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M008",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "sourceType": "natural",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "",
+              "metricName": "新增用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M020",
+              "businessDate": "2026-10-17",
+              "dimensions": {
+                "sourceType": "natural",
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "unit": "ratio",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "",
+              "observationDate": "2026-10-18",
+              "isMature": true,
+              "metricName": "注册用户D1留存率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2026-10-17",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-20 23:40:02.951",
+          "generatedAt": "2026-10-21T04:24:16.676Z"
+        },
+        {
+          "rows": [
+            {
+              "metricCode": "M008",
+              "businessDate": "2020-01-01",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": 10,
+              "numerator": 10,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "registration-success-v1",
+              "metricName": "新增用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2020-01-01",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M016",
+              "businessDate": "2020-01-01",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 6,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "日活跃用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2020-01-01",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M026",
+              "businessDate": "2020-01-01",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 5,
+              "denominator": 0,
+              "unit": "count",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "user-watch-v1",
+              "metricName": "观影用户数",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2020-01-01",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M058",
+              "businessDate": "2020-01-01",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "numerator": 132,
+              "denominator": 0,
+              "value": 132,
+              "unit": "currency",
+              "dataStatus": "READY",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "paid-order-value-rmb-v2",
+              "metricName": "充值金额",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2020-01-01",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            },
+            {
+              "metricCode": "M090",
+              "businessDate": "2020-01-01",
+              "dimensions": {
+                "pid": "PH"
+              },
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "unit": "ratio",
+              "dataStatus": "SOURCE_INCOMPLETE",
+              "metricVersion": "bi-v1",
+              "ruleVersion": "payment-source-pending-v1",
+              "sourceDiagnostics": [
+                "before_payment_complete_date",
+                "credit_final_failure_mapping_unconfirmed",
+                "credit_rule_version_unconfirmed",
+                "credit_rule_effective_date_unconfirmed"
+              ],
+              "timeoutCount": 0,
+              "lateCreditCount": 0,
+              "metricName": "支付提交-充值到账转化率",
+              "pid": "PH",
+              "firstCompleteBusinessDate": null,
+              "dataCutoffDate": "2020-01-01",
+              "historicalBackfillStartDate": null,
+              "historicalBackfillEndDate": null
+            }
+          ],
+          "watermark": "2026-10-16 15:21:36.778",
+          "generatedAt": "2026-10-21T04:24:17.710Z"
+        }
+      ]
+    }
+  }
+}

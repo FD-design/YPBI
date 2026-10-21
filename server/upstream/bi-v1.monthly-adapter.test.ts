@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readBiV1MonthlyMetricDays } from "./bi-v1.monthly-adapter";
+import { readFileSync } from "node:fs";
+import { projectBiV1MonthlyMetricScope, readBiV1MonthlyMetricDays } from "./bi-v1.monthly-adapter";
+import { normalizeBiV1MetricUnit } from "./bi-v1.metrics-adapter";
+import { monthlyQueryScopes } from "../../contracts/monthly-query-scope";
 import { UpstreamError } from "./client";
 
 const query = { pid: "PH", startDate: "2020-01-01", endDate: "2020-01-31" };
@@ -21,6 +24,20 @@ const payload = (rows: ReturnType<typeof row>[]) => ({
   msg: { metricVersion: "bi-v1", generatedAt: "2026-10-09T10:00:00+08:00", watermark: null, rows }
 });
 const clientFor = (rows: ReturnType<typeof row>[]) => ({ get: async () => payload(rows) });
+
+test("实际异步月活FAILED保留自然月截止日，复用同步单月投影", async () => {
+  const evidence = JSON.parse(readFileSync(new URL("../v2/fixtures/query-jobs-http-20261021.json", import.meta.url), "utf8"));
+  const unit = evidence.result.msg.results[3];
+  const selected = { pid: "PH", startDate: "2026-10-10", endDate: "2026-10-17" };
+  const at = "2026-10-21", scope = monthlyQueryScopes(selected.startDate, selected.endDate, at)[0];
+  const source = normalizeBiV1MetricUnit(unit, { pid: "PH", startDate: scope.queryStart!, endDate: scope.queryEnd!, metricCodes: ["M018"], granularity: "summary" });
+  const projected = projectBiV1MonthlyMetricScope(source, scope, at);
+  expect(projected).toMatchObject({ date: "2026-10-17", queryEnd: "2026-10-20", monthlyMetadata: { month: "2026-10", cutoffDate: "2026-10-20", isComplete: false },
+    metrics: { M018: { state: "source_failure", dataStatus: "FAILED", value: null } } });
+  const sync = await readBiV1MonthlyMetricDays({ get: async () => ({ code: 200, msg: { ...unit, metricVersion: "bi-v1" } }) }, selected, at);
+  expect(sync.days.at(-1)).toEqual(projected);
+  expect(() => projectBiV1MonthlyMetricScope({ ...source, rows: source.rows.map(row => ({ ...row, cutoffDate: "2026-10-17" })) }, scope, at)).toThrow("截止日");
+});
 
 describe("bi-v1 自然月月活读取", () => {
   test("2020年1月独立请求 summary 和排他2月1日，无日期的总体结果只落在月末 anchor", async () => {

@@ -20,11 +20,14 @@ const METADATA_TTL = 60 * 60_000;
 const ACTIVE_BUDGET = 7 * 60_000;
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function principalKey(principal: Principal) {
-  return digest([principal.subjectId, principal.securityVersion ?? null, [...principal.roles].sort(), [...principal.permissions].sort()]);
+  const pidScope = principal.pidScope === "all" ? "all" : [...new Set(principal.pidScope)].sort();
+  return digest([principal.subjectId, principal.securityVersion ?? null, [...principal.roles].sort(), [...principal.permissions].sort(), pidScope]);
 }
 function invalid(): never { throw new BiQueryJobError("QUERY_JOB_RESULT_INVALID", 502, "查询任务结果与授权范围不一致"); }
 function tokens(value: string | undefined) { return value ? [...new Set(value.split(","))].sort() : []; }
 const isRetention = (code: string) => ["M020", "M021", "M022", "M023", "M115"].includes(code);
+const isPlayback = (code: string) => ["M034", "M036", "M097"].includes(code);
+const retentionDays = ["D1", "D3", "D7", "D30"];
 const priorDate = (date: string) => new Date(Date.parse(date) - 86_400_000).toISOString().slice(0, 10);
 function monthlyScope(query: BiQueryJobRequest["queries"][number]["query"], today: string) {
   const scopes = monthlyQueryScopes(query.startDate, priorDate(query.endDate), today);
@@ -32,9 +35,12 @@ function monthlyScope(query: BiQueryJobRequest["queries"][number]["query"], toda
 }
 function validDimensions(dimensions: readonly string[], filters: Record<string, unknown>, codes: string[]) {
   const allDimensions = [...new Set([...dimensions, ...Object.keys(filters)])];
-  return allDimensions.every(key => key === "retentionDay" ? codes.every(isRetention) : biV1MetricDimensionNameSchema.safeParse(key).success)
-    && (filters.retentionDay === undefined || [1, 3, 7, 30].includes(filters.retentionDay as number))
-    && biV1MetricDimensionFilterSchema.safeParse(Object.fromEntries(Object.entries(filters).filter(([key]) => key !== "retentionDay"))).success
+  return allDimensions.every(key => key === "retentionDay" ? codes.every(code => code === "M115")
+    : key === "videoType" ? codes.every(isPlayback) : biV1MetricDimensionNameSchema.safeParse(key).success)
+    && (!codes.some(isPlayback) || allDimensions.every(key => key === "videoType"))
+    && (filters.retentionDay === undefined || retentionDays.includes(filters.retentionDay as string))
+    && (filters.videoType === undefined || typeof filters.videoType === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(filters.videoType))
+    && biV1MetricDimensionFilterSchema.safeParse(Object.fromEntries(Object.entries(filters).filter(([key]) => key !== "retentionDay" && key !== "videoType"))).success
     && (!codes.includes("M115") || allDimensions.includes("retentionDay"));
 }
 function canonical(request: BiQueryJobRequest): BiQueryJobRequest {
@@ -93,7 +99,7 @@ export class BiQueryJobService {
       const filter = query.dimensionFilters ? JSON.parse(query.dimensionFilters) as Record<string, unknown> : {};
       if (!validDimensions(tokens(query.dimensions), filter, codes)) throw new BiQueryJobError("QUERY_JOB_INVALID", 400, "任务维度或筛选尚未接入");
       if (tokens(query.metricCodes).some(code => !biV1MetricCodeSchema.safeParse(code).success)) throw new BiQueryJobError("QUERY_JOB_INVALID", 400, "任务包含未登记的指标");
-      if (query.granularity === "cohort_day" && tokens(query.metricCodes).some(code => !["M020", "M021", "M022", "M023", "M115"].includes(code))) throw new BiQueryJobError("QUERY_JOB_INVALID", 400, "注册批次粒度仅适用于留存指标");
+      if (query.granularity === "cohort_day" && codes.some(code => !isRetention(code))) throw new BiQueryJobError("QUERY_JOB_INVALID", 400, "注册批次粒度仅适用于留存指标");
       if (tokens(query.metricCodes).includes("M018") && (query.metricCodes !== "M018" || query.granularity !== "summary" || !query.startDate.endsWith("-01"))) throw new BiQueryJobError("QUERY_JOB_INVALID", 400, "月活须独立使用自然月查询");
       if (codes.includes("M018") && !monthlyScope(query, toBeijingDate(new Date(this.now()).toISOString()))) throw new BiQueryJobError("QUERY_JOB_INVALID", 400, "月活查询必须匹配独立自然月与统计截止日");
     }
@@ -162,9 +168,6 @@ export class BiQueryJobService {
     const progress = this.progress(binding, result.msg);
     if (result.msg.status !== "SUCCEEDED") return { success: true as const, data: progress };
     const results = result.msg.results.map((unit, index) => {
-      // Coverage/diagnostic shapes are pending the backend's machine-readable contract.
-      // Fail closed instead of silently dropping or forwarding an unbounded diagnostic payload.
-      if (unit.sourceCoverage != null || unit.rows.some(row => row !== null && typeof row === "object" && Reflect.get(row, "sourceDiagnostics") != null)) return invalid();
       const parsed = biQueryJobUnitResultSchema.safeParse(unit);
       if (!parsed.success) return invalid();
       const query = binding.request.queries[index]?.query;
@@ -172,17 +175,24 @@ export class BiQueryJobService {
       const requestedPids = tokens(query.pid), codes = tokens(query.metricCodes);
       const filter = query.dimensionFilters ? JSON.parse(query.dimensionFilters) as Record<string, unknown> : {};
       const requestedDimensions = new Set([...tokens(query.dimensions), ...Object.keys(filter), "pid"]);
+      const coverageKeys = new Set<string>();
+      for (const coverage of parsed.data.sourceCoverage ?? []) {
+        if (!codes.includes(coverage.metricCode) || !requestedPids.includes(coverage.pid)
+          || coverage.businessDate < query.startDate || coverage.businessDate >= query.endDate) return invalid();
+        const identity = digest([coverage.metricCode, coverage.pid, coverage.businessDate]);
+        if (coverageKeys.has(identity)) return invalid();
+        coverageKeys.add(identity);
+      }
       const seen = new Set<string>();
       for (const row of parsed.data.rows) {
         const pid = row.dimensions.pid;
-        if (typeof pid !== "string" || !requestedPids.includes(pid) || row.pid !== undefined && row.pid !== pid || !codes.includes(row.metricCode)) return invalid();
+        if (row.metricVersion !== "bi-v1" || typeof pid !== "string" || !requestedPids.includes(pid)
+          || row.pid !== undefined && row.pid !== pid || !codes.includes(row.metricCode)) return invalid();
         if (row.businessDate !== undefined ? row.businessDate < query.startDate || row.businessDate >= query.endDate : query.granularity !== "summary" && row.dataStatus === "READY") return invalid();
         if (Object.keys(row.dimensions).some(key => !requestedDimensions.has(key))
           || [...requestedDimensions].some(key => !(key in row.dimensions))
           || Object.entries(filter).some(([key, value]) => row.dimensions[key] !== value)) return invalid();
         if (!validDimensions(Object.keys(row.dimensions).filter(key => key !== "pid"), Object.fromEntries(Object.entries(row.dimensions).filter(([key]) => key !== "pid")), [row.metricCode])) return invalid();
-        if (row.retentionDay !== undefined && (!isRetention(row.metricCode) || ![1, 3, 7, 30].includes(row.retentionDay)
-          || row.dimensions.retentionDay !== undefined && row.retentionDay !== row.dimensions.retentionDay)) return invalid();
         if (row.metricCode === "M018") {
           const today = toBeijingDate(new Date(binding.createdAt).toISOString()), scope = monthlyScope(query, today);
           if (!scope) return invalid();

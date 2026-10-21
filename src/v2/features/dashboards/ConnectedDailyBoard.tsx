@@ -19,7 +19,7 @@ function formatValue(value: number | null, unit: string) {
   return `${value.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}${unit}`;
 }
 
-export default function ConnectedDailyBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: Board; platforms: Platforms }) {
+export default function ConnectedDailyBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: Board; platforms: Platforms; operatingAsyncPidGroups?: readonly (readonly string[])[] }) {
   const environment = useDataEnvironment();
   const resource = useV2Resource(JSON.stringify(query), (signal) => fetchDailyDashboard(query, board.metricIds, signal));
   const [range, setRange] = useState({ start: query.dateRange[0], end: query.dateRange[1] });

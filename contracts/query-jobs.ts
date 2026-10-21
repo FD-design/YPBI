@@ -36,25 +36,41 @@ export const biQueryJobStateSchema = z.enum(["QUEUED", "RUNNING", "SUCCEEDED", "
 const count = z.number().int().nonnegative().safe();
 const scalar = z.union([z.string().max(512), z.number().finite(), z.boolean(), z.null()]);
 const dimensions = z.record(z.string().max(64), scalar).refine(value => Object.keys(value).length <= 24);
+const dataStatus = z.enum(["READY", "PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED"]);
+const sourceDiagnosticCodes = new Set([
+  "payment_source_not_verified", "payment_first_complete_date_unconfirmed", "before_payment_complete_date",
+  "credit_sla_unconfirmed", "credit_final_failure_mapping_unconfirmed", "credit_rule_version_unconfirmed",
+  "credit_rule_effective_date_unconfirmed", "before_credit_rule_effective_date",
+  "payment_method_source_not_verified", "payment_method_complete_date_unconfirmed", "before_payment_method_complete_date"
+]);
+const sourceDiagnostic = z.string().min(1).max(128).regex(/^[a-z][a-z0-9_]*$/)
+  .transform(value => sourceDiagnosticCodes.has(value) ? value : "unknown");
+export const biQueryJobSourceCoverageSchema = z.object({
+  metricCode: z.enum(["M034", "M036", "M097"]), pid: z.string().min(1).max(32), businessDate: z.iso.date(),
+  dataStatus,
+  reason: z.enum(["COMPLETE_SOURCE_SCAN", "UNVERIFIED_HISTORICAL_GENERATION", "UNVERIFIED_SOURCE_GENERATION"])
+}).strict();
 
 // Explicit projection: uncontracted errors, payloads and credentials never cross the BI boundary.
 export const biQueryJobRowSchema = z.object({
   metricCode: z.string().regex(/^M\d{3}$/), metricName: z.string().max(256).optional(),
   pid: z.string().max(32).optional(), businessDate: z.iso.date().optional(), dimensions,
   value: z.number().finite().nullable(), numerator: z.number().finite().nullable(), denominator: z.number().finite().nullable(),
-  unit: z.string().max(64), dataStatus: z.enum(["READY", "PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED"]),
+  unit: z.string().max(64), dataStatus,
   metricVersion: z.string().max(128).optional(), ruleVersion: z.string().max(128),
   month: z.string().regex(/^\d{4}-\d{2}$/).optional(), cutoffDate: z.iso.date().optional(), isComplete: z.boolean().optional(),
   mau: z.number().finite().nullable().optional(), observationDate: z.iso.date().optional(), isMature: z.boolean().optional(),
-  retentionDay: count.optional(), uniqueUsers: z.number().finite().nullable().optional(),
+  uniqueUsers: z.number().finite().nullable().optional(),
   timeoutCount: count.optional(), lateCreditCount: count.optional(),
+  sourceDiagnostics: z.array(sourceDiagnostic).max(32).optional(),
   firstCompleteBusinessDate: z.iso.date().nullable().optional(), dataCutoffDate: z.iso.date().nullable().optional(),
-  historicalBackfillStart: z.iso.date().nullable().optional(), historicalBackfillEnd: z.iso.date().nullable().optional()
+  historicalBackfillStartDate: z.iso.date().nullable().optional(), historicalBackfillEndDate: z.iso.date().nullable().optional()
 });
 export const biQueryJobUnitResultSchema = z.object({
   rows: z.array(biQueryJobRowSchema).max(100_000),
   generatedAt: z.iso.datetime({ offset: true }),
-  metricVersion: z.string().max(128).optional(), watermark: z.string().max(128).nullable().optional()
+  metricVersion: z.string().max(128).optional(), watermark: z.string().max(128).nullable().optional(),
+  sourceCoverage: z.array(biQueryJobSourceCoverageSchema).max(3 * 20 * 366).optional()
 });
 export const biQueryJobProgressSchema = z.object({
   handle: biQueryJobHandleSchema, status: biQueryJobStateSchema,

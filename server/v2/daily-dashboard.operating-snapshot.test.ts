@@ -5,6 +5,7 @@ import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API } from "../upstre
 import { BI_V1_METRICS_API } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamError } from "../upstream/client";
 import { CHANNEL_V2_API, DailyDashboardService, dailyDashboardMatchesMapping, PAYMENT_RATE_API } from "./daily-dashboard.service";
+import { createOperatingQueryPlan, normalizeOperatingQueryResults } from "./operating-query-plan";
 
 const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2026-10-05", "2026-10-12"] };
 const snapshotQuery: DailyDashboardQuery = { ...query, projection: "operating_snapshot" };
@@ -87,6 +88,61 @@ function assertProjection(defaultResult: DailyDashboardV2Success, snapshot: Dail
 }
 
 describe("operating snapshot service", () => {
+  for (const mode of ["ready", "legacy", "processing", "incomplete", "missing_scope", "wrong_rule"] as const)
+    test(`async ${mode} shares all 93 values, states, inputs and statistics with synchronous projection`, async () => {
+      const sync = fixture(mode), asyncLegacy = fixture(mode), asyncModern = fixture(mode);
+      const plan = createOperatingQueryPlan([query.pid], query.dateRange, "2026-10-14");
+      const units = await Promise.all(plan.request.queries.map(async ({ query: unit }, index) => {
+        const params = Object.fromEntries(Object.entries(unit).map(([key, value]) => [key, String(value)]));
+        const payload = await asyncModern.client.get(plan.units[index].kind === "playback" ? BI_V1_PLAYBACK_API : BI_V1_METRICS_API, params);
+        const message = payload.msg as { rows: unknown[]; generatedAt: string };
+        return { rows: message.rows, generatedAt: message.generatedAt };
+      }));
+      const source = normalizeOperatingQueryResults(plan, units).get(query.pid)!;
+      const [baseline, result] = await Promise.all([
+        new DailyDashboardService(sync.client, now).execute(snapshotQuery),
+        new DailyDashboardService(asyncLegacy.client, now).executeOperating(snapshotQuery, Promise.resolve(source))
+      ]);
+      expect(result.data.series).toEqual(baseline.data.series);
+      expect(result.data.series).toHaveLength(93);
+      expect(result.data.series.every(series => series.points.map(point => point.date).join() === operatingSnapshotDates(query.dateRange).join())).toBe(true);
+      expect(result.data.watermark).toBeNull();
+      expect(result.data.completeness).toBe("unknown");
+      expect(dailyDashboardMatchesMapping(result)).toBe(true);
+      expect(asyncLegacy.reads.some(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path))).toBe(false);
+    });
+
+  test("legacy reads begin while modern job is pending, and job failure rejects without synchronous fallback", async () => {
+    const base = fixture("ready");
+    let rejectSource!: (reason: unknown) => void;
+    const pending = new Promise<never>((_, reject) => { rejectSource = reject; });
+    const result = new DailyDashboardService(base.client, now).executeOperating(snapshotQuery, pending);
+    await Promise.resolve();
+    expect(base.reads.some(read => read.path.endsWith("pDaySum"))).toBe(true);
+    expect(base.reads.some(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path))).toBe(false);
+    rejectSource(new UpstreamError("QUERY_JOB_FAILED", "任务失败", 502));
+    await expect(result).rejects.toMatchObject({ code: "QUERY_JOB_FAILED" });
+  });
+
+  test("pending modern source can be cancelled without waiting for job completion", async () => {
+    const controller = new AbortController();
+    const result = new DailyDashboardService(fixture("ready").client, now)
+      .executeOperating(snapshotQuery, new Promise(() => {}), controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT" });
+  });
+
+  test("server projection rejects an incompatible board, PID or range binding", async () => {
+    const base = fixture("ready"), service = new DailyDashboardService(base.client, now);
+    const source = { pid: "PH", dateRange: query.dateRange, metricDays: [], playbackDays: [], monthlyDays: [] };
+    await expect(service.executeOperating(query, Promise.resolve(source))).rejects.toMatchObject({ code: "INVALID_DAILY_READING_QUERY" });
+    expect(base.reads).toHaveLength(0);
+    await expect(service.executeOperating(snapshotQuery, Promise.resolve({ ...source, pid: "FBI" })))
+      .rejects.toMatchObject({ code: "BI_V1_SCOPE_CONFLICT" });
+    await expect(service.executeOperating(snapshotQuery, Promise.resolve({ ...source, dateRange: ["2026-10-06", "2026-10-13"] })))
+      .rejects.toMatchObject({ code: "BI_V1_SCOPE_CONFLICT" });
+  });
+
   for (const mode of ["ready", "legacy", "processing", "incomplete", "missing_scope", "scope_conflict", "wrong_rule", "network_failure"] as const)
     test(`${mode} preserves the existing 93 projections at all three observation dates`, async () => {
       const full = fixture(mode), sparse = fixture(mode);

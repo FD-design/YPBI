@@ -88,12 +88,13 @@ function DailyWorkbench({ catalog, platforms }: { catalog: DailyDashboardCatalog
         : !catalog.enabled ? <StatePanel kind="empty" title="当前环境未开启真实看板读取" description="数据源维护仍可正常使用；请联系维护人员开启本地看板读取。" />
         : !platforms.length ? <StatePanel kind="forbidden" title="暂无可访问的平台" description="请联系管理员确认账号的数据范围。" />
         : !valid ? <StatePanel kind="error" title="看板查询条件无效" description="请选择有权限的平台及1至366天的日期范围。" action={{ label: "恢复默认条件", onClick: () => navigate(href(defaultQuery), { replace: true }) }} />
-        : <DailyBoard key={JSON.stringify([query, params.get("compare")])} query={query} board={selected!} platforms={platforms} />}
+        : <DailyBoard key={JSON.stringify([query, params.get("compare")])} query={query} board={selected!} platforms={platforms}
+          operatingAsyncPidGroups={catalog.operatingAsyncEnabled ? catalog.operatingAsyncPidGroups : undefined} />}
     </section>
     {mobile && open && <dialog {...backdrop} ref={dialog} className="dashboard-workbench__mobile-directory" aria-label="选择看板" onCancel={event => { event.preventDefault(); close(); }}>{directory}</dialog>}
   </div>;
 }
 
-function DailyBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: Board; platforms: Platforms }) {
-  return <Suspense fallback={<StatePanel kind="loading" title="正在打开看板" description="正在载入真实数据看板。" />}><ConnectedBoard query={query} board={board} platforms={platforms} /></Suspense>;
+function DailyBoard({ query, board, platforms, operatingAsyncPidGroups }: { query: DailyDashboardQuery; board: Board; platforms: Platforms; operatingAsyncPidGroups?: readonly (readonly string[])[] }) {
+  return <Suspense fallback={<StatePanel kind="loading" title="正在打开看板" description="正在载入真实数据看板。" />}><ConnectedBoard query={query} board={board} platforms={platforms} operatingAsyncPidGroups={operatingAsyncPidGroups} /></Suspense>;
 }

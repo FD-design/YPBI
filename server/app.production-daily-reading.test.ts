@@ -248,6 +248,41 @@ describe("buildApp 正式日看板读取装配", () => {
     expect(existsSync(harness.credentialsFile)).toBe(false);
   });
 
+  test("应用仅为现有测试预览装配经营异步入口，正式flag不越过test门禁", async () => {
+    const harness = await createHarness({ identityProvider: identity(maintainer), env: {
+      BI_TEST_DATA_PREVIEW_ENABLED: true, UPSTREAM_TEST_API_BASE_URL: "https://preview.example.test", UPSTREAM_TEST_USER_NAME: "fake-preview-user"
+    } });
+    const productionCatalog = await harness.request("GET", catalogPath);
+    expect(productionCatalog.json().data.enabled).toBe(true);
+    expect(productionCatalog.json().data.operatingAsyncEnabled).toBe(false);
+    expect(productionCatalog.json().data.operatingAsyncPidGroups).toBeUndefined();
+    const production = await harness.request("POST", "/api/bi/v2/queries/jobs", { kind: "operating-snapshot", pids: ["PH"], date: "2026-10-17" });
+    expect(production.statusCode).toBe(422); expect(production.json().error.code).toBe("QUERY_JOBS_DISABLED");
+    expect(harness.observedRequests).toHaveLength(0);
+    const headers = await activatePreview(harness);
+    const testCatalog = await harness.request("GET", catalogPath, undefined, headers);
+    expect(testCatalog.json().data.operatingAsyncEnabled).toBe(true);
+    expect(testCatalog.json().data.operatingAsyncPidGroups.flat()).toContain("PH");
+    expect(testCatalog.json().data.operatingAsyncPidGroups.flat()).toContain("FBI");
+    // Invalid input reaches the assembled service without issuing any upstream request.
+    for (const payload of [{}, { kind: "operating-snapshot", pids: ["PH"], date: "invalid" }]) {
+      const response = await harness.request("POST", "/api/bi/v2/queries/jobs", payload, headers);
+      expect(response.statusCode).toBe(400); expect(response.json().error.code).toBe("QUERY_JOB_INVALID");
+    }
+    expect(harness.observedRequests).toHaveLength(0);
+    expect(existsSync(harness.credentialsFile)).toBe(false);
+  });
+
+  test("关闭测试预览总开关时异步入口和目录信号同时关闭", async () => {
+    const harness = await createHarness();
+    expect((await harness.request("GET", catalogPath)).json().data.operatingAsyncEnabled).toBe(false);
+    for (const headers of [{}, { "x-ypbi-data-environment": "test" }] as Record<string, string>[]) {
+      const response = await harness.request("POST", "/api/bi/v2/queries/jobs", { kind: "operating-snapshot", pids: ["PH"], date: "2026-10-17" }, headers);
+      expect(response.json().error.code).toBe("x-ypbi-data-environment" in headers ? "DATA_PREVIEW_DISABLED" : "QUERY_JOBS_DISABLED");
+    }
+    expect(harness.observedRequests).toHaveLength(0);
+  });
+
   test("测试会话缺失、更换普通会话或撤销后绝不回退正式读取", async () => {
     const harness = await createHarness({ identityProvider: identity(maintainer), env: {
       BI_TEST_DATA_PREVIEW_ENABLED: true, UPSTREAM_TEST_API_BASE_URL: "https://preview.example.test", UPSTREAM_TEST_USER_NAME: "fake-preview-user"

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { aggregateBiV1MetricDays, biV1MetricCodeSchema, biV1MetricKey, queryBiV1Metrics, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDataStatus, type BiV1MetricDimensionFilters, type BiV1MetricUnit } from "./bi-v1.metrics-adapter";
+import { readFileSync } from "node:fs";
+import { aggregateBiV1MetricDays, biV1MetricCodeSchema, biV1MetricKey, normalizeBiV1MetricUnit, queryBiV1Metrics, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDataStatus, type BiV1MetricDimensionFilters, type BiV1MetricUnit } from "./bi-v1.metrics-adapter";
 import { UpstreamError } from "./client";
 
 const makeRow = (metricCode: BiV1MetricCode, unit: BiV1MetricUnit, value: number | null, numerator: number, denominator: number, dimensions: Record<string, unknown> = {}, dataStatus: BiV1MetricDataStatus = "READY") => ({
@@ -20,6 +21,55 @@ const message = (rows: ReturnType<typeof makeRow>[]) => ({
   generatedAt: "2026-09-22T10:00:00+08:00",
   watermark: "2026-09-22 10:00:00.000",
   rows
+});
+
+describe("异步指标单元复用业务校验", () => {
+  const evidence = JSON.parse(readFileSync(new URL("../v2/fixtures/query-jobs-http-20261021.json", import.meta.url), "utf8"));
+  const scope = { pid: "PH", startDate: "2026-10-17", endDate: "2026-10-17", metricCodes: ["M016", "M026", "M081"] as const };
+
+  test("实际单元按行级版本解析，M081保留交集1/3，不拿M026=2作分子", () => {
+    const normalized = normalizeBiV1MetricUnit(evidence.result.msg.results[0], scope);
+    expect(Object.hasOwn(normalized, "metricVersion")).toBe(false);
+    expect(normalized.generatedAt).toBe(evidence.result.msg.results[0].generatedAt);
+    const values = aggregateBiV1MetricDays(normalized, scope)[0].metrics;
+    expect(values.M026.value).toBe(2);
+    expect(values.M081).toMatchObject({ value: 1 / 3, numerator: 1, denominator: 3, dataStatus: "READY" });
+    const withoutWatermark = { ...evidence.result.msg.results[0] };
+    delete withoutWatermark.watermark;
+    expect(Object.hasOwn(normalizeBiV1MetricUnit(withoutWatermark, scope), "watermark")).toBe(false);
+  });
+
+  test("实际交叉切片、支付诊断、READY零值及历史日期字段保持", () => {
+    const crossScope = { ...scope, dimensions: ["clientPlatform", "userCohort"] as const,
+      dimensionFilters: { clientPlatform: "android", userCohort: "old" } as const };
+    const cross = aggregateBiV1MetricDays(normalizeBiV1MetricUnit(evidence.result.msg.results[1], crossScope), crossScope)[0].metrics;
+    expect(cross["M081|android+old"]).toMatchObject({ value: null, dataStatus: "SOURCE_INCOMPLETE" });
+    const payment = normalizeBiV1MetricUnit(evidence.result.msg.results[2], { ...scope, metricCodes: ["M090"] });
+    expect(payment.rows[0].sourceDiagnostics).toEqual(evidence.result.msg.results[2].rows[0].sourceDiagnostics);
+    const zeroScope = { ...scope, startDate: "2026-10-20", endDate: "2026-10-20" };
+    expect(aggregateBiV1MetricDays(normalizeBiV1MetricUnit(evidence.extraResult.msg.results[1], zeroScope), zeroScope)[0].metrics.M081)
+      .toMatchObject({ dataStatus: "READY", state: "available", value: 0 });
+    const historical = normalizeBiV1MetricUnit(evidence.extraResult.msg.results[3], {
+      ...scope, startDate: "2020-01-01", endDate: "2020-01-01", metricCodes: ["M008", "M016", "M026", "M058", "M090"]
+    });
+    expect(historical.rows.map(row => row.historicalBackfillStartDate)).toEqual(evidence.extraResult.msg.results[3].rows.map((row: Record<string, unknown>) => row.historicalBackfillStartDate));
+  });
+
+  test("异步与同步共用精确切片过滤及范围优先检查", async () => {
+    const unit = evidence.result.msg.results[0];
+    const base = structuredClone(unit.rows[0]);
+    const rows = [...unit.rows, { ...base, value: "invalid", dimensions: { pid: "PH", userCohort: "new" } }];
+    const asyncResult = normalizeBiV1MetricUnit({ ...unit, rows }, scope);
+    const syncResult = await queryBiV1Metrics({ get: async () => ({ code: 200, msg: { ...unit, metricVersion: "bi-v1", rows } }) }, scope);
+    expect(aggregateBiV1MetricDays(asyncResult, scope)).toEqual(aggregateBiV1MetricDays(syncResult, scope));
+    for (const mutation of [
+      { ...base, dimensions: { pid: "TT", userCohort: "new" } },
+      { ...base, businessDate: "2026-10-18" }, { ...base, pid: "TT" }, { ...base, metricCode: "M008" }
+    ]) expect(() => normalizeBiV1MetricUnit({ ...unit, rows: [mutation] }, scope)).toThrow("请求");
+    for (const mutation of [{ ...base, metricVersion: "bi-v2" }, { ...base, metricVersion: undefined }, { ...base, numerator: null }]) {
+      expect(() => normalizeBiV1MetricUnit({ ...unit, rows: [mutation] }, scope)).toThrow();
+    }
+  });
 });
 
 describe("指标键顺序与按日隔离", () => {

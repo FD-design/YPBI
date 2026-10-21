@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { Principal } from "../identity/identity-provider";
-import type { QueryJobContext, QueryJobCreateRequest, QueryJobResult, QueryJobStatus } from "../upstream/query-jobs";
+import { queryJobCreateRequestSchema, queryJobResultSchema, type QueryJobContext, type QueryJobCreateRequest, type QueryJobResult, type QueryJobStatus } from "../upstream/query-jobs";
 import { BiQueryJobService } from "./query-jobs.service";
 import { getEnabledPlatformByPid } from "../platforms/registry";
 import { biQueryJobResultSchema } from "../../contracts/query-jobs";
@@ -26,6 +27,19 @@ function fixture() {
   return { service, port, requests, counts: () => ({ created, states, resultsRead }),
     setTime: (value: number) => { time = value; }, rotate: () => { sourceVersion += "x"; }, testMode: () => { environment = "test"; },
     rows: (value: unknown[]) => { resultRows = value; }, task: (value: string) => { taskId = value; }, state: (value: typeof status) => { status = value; }, extra: (value: Record<string, unknown>) => { extra = value; } };
+}
+
+const deployedEvidence = JSON.parse(readFileSync(new URL("./fixtures/query-jobs-http-20261021.json", import.meta.url), "utf8"));
+function deployedFixture(indices = [0, 1, 2, 3, 4, 5, 6, 7], extra = false) {
+  const requests = queryJobCreateRequestSchema.parse(extra ? deployedEvidence.extraRequest : deployedEvidence.request);
+  const response = queryJobResultSchema.parse(extra ? deployedEvidence.extraResult : deployedEvidence.result);
+  if (response.msg.status !== "SUCCEEDED") throw new Error("Successful deployed fixture required");
+  const succeeded = response.msg;
+  const message = { ...succeeded, totalUnits: indices.length, completedUnits: indices.length,
+    results: indices.map(index => structuredClone(succeeded.results[index])) };
+  const f = fixture(); f.testMode(); f.task(message.taskId);
+  const service = new BiQueryJobService({ ...f.port, result: async () => ({ code: 200, msg: message }) }, () => Date.parse(deployedEvidence.capturedAt));
+  return { service, message, request: { queries: indices.map(index => ({ query: requests.queries[index].query })) } };
 }
 
 describe("BI任务访问绑定与范围", () => {
@@ -56,10 +70,17 @@ describe("BI任务访问绑定与范围", () => {
   });
   test("每次重新检查PID授权，角色或安全版本变化使绑定失效", async () => {
     const f = fixture(), created = await f.service.create(principal(), body());
-    await expect(f.service.status(principal("fixture-user", ["FBI"]), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_FORBIDDEN" });
+    await expect(f.service.status(principal("fixture-user", ["FBI"]), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_NOT_FOUND" });
     await expect(f.service.result({ ...principal(), securityVersion: "r2" }, created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_NOT_FOUND" });
     await expect(f.service.status({ ...principal(), roles: ["maintainer"] }, created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_NOT_FOUND" });
     expect(f.counts().states).toBe(0);
+  });
+  test("PID权限收窄即使保留本次PID也使旧绑定失效，相同集合重排不失效", async () => {
+    const f = fixture(), owner = principal("fixture-user", ["PH", "FBI"]);
+    const created = await f.service.create(owner, body());
+    expect((await f.service.status(principal("fixture-user", ["FBI", "PH", "PH"]), created.data.handle)).success).toBe(true);
+    await expect(f.service.status(principal("fixture-user", ["PH"]), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_NOT_FOUND" });
+    expect(f.counts().states).toBe(1);
   });
   for (const change of ["rotate", "testMode"] as const) test(`${change}后旧任务不跨来源读取`, async () => {
     const f = fixture(), created = await f.service.create(principal(), body());
@@ -169,6 +190,112 @@ describe("BI任务访问绑定与范围", () => {
     await expect(f.service.create(principal(), invalid)).rejects.toMatchObject({ code: "QUERY_JOB_INVALID" });
     invalid.queries[0].query.endDate = "2020-01-01";
     await expect(f.service.create(principal(), invalid)).rejects.toMatchObject({ code: "QUERY_JOB_INVALID" });
+  });
+});
+
+describe("2026-10-21部署返回契约", () => {
+  test("真实8单元按原顺序交付，行级版本、历史日期、诊断与自然月元数据完整保留", async () => {
+    const f = deployedFixture(), created = await f.service.create(principal(), f.request);
+    const result = await f.service.result(principal(), created.data.handle);
+    expect(result.data).toMatchObject({ status: "SUCCEEDED", results: f.message.results });
+    expect(biQueryJobResultSchema.safeParse(result).success).toBe(true);
+    if (!("results" in result.data)) throw new Error("Results required");
+    expect(f.message.results).toEqual(result.data.results);
+    expect(result.data.results[0]).not.toHaveProperty("metricVersion");
+    expect(result.data.results[2]).not.toHaveProperty("watermark");
+    expect(result.data.results[5].rows[0]).not.toHaveProperty("businessDate");
+    expect(result.data.results[3].rows[0]).toMatchObject({ businessDate: "2026-10-20", cutoffDate: "2026-10-20", isComplete: false, dataStatus: "FAILED", value: null });
+    expect(result.data.results[4].sourceCoverage?.[0].dataStatus).toBe("READY");
+    expect(result.data.results[4].rows[0]).toMatchObject({ dataStatus: "SOURCE_INCOMPLETE", value: null, numerator: 4 });
+    expect(result.data.results[7].rows[0].dimensions.retentionDay).toBe("D1");
+  });
+
+  test("行顺序与metricCodes不同仍按范围校验，真实READY零比率保留0/3", async () => {
+    const f = deployedFixture([1], true), created = await f.service.create(principal(), f.request);
+    f.message.results[0].rows.reverse();
+    const result = await f.service.result(principal(), created.data.handle);
+    if (!("results" in result.data)) throw new Error("Results required");
+    expect(f.message.results).toEqual(result.data.results);
+    expect(result.data.results[0].rows[0]).toMatchObject({ metricCode: "M081", value: 0, numerator: 0, denominator: 3, dataStatus: "READY" });
+  });
+
+  test("空播放rows保留扫描覆盖而不补造分组", async () => {
+    const f = deployedFixture([4]), created = await f.service.create(principal(), f.request);
+    f.message.results[0].rows = [];
+    expect((await f.service.result(principal(), created.data.handle)).data).toMatchObject({ results: [{ rows: [], sourceCoverage: f.message.results[0].sourceCoverage }] });
+  });
+
+  for (const change of [
+    { pid: "FBI" }, { metricCode: "M016" }, { businessDate: "2026-10-18" },
+    { reason: "uncontracted_raw_reason" }, { dataStatus: "UNKNOWN" }, { token: "not-for-browser" }
+  ]) test(`覆盖证明拒绝范围或形状漂移 ${JSON.stringify(change)}`, async () => {
+    const f = deployedFixture([4]), created = await f.service.create(principal(), f.request);
+    const coverage = f.message.results[0].sourceCoverage as Record<string, unknown>[];
+    coverage[0] = { ...coverage[0], ...change };
+    await expect(f.service.result(principal(), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_RESULT_INVALID" });
+  });
+
+  test("覆盖证明拒绝重复与超量条目，不通过空rows绕过范围", async () => {
+    const f = deployedFixture([4]), created = await f.service.create(principal(), f.request);
+    const unit = f.message.results[0], coverage = unit.sourceCoverage as Record<string, unknown>[];
+    unit.rows = []; coverage.push({ ...coverage[0] });
+    await expect(f.service.result(principal(), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_RESULT_INVALID" });
+    unit.sourceCoverage = Array(3 * 20 * 366 + 1).fill(coverage[0]);
+    await expect(f.service.result(principal(), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_RESULT_INVALID" });
+  });
+
+  test("来源诊断只输出已知代码，未知代码仅输出unknown", async () => {
+    const f = deployedFixture([2]), created = await f.service.create(principal(), f.request);
+    const row = f.message.results[0].rows[0] as Record<string, unknown>;
+    row.sourceDiagnostics = ["credit_final_failure_mapping_unconfirmed", "private_account_secret"];
+    const result = await f.service.result(principal(), created.data.handle);
+    expect(result.data).toMatchObject({ results: [{ rows: [{ sourceDiagnostics: ["credit_final_failure_mapping_unconfirmed", "unknown"] }] }] });
+    expect(JSON.stringify(result)).not.toContain("private_account_secret");
+    row.sourceDiagnostics = [];
+    expect((await f.service.result(principal(), created.data.handle)).data).toMatchObject({ results: [{ rows: [{ sourceDiagnostics: [], dataStatus: "SOURCE_INCOMPLETE", value: null }] }] });
+  });
+
+  for (const diagnostics of [{ raw: "private" }, ["SQL select private"], ["x".repeat(129)], Array(33).fill("credit_sla_unconfirmed")]) test("拒绝非代码、非数组及越界诊断", async () => {
+    const f = deployedFixture([2]), created = await f.service.create(principal(), f.request);
+    (f.message.results[0].rows[0] as Record<string, unknown>).sourceDiagnostics = diagnostics;
+    await expect(f.service.result(principal(), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_RESULT_INVALID" });
+  });
+
+  for (const version of [undefined, "bi-v2"]) test(`每行版本必须匹配已接入bi-v1：${version}`, async () => {
+    const f = deployedFixture([0]), created = await f.service.create(principal(), f.request);
+    (f.message.results[0].rows[0] as Record<string, unknown>).metricVersion = version;
+    await expect(f.service.result(principal(), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_RESULT_INVALID" });
+  });
+
+  for (const period of ["D1", "D3", "D7", "D30"]) test(`M115独立${period}窗口，回显不能混用另一窗口`, async () => {
+    const f = deployedFixture([7]);
+    f.request.queries[0].query.dimensionFilters = JSON.stringify({ retentionDay: period });
+    const row = f.message.results[0].rows[0] as Record<string, unknown>;
+    row.dimensions = { pid: "PH", retentionDay: period };
+    const created = await f.service.create(principal(), f.request);
+    expect((await f.service.result(principal(), created.data.handle)).success).toBe(true);
+    row.dimensions = { pid: "PH", retentionDay: period === "D1" ? "D3" : "D1" };
+    await expect(f.service.result(principal(), created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_RESULT_INVALID" });
+  });
+
+  for (const [metrics, dimension, value] of [
+    ["M115", "retentionDay", 1], ["M020", "retentionDay", "D1"], ["M020,M115", "retentionDay", "D1"],
+    ["M016", "videoType", "long_video"], ["M016,M034", "videoType", "long_video"],
+    ["M034", "clientPlatform", "android"]
+  ] as const) test(`专属维度按指标准入 ${metrics}/${dimension}/${value}`, async () => {
+    const f = fixture(), request = body("PH", metrics);
+    request.queries[0].query.dimensions = dimension;
+    request.queries[0].query.dimensionFilters = JSON.stringify({ [dimension]: value });
+    await expect(f.service.create(principal(), request)).rejects.toMatchObject({ code: "QUERY_JOB_INVALID" });
+    expect(f.counts().created).toBe(0);
+  });
+
+  test("worker新attempt允许completedUnits重置，保持实际进度", async () => {
+    const f = fixture(), created = await f.service.create(principal(), body());
+    f.extra({ attempts: 1, completedUnits: 1 });
+    expect((await f.service.status(principal(), created.data.handle)).data).toMatchObject({ attempts: 1, completedUnits: 1 });
+    f.extra({ attempts: 2, completedUnits: 0 });
+    expect((await f.service.status(principal(), created.data.handle)).data).toMatchObject({ attempts: 2, completedUnits: 0 });
   });
 });
 

@@ -31,7 +31,9 @@ const boardSchema = z.object({
   metricIds: z.array(z.string()), pendingMetricNames: z.array(z.string())
 }).strict();
 export const dailyDashboardCatalogSchema = z.object({ success: z.literal(true), data: z.object({
-  enabled: z.boolean(), categories: z.array(z.string()), items: z.array(boardSchema)
+  enabled: z.boolean(), categories: z.array(z.string()), items: z.array(boardSchema),
+  operatingAsyncEnabled: z.boolean().optional(),
+  operatingAsyncPidGroups: z.array(z.array(z.string().min(1).max(32)).min(1).max(20)).max(256).optional()
 }).strict() }).strict();
 export type DailyDashboardCatalog = z.infer<typeof dailyDashboardCatalogSchema>["data"];
 export const dailyPointSchema = z.object({

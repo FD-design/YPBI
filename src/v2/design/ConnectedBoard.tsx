@@ -66,7 +66,7 @@ export function connectedBoardExportSheets(live: LiveDashboardReading): Workbook
   ];
 }
 
-export default function ConnectedBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: DailyDashboardCatalog["items"][number]; platforms: V2PlatformCatalogSuccess["data"]["items"] }) {
+export default function ConnectedBoard({ query, board, platforms, operatingAsyncPidGroups }: { query: DailyDashboardQuery; board: DailyDashboardCatalog["items"][number]; platforms: V2PlatformCatalogSuccess["data"]["items"]; operatingAsyncPidGroups?: readonly (readonly string[])[] }) {
   const location = useBrowserLocation();
   const compared = new URLSearchParams(location.search).get("compare") === "previous";
   const previousQuery = previousDailyQuery(query);
@@ -95,7 +95,7 @@ export default function ConnectedBoard({ query, board, platforms }: { query: Dai
   const readingState: V2ResourceState<DailyDashboardSuccess> = state.status === "success"
     ? state.data ? { ...state, data: state.data } : { status: "loading" } : state;
   const reading: LiveDashboardReading = { query, metricIds: board.metricIds, state: readingState, dataEnvironment: readingState.status === "success" ? dailyDashboardEnvironment(readingState.data) : undefined, platformName: platforms.find(item => item.pid === query.pid)!.name,
-    platforms, controls: {
+    platforms, operatingAsyncPidGroups, controls: {
       date: <DateRangePicker value={range} onChange={setRange} today={today} maxDate={today} maxDays={366} boundaryLabel="可选择日期截至" />,
       scope: <MenuSelect className="dashboard-query__live-scope" label="平台" ariaLabel="选择平台" value={pid} density="compact" searchable groups={[{ label: "授权平台", options: platforms.map(item => ({ value: item.pid, label: item.name })) }]} onChange={setPid} />,
       comparison: <MenuSelect className="dashboard-query__live-comparison" label="对比周期" ariaLabel="对比周期" value={comparison} density="compact" groups={[{ label: "同口径对比", options: [{ value: "previous", label: "上一等长周期" }, { value: "none", label: "不对比" }] }]} onChange={setComparison} />,
