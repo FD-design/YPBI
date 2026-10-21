@@ -58,6 +58,7 @@ async function installMaintenanceFixtures(page, options = {}) {
   let previewExpiresAt = options.previewExpiresAt ?? "2099-09-08T01:30:00.000Z";
   let statusFailure = false;
   let statusGate = null;
+  let statusGatePath = null;
   let rejectNextActionWith401 = false;
   let loginAttempts = 0;
   const requests = [];
@@ -80,8 +81,8 @@ async function installMaintenanceFixtures(page, options = {}) {
     const isStatus = url.pathname.endsWith("/status");
     const returnedPreview = { enabled: options.previewEnabled ?? true, active: previewActive,
       userName: (options.previewEnabled ?? true) ? "fake-test-user" : null, expiresAt: previewActive ? previewExpiresAt : null };
-    if (isStatus && statusGate) await statusGate;
-    if (isStatus && statusFailure) return route.fulfill({ status: 503, json: { success: false, error: { code: "ADMIN_STATUS_UNAVAILABLE", message: "隔离状态检查暂不可用" } } });
+    if (isStatus && statusGate && (!statusGatePath || url.pathname === statusGatePath)) await statusGate;
+    if (isStatus && statusFailure) return route.fulfill({ status: 503, json: { success: false, error: { code: "ADMIN_STATUS_UNAVAILABLE", message: options.statusFailureMessage ?? "隔离状态检查暂不可用", requestId: "qa-admin-status-unavailable" } } });
 
     if (url.pathname.endsWith("/auth/login")) {
       loginAttempts += 1;
@@ -162,10 +163,11 @@ async function installMaintenanceFixtures(page, options = {}) {
     setPreviewActive(value) { previewActive = value; },
     setPreviewExpiresAt(value) { previewExpiresAt = value; },
     setStatusFailure(value) { statusFailure = value; },
-    holdStatus() {
+    holdStatus(pathname = null) {
       let release;
+      statusGatePath = pathname;
       statusGate = new Promise(resolve => { release = resolve; });
-      return () => { statusGate = null; release(); };
+      return () => { statusGate = null; statusGatePath = null; release(); };
     },
     expireOnNextAction() { rejectNextActionWith401 = true; }
   };
@@ -386,6 +388,8 @@ test("前台事件单飞，检查失败显示待确认而非成功且不丢测�
     fixture.setStatusFailure(true); release();
     await expect(preview).toContainText("状态待确认");
     await expect(preview).toContainText("暂时无法确认测试数据会话");
+    await expect(preview).toContainText("错误代码：ADMIN_STATUS_UNAVAILABLE");
+    await expect(preview).toContainText("请求 ID：qa-admin-status-unavailable");
     await expect(preview).not.toHaveClass(/is-active/);
     await expect(token).toHaveValue("fake-preview-draft-preserved");
     fixture.setStatusFailure(false); await foregroundEvents(page);
@@ -394,6 +398,86 @@ test("前台事件单飞，检查失败显示待确认而非成功且不丢测�
     expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
   } finally { release(); }
 });
+
+test("已有测试会话待确认后可原位重检，双击只发一次且两项新状态成功后才进入", async ({ page }, info) => {
+  const internalMessage = "fake-preview-internal-error-detail";
+  const fixture = await installMaintenanceFixtures(page, { authorized: true, previewActive: true, statusFailureMessage: internalMessage });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  const enter = preview.getByRole("button", { name: "进入测试数据", exact: true });
+  await expect(enter).toBeEnabled();
+  const drafts = page.locator(".v2-source-card").getByLabel("候选 Token");
+  await drafts.nth(0).fill("fake-primary-draft-preserved");
+  fixture.setStatusFailure(true);
+  await enter.click();
+  await expect(preview).toContainText("状态待确认");
+  await expect(preview).toContainText("错误代码：ADMIN_STATUS_UNAVAILABLE");
+  await expect(preview).toContainText("请求 ID：qa-admin-status-unavailable");
+  await expect(preview).not.toContainText(internalMessage);
+  await expect(enter).toBeEnabled();
+  await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
+  await page.screenshot({ path: info.outputPath("existing-preview-unknown-retry.png"), fullPage: true });
+
+  fixture.setStatusFailure(false);
+  const before = fixture.requests.length;
+  const release = fixture.holdStatus("/api/bi/admin/data-sources/status");
+  try {
+    const previewReturned = page.waitForResponse(response => new URL(response.url()).pathname === "/api/bi/admin/data-preview/status" && response.status() === 200);
+    await enter.evaluate(button => { button.click(); button.click(); });
+    await previewReturned;
+    await expect.poll(() => fixture.requests.length).toBe(before + 2);
+    await expect(preview).toContainText("正在确认");
+    await expect(enter).toBeDisabled();
+    await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
+    await expect(drafts.nth(0)).toHaveValue("fake-primary-draft-preserved");
+    expect(fixture.requests.slice(before).map(request => request.pathname).sort()).toEqual([
+      "/api/bi/admin/data-preview/status", "/api/bi/admin/data-sources/status"
+    ]);
+    release();
+    await expect(preview.getByText("当前页面数据环境", { exact: true }).locator("..")).toContainText("测试数据");
+    await expect(preview).not.toContainText("状态待确认");
+    await expect(preview).not.toContainText("错误代码：");
+    await expect(preview).not.toContainText("请求 ID：");
+    expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
+    await page.screenshot({ path: info.outputPath("existing-preview-retry-confirmed.png"), fullPage: true });
+  } finally { release(); }
+});
+
+for (const outcome of ["unavailable", "inactive", "expired", "login_required"]) {
+  test(`已有测试会话待确认后重检${outcome}不能用缓存状态进入`, async ({ page }) => {
+    const fixture = await installMaintenanceFixtures(page, { authorized: true, previewActive: true });
+    await page.goto(`${baseUrl}/admin/data-sources`);
+    const preview = page.getByRole("region", { name: "临时测试数据" });
+    const enter = preview.getByRole("button", { name: "进入测试数据", exact: true });
+    await expect(enter).toBeEnabled();
+    fixture.setStatusFailure(true);
+    await enter.click();
+    await expect(preview).toContainText("状态待确认");
+    await expect(enter).toBeEnabled();
+    fixture.setStatusFailure(outcome === "unavailable");
+    if (outcome === "inactive") fixture.setPreviewActive(false);
+    if (outcome === "expired") fixture.setPreviewExpiresAt("2000-01-01T00:00:00.000Z");
+    if (outcome === "login_required") fixture.expireOnNextAction();
+    const before = fixture.requests.length;
+    await enter.click();
+    await expect.poll(() => fixture.requests.length).toBe(before + 2);
+    if (outcome === "unavailable") {
+      await expect(preview).toContainText("状态待确认");
+      await expect(preview).toContainText("未切换数据环境");
+      await expect(enter).toBeEnabled();
+    } else if (outcome === "login_required") {
+      await expect(page.getByRole("heading", { name: "进入受保护配置" })).toBeVisible();
+      await expect(preview).toHaveCount(0);
+    } else {
+      await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
+      await expect(enter).toHaveCount(0);
+      await expect(preview.getByLabel("测试 Token")).toBeVisible();
+    }
+    await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
+    expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
+    expect(await page.evaluate(() => sessionStorage.getItem("ypbi.data-environment.v1:00000000-0000-4000-8000-000000000001"))).not.toBe("test");
+  });
+}
 
 for (const action of ["current", "candidate", "save"]) {
   test(`维护操作取消只读检查后补充复核-${action}`, async ({ page }) => {

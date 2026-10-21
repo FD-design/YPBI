@@ -163,7 +163,7 @@ export function DataSourceMaintenancePage() {
   const [pageError, setPageError] = useState<AdminRequestError | null>(null);
   const [confirmingSite, setConfirmingSite] = useState<CredentialSite | null>(null);
   const [previewToken, setPreviewToken] = useState("");
-  const [previewNotice, setPreviewNotice] = useState<{ tone: "neutral" | "pending" | "success" | "danger"; message: string }>({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" });
+  const [previewNotice, setPreviewNotice] = useState<SiteNotice>({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" });
   const [previewVerification, setPreviewVerification] = useState<"confirmed" | "checking" | "unknown">("checking");
   const statusGeneration = useRef(0);
   const statusController = useRef<AbortController | null>(null);
@@ -267,7 +267,7 @@ export function DataSourceMaintenancePage() {
     void loadStatus().catch(error => {
       const problem = asAdminError(error, "暂时无法确认测试数据会话");
       if (["login_required", "disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) handleAccessError(problem);
-      else setPreviewNotice({ tone: "danger", message: "暂时无法确认测试数据会话；当前状态待确认，请恢复网络后重新检查" });
+      else setPreviewNotice({ tone: "danger", message: "暂时无法确认测试数据会话；当前状态待确认，请恢复网络后重新检查", code: problem.code, requestId: problem.requestId });
     });
   };
 
@@ -494,7 +494,7 @@ export function DataSourceMaintenancePage() {
     } catch (error) {
       const problem = asAdminError(error, "暂时无法确认测试数据会话");
       if (["login_required", "disabled", "insecure", "proxy_misconfigured"].includes(problem.kind)) handleAccessError(problem);
-      else setPreviewNotice({ tone: "danger", message: "暂时无法确认测试数据会话，未切换数据环境" });
+      else setPreviewNotice({ tone: "danger", message: "暂时无法确认测试数据会话，未切换数据环境", code: problem.code, requestId: problem.requestId });
     } finally { finishOperation(); }
   };
 
@@ -622,10 +622,10 @@ export function DataSourceMaintenancePage() {
         </dl>
         <div className={`v2-probe-status is-${previewNotice.tone}`} role={previewNotice.tone === "danger" ? "alert" : "status"} aria-live="polite">
           {previewNotice.tone === "pending" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : previewNotice.tone === "success" ? <CheckCircle2 aria-hidden="true" /> : previewNotice.tone === "danger" ? <AlertTriangle aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
-          <span><b>环境隔离</b>{previewNotice.message}</span>
+          <span><b>环境隔离</b>{previewNotice.message}{(previewNotice.code || previewNotice.requestId) && <small>{previewNotice.code && `错误代码：${previewNotice.code}`}{previewNotice.code && previewNotice.requestId && "；"}{previewNotice.requestId && `请求 ID：${previewNotice.requestId}`}</small>}</span>
         </div>
         {access.preview.active ? <div className="v2-preview-source__actions">
-          {dataEnvironment.state.mode !== "test" && <button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={enterExistingPreview} disabled={busy || displayedVerification !== "confirmed"}>进入测试数据</button>}
+          {dataEnvironment.state.mode !== "test" && <button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={enterExistingPreview} disabled={busy || displayedVerification === "checking"}>进入测试数据</button>}
           <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={deactivatePreview} disabled={busy}>{operation.kind === "preview_deactivate" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <LogOut aria-hidden="true" />}{operation.kind === "preview_deactivate" ? "正在退出" : "结束测试会话"}</button>
         </div> : <div className="v2-token-editor">
           <label htmlFor="preview-token"><span>测试 Token</span><input id="preview-token" type="password" autoComplete="off" data-1p-ignore="true" data-lpignore="true" autoCapitalize="none" spellCheck={false} minLength={16} maxLength={4096} placeholder="粘贴测试后台 Token" value={previewToken} onChange={(event) => { setPreviewToken(event.target.value); setPreviewNotice({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" }); }} disabled={busy} /></label>
