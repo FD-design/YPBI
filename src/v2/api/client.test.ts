@@ -10,7 +10,8 @@ import {
   type V2MetricQuery,
   type V2MetricQuerySuccess
 } from "../../../contracts/bi-v2";
-import { fetchDataEnvironment, queryCoreOverview, queryMetric, V2RequestError } from "./client";
+import { fetchDataEnvironment, parseResponse, queryCoreOverview, queryMetric, V2RequestError } from "./client";
+import * as v2Client from "./client";
 import { initializeDataEnvironmentPreference, setDataEnvironmentPreference } from "./dataEnvironmentPreference";
 import { V2_AUTHENTICATION_REQUIRED_EVENT } from "./authEvents";
 
@@ -116,6 +117,59 @@ function authenticationNotifications() {
 }
 const authenticationProblem = { success: false, error: { code: "AUTHENTICATION_REQUIRED", message: "需要登录", requestId: "in-memory-auth" } };
 const productionEnvironment = { success: true, data: { mode: "production", testAvailable: true, expiresAt: null, userName: null } };
+
+describe("V2安全请求诊断", () => {
+  const rejection = { code: "QUERY_JOB_UPSTREAM_REJECTED", message: "固定拒绝提示", requestId: "qa-job-rejected" };
+
+  test("解析保留BI HTTP400与上游HTTP200及业务400的独立含义", async () => {
+    const response = Response.json({ success: false, error: { ...rejection, upstreamBusinessCode: 400, upstreamHttpStatus: 200 } }, { status: 400 });
+    const failure = await parseResponse(response, v2MetricQuerySuccessSchema).catch(error => error);
+    expect(failure).toBeInstanceOf(V2RequestError);
+    expect(failure).toMatchObject({ status: 400, code: rejection.code, requestId: rejection.requestId, upstreamBusinessCode: 400, upstreamHttpStatus: 200 });
+  });
+
+  test("缺省诊断不从BI状态或错误文本制造上游数值", async () => {
+    const response = Response.json({ success: false, error: { ...rejection, message: "HTTP200 code400" } }, { status: 400 });
+    const failure = await parseResponse(response, v2MetricQuerySuccessSchema).catch(error => error);
+    expect(failure.upstreamBusinessCode).toBeUndefined();
+    expect(failure.upstreamHttpStatus).toBeUndefined();
+    expect(v2Client.readV2RequestDiagnostics(failure)).toEqual({ code: rejection.code, requestId: rejection.requestId });
+  });
+
+  test("非法数值类型或范围使整个错误响应失败关闭", async () => {
+    for (const invalid of [
+      { upstreamBusinessCode: "400" }, { upstreamBusinessCode: 400.5 }, { upstreamBusinessCode: null },
+      { upstreamHttpStatus: "200" }, { upstreamHttpStatus: 200.5 }, { upstreamHttpStatus: 99 }, { upstreamHttpStatus: 600 }, { upstreamHttpStatus: null }
+    ]) {
+      const failure = await parseResponse(Response.json({ success: false, error: { ...rejection, ...invalid } }, { status: 400 }), v2MetricQuerySuccessSchema).catch(error => error);
+      expect(failure).toMatchObject({ code: "INVALID_V2_RESPONSE", status: 400 });
+      expect(failure.upstreamBusinessCode).toBeUndefined();
+      expect(failure.upstreamHttpStatus).toBeUndefined();
+    }
+  });
+
+  test("白名单仅返回四项诊断，保留合法0业务码和HTTP边界且不改写来源", () => {
+    for (const upstreamHttpStatus of [100, 200, 599]) {
+      const source = Object.freeze({ code: rejection.code, requestId: rejection.requestId, upstreamBusinessCode: 0, upstreamHttpStatus,
+        message: "fake-secret-error-message", token: "fake-secret-token", status: 400, extra: "ignored" });
+      expect(v2Client.readV2RequestDiagnostics(source)).toEqual({ code: rejection.code, requestId: rejection.requestId, upstreamBusinessCode: 0, upstreamHttpStatus });
+      expect(source.message).toBe("fake-secret-error-message");
+    }
+  });
+
+  test("白名单不转型，不接空字符串、非有限整数或非法HTTP状态", () => {
+    for (const value of [undefined, null, "400", "", true, {}, [], new Number(400), NaN, Infinity, -Infinity, 400.5]) {
+      expect(v2Client.readV2RequestDiagnostics({ upstreamBusinessCode: value, upstreamHttpStatus: value })).toEqual({});
+    }
+    for (const value of [0, 99, 600, -200]) expect(v2Client.readV2RequestDiagnostics({ upstreamHttpStatus: value })).toEqual({});
+    for (const value of [undefined, null, "", " \n\t ", 400, true, {}, []]) {
+      expect(v2Client.readV2RequestDiagnostics({ code: value, requestId: value, message: "ignored" })).toEqual({});
+    }
+    for (const value of [undefined, null, "error", 400, true, []]) expect(v2Client.readV2RequestDiagnostics(value)).toEqual({});
+    expect(v2Client.readV2RequestDiagnostics({ code: "QUERY_JOB_UPSTREAM_REJECTED", upstreamBusinessCode: 400, upstreamHttpStatus: "200" }))
+      .toEqual({ code: "QUERY_JOB_UPSTREAM_REJECTED", upstreamBusinessCode: 400 });
+  });
+});
 
 describe("V2读取取消边界", () => {
   test("响应刚兑现后取消不发送全局认证失效事件", async () => {

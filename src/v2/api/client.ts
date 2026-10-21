@@ -25,19 +25,45 @@ const dailyReadingWorkQueue = new DailyReadingWorkQueue();
 
 export type V2FailureKind = "identity_unavailable" | "unauthenticated" | "forbidden" | "error";
 
+export interface V2RequestDiagnostics {
+  code?: string;
+  requestId?: string;
+  upstreamBusinessCode?: number;
+  upstreamHttpStatus?: number;
+}
+
+export function readV2RequestDiagnostics(source: unknown): V2RequestDiagnostics {
+  if (source === null || typeof source !== "object" || Array.isArray(source)) return {};
+  const candidate = source as Record<string, unknown>;
+  const diagnostics: V2RequestDiagnostics = {};
+  if (typeof candidate.code === "string" && candidate.code.trim().length > 0) diagnostics.code = candidate.code;
+  if (typeof candidate.requestId === "string" && candidate.requestId.trim().length > 0) diagnostics.requestId = candidate.requestId;
+  if (typeof candidate.upstreamBusinessCode === "number" && Number.isFinite(candidate.upstreamBusinessCode) && Number.isInteger(candidate.upstreamBusinessCode)) {
+    diagnostics.upstreamBusinessCode = candidate.upstreamBusinessCode;
+  }
+  if (typeof candidate.upstreamHttpStatus === "number" && Number.isInteger(candidate.upstreamHttpStatus) && candidate.upstreamHttpStatus >= 100 && candidate.upstreamHttpStatus <= 599) {
+    diagnostics.upstreamHttpStatus = candidate.upstreamHttpStatus;
+  }
+  return diagnostics;
+}
+
 export class V2RequestError extends Error {
   readonly kind: V2FailureKind;
   readonly code: string;
   readonly status: number;
   readonly requestId?: string;
+  readonly upstreamBusinessCode?: number;
+  readonly upstreamHttpStatus?: number;
 
-  constructor(message: string, options: { kind: V2FailureKind; code: string; status: number; requestId?: string }) {
+  constructor(message: string, options: V2RequestDiagnostics & { kind: V2FailureKind; code: string; status: number }) {
     super(message);
     this.name = "V2RequestError";
     this.kind = options.kind;
     this.code = options.code;
     this.status = options.status;
     this.requestId = options.requestId;
+    this.upstreamBusinessCode = options.upstreamBusinessCode;
+    this.upstreamHttpStatus = options.upstreamHttpStatus;
   }
 }
 
@@ -114,7 +140,9 @@ export async function parseResponse<T>(response: Response, successSchema: z.ZodT
       kind: failureKind(response.status, code),
       code,
       status: response.status,
-      requestId: problem.error.requestId
+      requestId: problem.error.requestId,
+      upstreamBusinessCode: problem.error.upstreamBusinessCode,
+      upstreamHttpStatus: problem.error.upstreamHttpStatus
   });
 }
 

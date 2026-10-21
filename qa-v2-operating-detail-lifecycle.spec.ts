@@ -49,7 +49,9 @@ function resultFor(request: DailyDashboardQuery, readyNumerator?: number) {
   return result;
 }
 
-async function fixtures(page: Page, readablePlatforms = platforms, readyNumerator?: number, failurePid = "PH", failure = {
+async function fixtures(page: Page, readablePlatforms = platforms, readyNumerator?: number, failurePid = "PH", failure: {
+  status: number; code: string; requestId: string; upstreamBusinessCode?: number; upstreamHttpStatus?: number;
+} = {
   status: 504, code: "V2_UPSTREAM_TIMEOUT", requestId: "qa-operating-lifecycle-failed"
 }) {
   let outcome: "hold" | "success" | "failure" = "hold";
@@ -77,7 +79,9 @@ async function fixtures(page: Page, readablePlatforms = platforms, readyNumerato
     control.calls.push(request);
     if (request.pid === failurePid) {
       if (outcome === "hold") await gate;
-      if (outcome === "failure") return route.fulfill({ status: failure.status, json: { success: false, error: { code: failure.code, message: rawFailureMessage, requestId: failure.requestId } } });
+      if (outcome === "failure") return route.fulfill({ status: failure.status, json: { success: false, error: { code: failure.code, message: rawFailureMessage, requestId: failure.requestId,
+        ...(failure.upstreamBusinessCode !== undefined ? { upstreamBusinessCode: failure.upstreamBusinessCode } : {}),
+        ...(failure.upstreamHttpStatus !== undefined ? { upstreamHttpStatus: failure.upstreamHttpStatus } : {}) } } });
     }
     return route.fulfill({ status: 200, json: resultFor(request, readyNumerator) });
   });
@@ -258,6 +262,33 @@ for (const width of [1280, 1024, 390]) test(`非主平台93列失败详情保留
     await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
     await page.keyboard.press("Escape"); await expect(dialog(page)).toHaveCount(0); await expect(trigger).toBeFocused();
   } finally { control.release(); }
+});
+
+for (const width of [1280, 1024, 390]) test(`93列错误详情区分上游HTTP和业务码，恢复后清空（${width}）`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 950 });
+  const control = await fixtures(page, platforms, 24, "TT", { status: 400, code: "QUERY_JOB_UPSTREAM_REJECTED",
+    requestId: "qa-upstream-rejected", upstreamBusinessCode: 400, upstreamHttpStatus: 200 });
+  control.release("failure");
+  await page.goto(url);
+  await expect(cell(page)).toHaveText("4");
+  await expect(cell(page, "TikTok")).toHaveText("读取失败");
+  await expect(row(page, "TikTok").locator('td[data-column-key] .core-review__detail-trigger > b')).toHaveCount(93);
+  const trigger = row(page, "TikTok").locator('td[data-column-key="M087:overall"] button');
+  await trigger.scrollIntoViewIfNeeded(); await trigger.click();
+  for (const status of await dialog(page).locator("tbody tr td:nth-child(3)").all()) {
+    await expect(status).toContainText("上游业务码：400");
+    await expect(status).toContainText("上游 HTTP：200");
+    await expect(status).not.toContainText("上游 HTTP：400");
+  }
+  await expect(dialog(page)).not.toContainText(rawFailureMessage);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  await page.screenshot({ path: info.outputPath(`upstream-diagnostics-${width}.png`) });
+  control.release();
+  await page.getByRole("button", { name: "刷新看板", exact: true, includeHidden: true }).evaluate((button: HTMLButtonElement) => button.click());
+  await expect(cell(page, "TikTok")).toHaveText("0.92");
+  await expect(dialog(page)).not.toContainText("上游业务码");
+  await expect(dialog(page)).not.toContainText("上游 HTTP");
+  await expect(dialog(page)).not.toContainText("qa-upstream-rejected");
 });
 
 test("详情刷新失败保留原值、真实状态和请求编号，成功后清除错误诊断", async ({ page }, info) => {

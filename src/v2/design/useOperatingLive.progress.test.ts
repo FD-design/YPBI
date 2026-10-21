@@ -3,6 +3,7 @@ import * as React from "react";
 import type { DailyDashboardQuery } from "../../../contracts/daily-dashboard";
 import { DAILY_STATISTICS_VERSION } from "../../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "../../../contracts/operating-detail-projection";
+import { operatingQueryDateRange } from "../../../contracts/operating-query-jobs";
 import { currentDataEnvironmentPreference, setDataEnvironmentPreference } from "../api/dataEnvironmentPreference";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { useOperatingLive } from "./useOperatingLive";
@@ -190,4 +191,188 @@ test("异步目录漏平台或重复平台时失败关闭，不偷偷改用同�
     }
     expect(calls).toBe(0);
   } finally { globalThis.fetch = originalFetch; setDataEnvironmentPreference(originalEnvironment); }
+});
+
+function asyncReading(pids = ["PH"]): LiveDashboardReading {
+  return { ...reading(pids), dataEnvironment: "test", operatingAsyncPidGroups: pids.map(pid => [pid]) };
+}
+
+interface PendingJobRead {
+  path: string;
+  body: { pids: string[]; date: string } | null;
+  signal: AbortSignal | null | undefined;
+  headers: Headers;
+  finish: (payload: unknown, status?: number) => void;
+}
+
+async function withJobReads(run: (harness: ReturnType<typeof hookHarness>, pending: PendingJobRead[]) => Promise<void>) {
+  const originalFetch = globalThis.fetch, environment = currentDataEnvironmentPreference(), harness = hookHarness(), pending: PendingJobRead[] = [];
+  setDataEnvironmentPreference("test");
+  globalThis.fetch = (async (path, init) => new Promise<Response>(resolve => {
+    pending.push({ path: String(path), body: init?.body ? JSON.parse(String(init.body)) : null,
+      signal: init?.signal, headers: new Headers(init?.headers), finish: (payload, status = 200) => resolve(Response.json(payload, { status })) });
+  })) as typeof globalThis.fetch;
+  try { await run(harness, pending); }
+  finally {
+    harness.unmount();
+    pending.forEach(read => read.finish({ success: false, error: { code: "FIXTURE_CLEANUP", message: "fixture cleanup" } }, 503));
+    await turn();
+    globalThis.fetch = originalFetch;
+    setDataEnvironmentPreference(environment);
+  }
+}
+
+const jobHandle = "11111111-1111-4111-8111-111111111111";
+function jobScope(live: LiveDashboardReading, pid = live.query.pid, handle = jobHandle) {
+  return { kind: "operating-snapshot", pids: [pid], date: live.query.dateRange[1], handle };
+}
+async function finishJob(pending: PendingJobRead[], live: LiveDashboardReading, createIndex = 0) {
+  const scope = jobScope(live), statusIndex = pending.length;
+  pending[createIndex].finish({ success: true, data: { ...scope, reused: false } });
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  await until(() => pending.length > statusIndex);
+  const progress = { ...scope, status: "SUCCEEDED", phase: "query", completedUnits: 14, totalUnits: 14, attempts: 1 };
+  pending[statusIndex].finish({ success: true, data: progress });
+  await until(() => pending.length > statusIndex + 1);
+  const query: DailyDashboardQuery = { boardId: "5.2", pid: live.query.pid,
+    dateRange: operatingQueryDateRange(live.query.dateRange[1]), projection: "operating_snapshot" };
+  pending[statusIndex + 1].finish({ success: true, data: { ...progress, phase: "complete", dashboards: [success(query, "READY", "2026-10-21T02:00:00Z")] } });
+}
+
+test("异步创建HTTP400仅失败当前平台组，其他组完成93列且不转同步", async () => {
+  await withJobReads(async (harness, pending) => {
+    const live = asyncReading(["PH", "TT"]);
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 2);
+    const diagnostics = { code: "QUERY_JOB_UPSTREAM_REJECTED", requestId: "fixture-create-rejected", upstreamBusinessCode: 400, upstreamHttpStatus: 200 };
+    pending[1].finish({ success: false, error: { ...diagnostics, message: "查询任务被拒绝" } }, 400);
+    await until(() => harness.render(live).resources.TT?.status === "failure");
+    await finishJob(pending, live);
+    await until(() => harness.render(live).resources.PH?.status === "success");
+    const result = harness.render(live);
+    expect(result.resources.PH.status === "success" && result.resources.PH.data.data.series).toHaveLength(93);
+    expect(result.resources.TT).toMatchObject({ status: "failure", ...diagnostics });
+    expect(result.rows?.find(row => row.pid === "TT")?.values).toHaveLength(93);
+    for (const value of result.rows!.find(row => row.pid === "TT")!.values) expect(value.evidence?.current.requestFailure).toEqual(diagnostics);
+    for (const value of result.rows!.find(row => row.pid === "PH")!.values) expect(value.evidence?.current.requestFailure).toBeUndefined();
+    expect(result.notice.progress).toBeNull();
+    expect(pending.filter(read => read.body)).toHaveLength(2);
+    expect(pending.every(read => read.path.startsWith("/api/bi/v2/queries/jobs"))).toBe(true);
+  });
+});
+
+test("异步创建失败按平台保留各自上游业务码与HTTP状态，93列详情不串用诊断", async () => {
+  await withJobReads(async (harness, pending) => {
+    const live = asyncReading(["PH", "TT"]);
+    const diagnostics = [
+      { code: "QUERY_JOB_UPSTREAM_REJECTED", requestId: "fixture-ph-rejected", upstreamBusinessCode: 400, upstreamHttpStatus: 200 },
+      { code: "QUERY_JOB_UPSTREAM_REJECTED", requestId: "fixture-tt-rejected", upstreamBusinessCode: 503, upstreamHttpStatus: 503 }
+    ];
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 2);
+    pending.forEach((request, index) => request.finish({ success: false, error: { ...diagnostics[index], message: "查询任务被拒绝" } }, 400));
+    await until(() => harness.render(live).notice.progress === null);
+    const result = harness.render(live);
+    expect(result.rows).toHaveLength(2);
+    result.rows!.forEach((row, index) => {
+      expect(result.resources[row.pid]).toMatchObject({ status: "failure", ...diagnostics[index] });
+      expect(row.values).toHaveLength(93);
+      for (const value of row.values) expect(value.evidence?.current.requestFailure).toEqual(diagnostics[index]);
+    });
+    expect(pending).toHaveLength(2);
+  });
+});
+
+test("异步创建期间切换日期取消旧轮，旧句柄不轮询且晚到结果不覆盖当前范围", async () => {
+  await withJobReads(async (harness, pending) => {
+    const old = asyncReading(), current = { ...old, query: { ...old.query, dateRange: ["2020-01-02", "2020-01-02"] as [string, string] } };
+    harness.render(old); harness.flushEffects();
+    await until(() => pending.length === 1);
+    expect(harness.render(current).notice.progress).toBeNull();
+    harness.flushEffects();
+    await until(() => pending.length === 2);
+    expect(pending[0].signal?.aborted).toBe(true);
+    pending[0].finish({ success: true, data: { ...jobScope(old, "PH", "22222222-2222-4222-8222-222222222222"), reused: false } });
+    await finishJob(pending, current, 1);
+    await until(() => harness.render(current).resources.PH?.status === "success");
+    const result = harness.render(current);
+    expect(result.resources.PH.status === "success" && result.resources.PH.data.data.query.dateRange).toEqual(["2019-12-26", "2020-01-02"]);
+    expect(result.notice.progress).toBeNull();
+    expect(pending.some(read => read.path.includes("22222222"))).toBe(false);
+    expect(pending.filter(read => read.body).map(read => read.body?.date)).toEqual(["2020-01-01", "2020-01-02"]);
+  });
+});
+
+test("异步刷新创建失败保留原结果与时间，权限拒绝清除旧结果，显式刷新才创建新任务", async () => {
+  await withJobReads(async (harness, pending) => {
+    let live = asyncReading();
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 1);
+    await finishJob(pending, live);
+    await until(() => harness.render(live).resources.PH?.status === "success");
+    const previous = harness.render(live).resources.PH;
+    live = { ...live, refreshRevision: 1 };
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 4);
+    expect(harness.render(live).notice.retained?.firstReadAt).toBe("2026-10-21T02:00:00Z");
+    const diagnostics = { code: "QUERY_JOB_UPSTREAM_REJECTED", requestId: "fixture-refresh-rejected", upstreamBusinessCode: 400, upstreamHttpStatus: 200 };
+    pending[3].finish({ success: false, error: { ...diagnostics, message: "查询任务被拒绝" } }, 400);
+    await until(() => harness.render(live).notice.progress === null);
+    const failed = harness.render(live).resources.PH;
+    expect(failed).toMatchObject({ status: "success", refreshing: false, refreshError: diagnostics });
+    expect(failed.status === "success" && previous.status === "success" && failed.data === previous.data).toBe(true);
+    for (const value of harness.render(live).rows![0].values) {
+      expect(value.evidence?.current.requestFailure).toEqual(diagnostics);
+      expect(value.evidence?.current.stale).toBe(true);
+    }
+    expect(harness.render(live).notice.retained?.firstReadAt).toBe("2026-10-21T02:00:00Z");
+    expect(pending).toHaveLength(4);
+    live = { ...live, refreshRevision: 2 };
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 5);
+    pending[4].finish({ success: false, error: { code: "PID_ACCESS_DENIED", message: "无权访问", requestId: "fixture-refresh-denied" } }, 403);
+    await until(() => harness.render(live).resources.PH?.status === "failure");
+    expect(harness.render(live).notice).toEqual({ progress: null, retained: null });
+    expect(pending.filter(read => read.body)).toHaveLength(3);
+    expect(harness.render(live).resources.PH).not.toHaveProperty("upstreamBusinessCode");
+    expect(harness.render(live).resources.PH).not.toHaveProperty("upstreamHttpStatus");
+    live = { ...live, refreshRevision: 3 };
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 6);
+    await finishJob(pending, live, 5);
+    await until(() => harness.render(live).resources.PH?.status === "success");
+    const recovered = harness.render(live);
+    expect(recovered.resources.PH).toMatchObject({ status: "success", refreshing: false, refreshError: null });
+    for (const value of recovered.rows![0].values) {
+      expect(value.evidence?.current.requestFailure).toBeUndefined();
+      expect(value.evidence?.current.stale).toBe(false);
+    }
+    expect(recovered.notice).toEqual({ progress: null, retained: null });
+  });
+}, 10_000);
+
+test("环境作用域卸载停止旧异步创建，正式新作用域仅同步读取且不接收旧进度", async () => {
+  await withJobReads(async (oldHarness, pending) => {
+    const old = asyncReading();
+    oldHarness.render(old); oldHarness.flushEffects();
+    await until(() => pending.length === 1);
+    oldHarness.unmount();
+    expect(pending[0].signal?.aborted).toBe(true);
+    setDataEnvironmentPreference("production");
+    const current = { ...reading(["PH"]), operatingAsyncPidGroups: [["PH"]] }, newHarness = hookHarness();
+    try {
+      newHarness.render(current); newHarness.flushEffects();
+      await until(() => pending.length === 2);
+      expect(pending[1].path).toBe("/api/bi/v2/queries/dashboards/daily-reading");
+      expect(pending[1].headers.get("x-ypbi-data-environment")).toBe("production");
+      pending[0].finish({ success: true, data: { ...jobScope(old), reused: false } });
+      const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2019-12-25", "2020-01-01"], projection: "operating_snapshot" };
+      pending[1].finish(success(query, "PROCESSING", "2026-10-21T03:00:00Z"));
+      await until(() => newHarness.render(current).resources.PH?.status === "success");
+      const result = newHarness.render(current);
+      expect(result.resources.PH.status === "success" && result.resources.PH.data.data.series[0].points[0].sourceStatus).toBe("PROCESSING");
+      expect(result.notice).toEqual({ progress: null, retained: null });
+      expect(pending).toHaveLength(2);
+    } finally { newHarness.unmount(); }
+  });
 });

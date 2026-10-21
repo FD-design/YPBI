@@ -2,12 +2,16 @@ import { AlertTriangle, Ban, CircleUserRound, DatabaseZap, RefreshCw } from "luc
 import { LoadingIndicator } from "../../components/ui/LoadingIndicator";
 import type { ReactNode } from "react";
 import type { V2ResourceState } from "../api/useV2Resource";
+import { readV2RequestDiagnostics, type V2RequestDiagnostics } from "../api/client";
 import { hideInternalReferenceCodes } from "../features/metrics/metric-presentation";
 
 type StateKind = "loading" | "identity_unavailable" | "unauthenticated" | "forbidden" | "error" | "empty";
 
-export function RequestFailureDetails({ code, requestId }: { code?: string; requestId?: string }) {
-  const details = [code ? `错误代码：${code}` : null, requestId ? `请求编号：${requestId}` : null].filter(Boolean).join(" · ");
+export function RequestFailureDetails(props: V2RequestDiagnostics) {
+  const { code, requestId, upstreamBusinessCode, upstreamHttpStatus } = readV2RequestDiagnostics(props);
+  const details = [code ? `错误代码：${code}` : null, requestId ? `请求编号：${requestId}` : null,
+    upstreamBusinessCode !== undefined ? `上游业务码：${upstreamBusinessCode}` : null,
+    upstreamHttpStatus !== undefined ? `上游 HTTP：${upstreamHttpStatus}` : null].filter(Boolean).join(" · ");
   return details ? <small>{details}</small> : null;
 }
 
@@ -25,24 +29,24 @@ export function StatePanel({
   description,
   code,
   requestId,
+  upstreamBusinessCode,
+  upstreamHttpStatus,
   action,
   compact = false
 }: {
   kind: StateKind;
   title: string;
   description: string;
-  code?: string;
-  requestId?: string;
   action?: { label: string; onClick: () => void };
   compact?: boolean;
-}) {
+} & V2RequestDiagnostics) {
   const Icon = kind === "loading" ? null : ICONS[kind];
   return <section className={`v2-state v2-state--${kind}${compact ? " v2-state--compact" : ""}`} role={kind === "loading" ? "status" : kind === "error" ? "alert" : undefined} aria-live="polite">
     {Icon ? <Icon aria-hidden="true" /> : <LoadingIndicator />}
     <div>
       <h2>{hideInternalReferenceCodes(title)}</h2>
       <p>{hideInternalReferenceCodes(description)}</p>
-      <RequestFailureDetails code={code} requestId={requestId} />
+      <RequestFailureDetails code={code} requestId={requestId} upstreamBusinessCode={upstreamBusinessCode} upstreamHttpStatus={upstreamHttpStatus} />
     </div>
     {action && <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={action.onClick}><RefreshCw aria-hidden="true" />{action.label}</button>}
   </section>;
@@ -63,5 +67,5 @@ export function ResourceFailurePanel({ state, onRetry }: { state: Extract<V2Reso
       : state.kind === "forbidden"
         ? { title: "当前范围无权访问", description: state.message }
         : { title: "暂时无法加载", description: state.message };
-  return <StatePanel kind={state.kind} title={copy.title} description={copy.description} code={state.code} requestId={state.requestId} action={{ label: "重新检查", onClick: onRetry }} />;
+  return <StatePanel kind={state.kind} title={copy.title} description={copy.description} {...readV2RequestDiagnostics(state)} action={{ label: "重新检查", onClick: onRetry }} />;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { OPERATING_METRIC_IDS } from "../../../contracts/operating-detail-projection";
-import { fetchDailyDashboard, V2RequestError } from "../api/client";
+import { fetchDailyDashboard, V2RequestError, readV2RequestDiagnostics } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { operatingLiveRows, operatingLiveColumns, operatingLiveColumnMetadataKey, operatingResource, operatingDataEnvironment, type OperatingResources } from "./operating-live-model";
@@ -39,8 +39,8 @@ export function useOperatingLive(live: LiveDashboardReading | null, platform = "
       setResources(current => {
         const prior = operatingResource(current[pid], pid, date, environment);
         return { ...current, [pid]: prior?.status === "success" && failure.kind === "error"
-          ? { ...prior, refreshing: false, refreshError: { message: failure.message, code: failure.code, requestId: failure.requestId } }
-          : { status: "failure", kind: failure.kind, code: failure.code, message: failure.message, requestId: failure.requestId } };
+          ? { ...prior, refreshing: false, refreshError: { message: failure.message, ...readV2RequestDiagnostics(failure), code: failure.code } }
+          : { status: "failure", kind: failure.kind, message: failure.message, ...readV2RequestDiagnostics(failure), code: failure.code } };
       });
     };
     if (asyncGroups) {

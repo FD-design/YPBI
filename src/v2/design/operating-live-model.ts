@@ -2,6 +2,7 @@ import type { DailyDashboardSuccess, DailyReadingMetric } from "../../../contrac
 import { OPERATING_LIVE_IDS } from "../../../contracts/operating-detail-projection";
 export { OPERATING_LIVE_IDS } from "../../../contracts/operating-detail-projection";
 import type { V2ResourceState } from "../api/useV2Resource";
+import { readV2RequestDiagnostics, type V2RequestDiagnostics } from "../api/client";
 import { liveMetricModel, livePointStateLabel, liveDataEnvironment, liveResourceRetainsResult, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import type { DataEnvironmentMode } from "../api/dataEnvironmentPreference";
@@ -22,7 +23,7 @@ export function operatingResource(resource: OperatingResources[string] | undefin
 export interface DetailEvidence {
   state: string; label: string; date: string; fetchedAt: string | null; stale: boolean; unit?: string; sourceNote?: string | null;
   inputs: { name: string; unit: string; value: number | null }[]; formula: string | null;
-  requestFailure?: { code?: string; requestId?: string };
+  requestFailure?: V2RequestDiagnostics;
   referenceRatio?: NonNullable<ReturnType<typeof retentionReferenceRatio>>;
 }
 interface OperatingColumnMetadata { source: DailyReadingMetric; units: Set<string> }
@@ -84,9 +85,8 @@ export function operatingLiveRows(live: LiveDashboardReading, resources: Operati
       if (!seriesById.has(id)) seriesById.set(id, series);
     }
     const failure = resource?.status === "failure" ? resource : resource?.status === "success" ? resource.refreshError : null;
-    const requestFailure = failure && (failure.code || failure.requestId)
-      ? { ...(failure.code ? { code: failure.code } : {}), ...(failure.requestId ? { requestId: failure.requestId } : {}) }
-      : undefined;
+    const diagnostics = readV2RequestDiagnostics(failure);
+    const requestFailure = Object.keys(diagnostics).length ? diagnostics : undefined;
     const values = DETAIL_COLUMNS.map((column): DetailValue => {
       const id = OPERATING_LIVE_IDS[detailColumnKey(column)];
       if (!id || !metricIds.has(id)) return { current: null, previousDay: null, previousWeek: null, state: "unsupported" };
@@ -150,7 +150,7 @@ function operatingSummaryEntries(live: LiveDashboardReading, resources: Operatin
       refresh: resource?.status === "success" ? resource.refreshError
         ? { status: "failed" as const, source: "page" as const, retryable: true, ...resource.refreshError }
         : resource.refreshing ? { status: "refreshing" as const, source: "page" as const } : { status: "idle" as const } : undefined,
-      unavailable: resource?.status === "failure" ? { status: "failed" as const, contextLabel: date, label: "读取失败", retryable: true, message: resource.message, code: resource.code, requestId: resource.requestId }
+      unavailable: resource?.status === "failure" ? { status: "failed" as const, contextLabel: date, label: "读取失败", retryable: true, message: resource.message, ...readV2RequestDiagnostics(resource) }
         : !resource || resource.status === "loading" ? { status: "loading" as const, contextLabel: date, label: "读取中", retryable: false }
           : !live.metricIds.includes(id) ? { status: "unsupported" as const, contextLabel: date, label: "待接口支持", retryable: false } : undefined };
   });

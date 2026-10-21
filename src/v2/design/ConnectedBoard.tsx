@@ -105,9 +105,9 @@ export default function ConnectedBoard({ query, board, platforms, operatingAsync
   return <LiveDashboardContext.Provider value={reading}>
     <PreviewBoardPresentation board={board.id}><DemoDataProvider>
       {dirty && <p className="topic-preview__pending" role="status">筛选已修改，点击应用后更新真实结果。</p>}
-      {state.status === "success" && state.refreshError && <RefreshNotice onRetry={refresh}>刷新失败，真实区域保留上次结果。<RequestFailureDetails code={state.refreshError.code} requestId={state.refreshError.requestId} /></RefreshNotice>}
-      {compared && previous.state.status === "failure" && <RefreshNotice onRetry={refresh}>对比期读取失败，当前期独立保留。<RequestFailureDetails code={previous.state.code} requestId={previous.state.requestId} /></RefreshNotice>}
-      {compared && previous.state.status === "success" && previous.state.refreshError && <RefreshNotice onRetry={refresh}>对比期刷新失败，保留上次查询基准。<RequestFailureDetails code={previous.state.refreshError.code} requestId={previous.state.refreshError.requestId} /></RefreshNotice>}
+      {state.status === "success" && state.refreshError && <RefreshNotice onRetry={refresh}>刷新失败，真实区域保留上次结果。<RequestFailureDetails {...state.refreshError} /></RefreshNotice>}
+      {compared && previous.state.status === "failure" && <RefreshNotice onRetry={refresh}>对比期读取失败，当前期独立保留。<RequestFailureDetails {...previous.state} /></RefreshNotice>}
+      {compared && previous.state.status === "success" && previous.state.refreshError && <RefreshNotice onRetry={refresh}>对比期刷新失败，保留上次查询基准。<RequestFailureDetails {...previous.state.refreshError} /></RefreshNotice>}
       {board.id === "5.2" ? <Core /> : board.id === "5.7" ? <Acquisition /> : board.id === "5.8" || board.id === "5.9" ? <Topics board={board.id} /> : board.id === "5.5" ? <Functions /> : <Extended board={board.id as "5.10"} />}
     </DemoDataProvider></PreviewBoardPresentation>
   </LiveDashboardContext.Provider>;

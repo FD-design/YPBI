@@ -218,7 +218,7 @@ function DashboardMetricCardView({ model, analysisHref, onOpenAnalysis, onOpenDe
     </header>
     {unavailable ? <div className="dashboard-metric-card__unavailable">
       <span>{model.result.status === "failed" ? <CircleAlert aria-hidden="true" /> : model.result.status === "loading" ? <LoadingIndicator /> : <Info aria-hidden="true" />}</span>
-      <div><b>{presentation.label}</b><p>{presentation.description}</p>{model.result.status === "failed" && <RequestFailureDetails code={model.result.code} requestId={model.result.requestId} />}</div>
+      <div><b>{presentation.label}</b><p>{presentation.description}</p>{model.result.status === "failed" && <RequestFailureDetails {...model.result} />}</div>
       {model.result.status === "failed" && model.result.retryable && onRetry && <button type="button" onClick={() => onRetry(model)}>{retryLabel}</button>}
     </div> : availableResult ? <>
       {reading ? <MetricSummary horizontal context={<MetricReadingContext reading={reading} />} value={availableResult.value.display} unit={availableResult.value.unit}
@@ -250,7 +250,7 @@ function DashboardMetricCardView({ model, analysisHref, onOpenAnalysis, onOpenDe
       <div className="dashboard-metric-card__footer-meta">
         {cardRetryAvailable && <button type="button" onClick={() => onRetry?.(model)}>{retryLabel}</button>}
         <span>{presentation.description}</span>
-        {availableResult?.refresh.status === "failed" && <RequestFailureDetails code={availableResult.refresh.code} requestId={availableResult.refresh.requestId} />}
+        {availableResult?.refresh.status === "failed" && <RequestFailureDetails {...availableResult.refresh} />}
       </div>
     </footer>}
   </article>;

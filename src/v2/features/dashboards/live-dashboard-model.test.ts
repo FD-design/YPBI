@@ -152,18 +152,19 @@ test("真实0、分母为0、首次失败和未返回指标不补演示", async 
 
 test("真实卡片保留实际请求错误代码及编号，刷新错误使用对应期证据", async () => {
   const live = reading(await data([100, 200]));
-  live.state = { status: "failure", kind: "error", code: "UPSTREAM_TIMEOUT", message: "超时", requestId: "current-failure" };
-  expect(liveMetricModel(original(), live).result).toMatchObject({ status: "failed", code: "UPSTREAM_TIMEOUT", requestId: "current-failure" });
+  const diagnostics = { upstreamBusinessCode: 400, upstreamHttpStatus: 200 };
+  live.state = { status: "failure", kind: "error", code: "QUERY_JOB_UPSTREAM_REJECTED", message: "未受理", requestId: "current-failure", ...diagnostics };
+  expect(liveMetricModel(original(), live).result).toMatchObject({ status: "failed", code: "QUERY_JOB_UPSTREAM_REJECTED", requestId: "current-failure", ...diagnostics });
   live.state = { status: "failure", kind: "error", code: "NETWORK_ERROR", message: "连接失败" };
   expect(liveMetricModel(original(), live).result.requestId).toBeUndefined();
-  live.state = { status: "success", data: await data([100, 200]), refreshing: false, refreshError: { code: "UPSTREAM_TIMEOUT", message: "超时", requestId: "current-refresh" } };
+  live.state = { status: "success", data: await data([100, 200]), refreshing: false, refreshError: { code: "UPSTREAM_TIMEOUT", message: "超时", requestId: "current-refresh", upstreamHttpStatus: 504 } };
   const current = liveMetricModel(original(), live).result;
-  expect(current.status === "available" && current.refresh).toMatchObject({ status: "failed", code: "UPSTREAM_TIMEOUT", requestId: "current-refresh" });
+  expect(current.status === "available" && current.refresh).toMatchObject({ status: "failed", code: "UPSTREAM_TIMEOUT", requestId: "current-refresh", upstreamHttpStatus: 504 });
   live.state.refreshError = null;
   const before: [string, string] = ["2026-09-03", "2026-09-04"];
-  live.comparison = { label: "上一等长周期", query: { ...query, dateRange: before }, state: { status: "success", data: await data([50, 60], before), refreshing: false, refreshError: { code: "UPSTREAM_TIMEOUT", message: "超时", requestId: "previous-refresh" } } };
+  live.comparison = { label: "上一等长周期", query: { ...query, dateRange: before }, state: { status: "success", data: await data([50, 60], before), refreshing: false, refreshError: { code: "QUERY_JOB_UPSTREAM_REJECTED", message: "未受理", requestId: "previous-refresh", ...diagnostics } } };
   const previous = liveMetricModel(original(), live).result;
-  expect(previous.status === "available" && previous.refresh).toMatchObject({ status: "failed", requestId: "previous-refresh" });
+  expect(previous.status === "available" && previous.refresh).toMatchObject({ status: "failed", requestId: "previous-refresh", ...diagnostics });
   expect(previous.status === "available" && previous.value.raw).toBe(200);
 });
 

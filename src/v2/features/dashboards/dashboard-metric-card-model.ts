@@ -1,5 +1,6 @@
 import type { ChangeDirection } from "../../../components/ui/change-presentation.ts";
 import type { CalculationBasis } from "./CalculationEvidence";
+import type { V2RequestDiagnostics } from "../../api/client";
 
 export type DashboardMetricDirection = ChangeDirection;
 export const dashboardNoRecordLabels = { day: "当日未返回记录", range: "当前范围未返回记录" } as const;
@@ -67,7 +68,7 @@ export interface DashboardMetricReading {
 export type DashboardMetricRefresh =
   | { status: "idle" }
   | { status: "refreshing"; source: "page" | "card" }
-  | { status: "failed"; source: "page" | "card"; message: string; retryable: boolean; code?: string; requestId?: string };
+  | (V2RequestDiagnostics & { status: "failed"; source: "page" | "card"; message: string; retryable: boolean });
 
 export interface DashboardMetricAvailableResult {
   reading?: DashboardMetricReading;
@@ -98,7 +99,7 @@ export type DashboardMetricUnavailableStatus =
   | "not_ready"
   | "unsupported";
 
-export interface DashboardMetricUnavailableResult {
+export interface DashboardMetricUnavailableResult extends V2RequestDiagnostics {
   reading?: DashboardMetricReading;
   calculation?: CalculationBasis;
   history?: DashboardMetricAvailableResult;
@@ -110,8 +111,6 @@ export interface DashboardMetricUnavailableResult {
   validationLabel?: string;
   watermarkLabel?: string;
   watermarkDateTime?: string;
-  code?: string;
-  requestId?: string;
 }
 
 export interface DashboardMetricCardModel {

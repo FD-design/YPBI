@@ -3,7 +3,7 @@ import { dailyDashboardV2SuccessSchema, type DailyDashboardSuccess, type DailyPo
 import { recordDailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { DETAIL_COLUMNS, summaryColumn } from "./operating-detail-columns";
-import { operatingLiveRows, operatingLiveSummary, operatingLiveColumnSummary, operatingLiveCalculationRows, type OperatingResources } from "./operating-live-model";
+import { operatingLiveRows, operatingLiveSummary, operatingLiveColumnSummary, operatingLiveCalculationRows, operatingLiveExportRows, operatingLiveColumns, type OperatingResources } from "./operating-live-model";
 import { operatingDetailBreakdown } from "./operating-detail-snapshot";
 
 const date = "2020-01-01", range: [string, string] = ["2019-12-25", date];
@@ -56,6 +56,57 @@ test("全部平台维度详情复用分组来源，不借用总体或差额", ()
   const android = detail.groups.flatMap(group => group.rows).find(row => row.label === "Android");
   expect(android?.value).toMatchObject({ status: "available", raw: 102, origin: "pending" });
   expect(detail.context).toContain("未跨PID去重");
+});
+
+test("单PID留存总体待成熟时，拆分详情与宽表及导出保持各自真实状态和参考输入", () => {
+  const { live, resources } = setup(), resource = resources.PH;
+  if (resource.status !== "success") throw Error("fixture");
+  const overall = resource.data.data.series.find(series => series.metric.id === "M020")!;
+  overall.points = [{ date, state: "immature", sourceStatus: "NOT_MATURE", value: null,
+    inputs: overall.metric.inputs.map(input => ({ key: input.key, value: null })) }];
+  const cases = [
+    ["M020.android", "source_failure", "FAILED", "加工失败"],
+    ["M020.ios", "no_value", "PROCESSING", "计算中"],
+    ["M020.natural", "no_value", "SOURCE_INCOMPLETE", "50.00% · 部分数据，仅供参考"],
+    ["M020.internal", "available", "READY", null]
+  ] as const;
+  for (const [id, state, sourceStatus] of cases) {
+    live.metricIds = [...live.metricIds, id];
+    resource.data.data.series.push({ ...overall, metric: { ...overall.metric, id }, points: [
+      { date: range[0], state: "available", sourceStatus: "READY", value: .25,
+        inputs: overall.metric.inputs.map((input, index) => ({ key: input.key, value: index ? 4 : 1 })) },
+      { date: "2019-12-31", state: "no_record", value: null,
+        inputs: overall.metric.inputs.map(input => ({ key: input.key, value: null })) },
+      { date, state, sourceStatus, value: sourceStatus === "READY" ? .5 : null,
+        inputs: overall.metric.inputs.map((input, index) => ({ key: input.key,
+          value: sourceStatus === "READY" || sourceStatus === "SOURCE_INCOMPLETE" ? index + 1 : null })) }
+    ] });
+  }
+  for (const series of resource.data.data.series) if (series.periodStatistics) series.periodStatistics.reason = "本样例仅验证经营日值";
+  expect(dailyDashboardV2SuccessSchema.safeParse(resource.data).success).toBe(true);
+  const rows = operatingLiveRows(live, resources, "PH"), columns = operatingLiveColumns(live, resources, "PH");
+  const model = operatingLiveSummary(live, resources, rows, "PH").find(model => model.metric.id === "M020")!;
+  expect(model.result).toMatchObject({ status: "no_values", label: "待成熟" });
+  const detail = operatingDetailBreakdown(model, rows, "PH", date);
+  const values = detail.groups.flatMap(group => group.rows).map(row => row.value);
+  for (const [index, [, , , label]] of cases.entries()) {
+    if (label) expect(values[index]).toMatchObject({ status: "no_record", label });
+    else expect(values[index]).toMatchObject({ status: "available", raw: .5 });
+  }
+  const naturalIndex = columns.findIndex(column => column.metric.id === "M020" && column.slice === "自然新增");
+  expect(rows[0].values[naturalIndex]).toMatchObject({ current: null, evidence: { current: {
+    state: "no_value", referenceRatio: { value: .5 }, inputs: [{ value: 1 }, { value: 2 }]
+  } }, previousDay: null, previousWeek: .25 });
+  expect(rows[0].values[naturalIndex].evidence?.previousDay).toMatchObject({ date: "2019-12-31", state: "no_record", label: "当日未返回记录" });
+  expect(rows[0].values[naturalIndex].evidence?.previousWeek).toMatchObject({ date: range[0], state: "available", inputs: [{ value: 1 }, { value: 4 }] });
+  const wide = operatingLiveExportRows([rows[0]], columns, date);
+  expect(wide[1][3 + naturalIndex * 9]).toBeNull();
+  expect(wide[1][3 + naturalIndex * 9 + 3]).toBeNull();
+  expect(wide[1][3 + naturalIndex * 9 + 6]).toBe(25);
+  expect(wide[1][wide[0].indexOf(`${columns[naturalIndex].metric.name}｜当日参考比率（%）`)]).toBe(50);
+  const inputs = operatingLiveCalculationRows([rows[0]], columns).filter(row => row[3] === "M020:自然新增" && row[4] === "当日");
+  expect(inputs.map(row => row[8])).toEqual([1, 2]);
+  expect(inputs.every(row => row.at(-2) === 50)).toBe(true);
 });
 
 test("错环境、错日期及失败平台不补0且保留覆盖范围", () => {

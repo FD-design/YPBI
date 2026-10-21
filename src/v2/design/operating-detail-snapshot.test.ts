@@ -125,11 +125,11 @@ describe("经营明细请求诊断跟随平台资源", () => {
   });
 
   test("刷新失败保留旧值、原状态及真实请求诊断，成功恢复清空诊断", () => {
-    const prior = success(), refresh = { ...prior, refreshError: { code: "UPSTREAM_TIMEOUT", requestId: "req-refresh", message: "未用于详情的刷新消息" } };
+    const prior = success(), refresh = { ...prior, refreshError: { code: "UPSTREAM_TIMEOUT", requestId: "req-refresh", message: "未用于详情的刷新消息", upstreamBusinessCode: 400, upstreamHttpStatus: 200 } };
     const stale = row({ TT: refresh }).values[amountIndex];
     expect([stale.current, stale.previousDay, stale.previousWeek]).toEqual([24, 24, 24]);
     for (const period of periods) expect(stale.evidence![period]).toMatchObject({ state: "available", stale: true,
-      requestFailure: { code: "UPSTREAM_TIMEOUT", requestId: "req-refresh" } });
+      requestFailure: { code: "UPSTREAM_TIMEOUT", requestId: "req-refresh", upstreamBusinessCode: 400, upstreamHttpStatus: 200 } });
     const failed = row({ TT: failure(undefined, "req-failed") });
     expect(failed.values[amountIndex].evidence!.current.requestFailure?.requestId).toBe("req-failed");
     const recovered = row({ TT: prior }).values[amountIndex];

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { V2RequestError, type V2FailureKind } from "./client";
+import { V2RequestError, readV2RequestDiagnostics, type V2FailureKind, type V2RequestDiagnostics } from "./client";
+
+type ResourceFailure = V2RequestDiagnostics & { message: string; code: string };
 
 export type V2ResourceState<T> =
   | { status: "loading" }
-  | { status: "failure"; kind: V2FailureKind; message: string; code: string; requestId?: string }
-  | { status: "success"; data: T; refreshing: boolean; refreshError: { message: string; code: string; requestId?: string } | null };
+  | (ResourceFailure & { status: "failure"; kind: V2FailureKind })
+  | { status: "success"; data: T; refreshing: boolean; refreshError: ResourceFailure | null };
 
 function normalizeFailure(error: unknown) {
   if (error instanceof V2RequestError) return error;
@@ -38,8 +40,8 @@ export function useV2Resource<T>(requestKey: string, load: (signal: AbortSignal)
       if (controller.signal.aborted) return;
       const failure = normalizeFailure(error);
       setState((current) => canPreserve && current.status === "success" && failure.kind === "error"
-        ? { ...current, refreshing: false, refreshError: { message: failure.message, code: failure.code, requestId: failure.requestId } }
-        : { status: "failure", kind: failure.kind, message: failure.message, code: failure.code, requestId: failure.requestId });
+        ? { ...current, refreshing: false, refreshError: { message: failure.message, ...readV2RequestDiagnostics(failure), code: failure.code } }
+        : { status: "failure", kind: failure.kind, message: failure.message, ...readV2RequestDiagnostics(failure), code: failure.code });
     });
     return () => controller.abort();
   }, [attempt, requestKey]);
