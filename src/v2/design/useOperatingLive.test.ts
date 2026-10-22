@@ -89,6 +89,7 @@ function derivationRenderer() {
     const prior = internals.H;
     internals.H = {
       useState: () => [resources, () => { throw new Error("Render derivation cannot update resources"); }],
+      useRef: (current: unknown) => ({ current }),
       useEffect() {},
       useMemo(calculate: () => unknown, deps: readonly unknown[]) {
         const i = index++, previous = memos[i];

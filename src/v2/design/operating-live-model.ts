@@ -28,7 +28,7 @@ export interface DetailEvidence {
 }
 interface OperatingColumnMetadata { source: DailyReadingMetric; units: Set<string> }
 /** The requested operating environment remains authoritative while the primary source is unavailable. */
-export function operatingDataEnvironment(live: LiveDashboardReading) {
+export function operatingDataEnvironment(live: Pick<LiveDashboardReading, "state" | "dataEnvironment">) {
   return live.dataEnvironment ?? liveDataEnvironment(live);
 }
 function operatingColumnMetadata(live: LiveDashboardReading | null, resources?: OperatingResources, platform = "all") {

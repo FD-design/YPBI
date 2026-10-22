@@ -62,7 +62,7 @@ import { CalculationEvidence } from "../features/dashboards/CalculationEvidence"
 import { AdvertisingOverview, advertisingSheet } from "./AdvertisingOverview";
 import { DataOriginBadge, DataOriginProvider } from "../components/DataOrigin";
 import { liveMetricModel, useLiveDashboard } from "../features/dashboards/LiveDashboardContext";
-import { useOperatingLive } from "./useOperatingLive";
+import { useSharedOperatingLive } from "./OperatingLiveResources";
 import { OperatingReadProgress } from "./OperatingReadProgress";
 import { operatingLiveSummary, operatingLiveColumnSummary, operatingLiveExportRows, operatingLiveCalculationRows, OPERATING_LIVE_IDS } from "./operating-live-model";
 
@@ -409,7 +409,7 @@ function DetailSnapshotDialog({ detail, date, live, onClose }: { detail: NonNull
 function CoreOverviewDesignFixture() {
   const live = useLiveDashboard();
   const [detailPlatform, setDetailPlatform] = useState("all");
-  const operating = useOperatingLive(live, detailPlatform);
+  const operating = useSharedOperatingLive(live, detailPlatform);
   const shared = readPreviewQuery();
   const initialView = parseExtendedView(new URLSearchParams(window.location.search).get("view"));
   const initialFilters: FilterState = { ...(initialView?.range ?? shared.range), scope: "all", comparison: (initialView?.compared ?? shared.compared) ? "previous" : "none" };

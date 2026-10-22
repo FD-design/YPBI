@@ -132,6 +132,12 @@ export async function authenticatedSession(
   }
 }
 
+export function stopAbortedSessionResponse(request: FastifyRequest, reply: FastifyReply) {
+  if (identityLookupFailureDiagnostics(request).failureCode !== "client_aborted") return false;
+  reply.hijack();
+  return true;
+}
+
 export const biAuthPlugin: FastifyPluginAsync<BiAuthPluginOptions> = async (app, options) => {
   const cookieConfiguration = resolveSessionCookieConfiguration(options.sessionCookie);
   const sessionLookupTimeoutMs = options.sessionLookupTimeoutMs ?? DEFAULT_SESSION_LOOKUP_TIMEOUT_MS;
@@ -227,6 +233,7 @@ export const biAuthPlugin: FastifyPluginAsync<BiAuthPluginOptions> = async (app,
       const token = readUniqueOpaqueCookie(cookieHeader(request), cookieConfiguration.name)!;
       return { success: true, data: options.authService.sessionData(token, session) };
     } catch {
+      if (stopAbortedSessionResponse(request, reply)) return reply;
       request.log.error({ requestId: request.id, outcome: "session_failed", identityLookup: identityLookupFailureDiagnostics(request) }, "BI user session lookup failed");
       return sendError(request, reply, 503, "AUTH_SERVICE_UNAVAILABLE", "登录服务当前不可用");
     }
@@ -259,6 +266,7 @@ export const biAuthPlugin: FastifyPluginAsync<BiAuthPluginOptions> = async (app,
       request.log.info({ requestId: request.id, subjectId: session.principal.subjectId, outcome: "logout_succeeded" }, "BI user logout completed");
       return { success: true, data: { loggedOut: true } };
     } catch {
+      if (stopAbortedSessionResponse(request, reply)) return reply;
       if (sessionRevoked) reply.header("set-cookie", clearAuthCookie(cookieConfiguration));
       request.log.error({ requestId: request.id, outcome: "logout_failed" }, "BI user logout failed");
       return sendError(request, reply, 503, "AUTH_SERVICE_UNAVAILABLE", "退出未完成，请重试");
@@ -306,6 +314,7 @@ export const biAuthPlugin: FastifyPluginAsync<BiAuthPluginOptions> = async (app,
         }
       };
     } catch (error) {
+      if (stopAbortedSessionResponse(request, reply)) return reply;
       if (error instanceof AuthServiceError && error.code === "CURRENT_PASSWORD_INVALID") {
         return sendError(request, reply, 400, "CURRENT_PASSWORD_INVALID", "当前密码错误");
       }

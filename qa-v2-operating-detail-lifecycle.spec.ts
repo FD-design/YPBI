@@ -154,8 +154,8 @@ for (const width of [1280, 1024, 390]) test(`PH读取中打开M087详情，响�
   try {
     await page.goto(url);
     await expect(cell(page)).toHaveText("读取中");
-    expect(control.calls.some(request => request.pid === "PH" && !request.projection)).toBe(true);
-    expect(control.calls.some(request => request.pid === "PH" && request.projection === "operating_snapshot")).toBe(true);
+    await expect.poll(() => control.calls.some(request => request.pid === "PH" && !request.projection)).toBe(true);
+    await expect.poll(() => control.calls.some(request => request.pid === "PH" && request.projection === "operating_snapshot")).toBe(true);
     const trigger = await openDetail(page);
     await expect(dialog(page).locator("tbody tr").first()).toContainText("读取中");
     control.release();

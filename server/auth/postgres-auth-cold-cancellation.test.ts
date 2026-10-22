@@ -146,13 +146,13 @@ describe("PostgreSQL 身份查询冷连接取消", () => {
       controllers.forEach(controller => controller.abort(new Error("test_identity_deadline")));
       await until(() => settled === count, "取消未及时结束调用方等待");
       expect(await Promise.all(pending)).toEqual(Array(count).fill("rejected"));
-      expect(storageSettled).toBe(0);
+      expect(storageSettled).toBe(count - max);
       wire.releaseStartup = true;
       wire.sockets.forEach(socket => socket.startupReady());
       await until(() => storageSettled === count, "已提交读取未自然结算");
       await probe(repository);
-      // Startup metadata, each submitted read exactly once, then a healthy probe.
-      expect(wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0)).toBe(max + count + 1);
+      // Startup metadata, the admitted reads, then a healthy probe.
+      expect(wire.sockets.reduce((sum, socket) => sum + socket.queryWrites, 0)).toBe(max * 2 + 1);
       expect(wire.sockets.length).toBe(max);
       expect(wire.cancelPackets).toBe(0);
     });

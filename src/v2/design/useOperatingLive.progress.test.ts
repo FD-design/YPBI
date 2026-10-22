@@ -29,6 +29,11 @@ function hookHarness() {
           if (!(index in states)) states[index] = initial;
           return [states[index], (value: unknown) => { states[index] = typeof value === "function" ? value(states[index]) : value; }];
         },
+        useRef(initial: unknown) {
+          const index = stateIndex++;
+          if (!(index in states)) states[index] = { current: initial };
+          return states[index];
+        },
         useMemo: (calculate: () => unknown) => calculate(),
         useEffect(effect: () => (() => void) | undefined, deps: readonly unknown[]) {
           const index = effectIndex++, previous = effects[index];

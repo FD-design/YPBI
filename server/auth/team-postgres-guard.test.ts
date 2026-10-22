@@ -13,7 +13,7 @@ test('team last-admin guard locks before row lookup and refuses removal in Postg
       const query = parts.join('?'); calls.push(query);
       return query.includes('count(*)') ? [{ total: 1 }] : [];
     }, { unsafe: async (query: string) => { calls.push(query); return [row]; } });
-    const sql = { begin: (run: (value: unknown) => unknown) => run(transaction) } as unknown as Sql;
+    const sql = { options: { max: 4 }, begin: (run: (value: unknown) => unknown) => run(transaction) } as unknown as Sql;
     const repository = new PostgresAuthRepository(sql);
     const result = action === 'role'
       ? await repository.setUserRoleAndRevokeSessions('id', 1, 'reader', new Date(), true)

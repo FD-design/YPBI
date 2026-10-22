@@ -2,7 +2,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { biUsernameSchema } from '../../contracts/bi-auth';
 import { teamChangeSchema, teamCreateSchema, teamQuerySchema } from '../../contracts/team-accounts';
 import { resolveSessionCookieConfiguration, type BiSessionCookieConfiguration } from './cookies';
-import { authenticatedSession } from './plugin';
+import { authenticatedSession, stopAbortedSessionResponse } from './plugin';
 import { AccountAdminConflictError, type BiAccountAdminService, type BiAuthService, type ResolvedAuthSession } from './service';
 
 interface Options {
@@ -42,6 +42,7 @@ export const teamAccountPlugin: FastifyPluginAsync<Options> = async (app, option
     principals.set(request, session);
   });
   app.setErrorHandler((error, request, reply) => {
+    if (stopAbortedSessionResponse(request, reply)) return reply;
     const code = (error as { code?: string }).code;
     if (code?.startsWith('FST_ERR_CTP')) return fail(request, reply, 400, 'INVALID_TEAM_REQUEST', '请求格式不合法');
     if (code === '23505' || (error instanceof Error && error.message === 'AUTH_USERNAME_CONFLICT')) return fail(request, reply, 409, 'USERNAME_EXISTS', '账号已存在');

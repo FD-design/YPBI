@@ -1,6 +1,7 @@
 import type { Sql } from "postgres";
 import { biRoleSchema, type BiRole } from "../../contracts/bi-auth";
 import { markIdentityLookupPhase, recordIdentityStorageFailure } from "../identity/identity-lookup-diagnostics";
+import { IdentityReadAdmission } from "./identity-read-admission";
 import type {
   AuthRepository,
   AuthSessionRecord,
@@ -88,7 +89,11 @@ const userColumns = `
 `;
 
 export class PostgresAuthRepository implements AuthRepository {
-  constructor(private readonly sql: Sql) {}
+  private readonly identityReads: IdentityReadAdmission;
+
+  constructor(private readonly sql: Sql) {
+    this.identityReads = new IdentityReadAdmission(sql.options.max);
+  }
 
   async listUsers(search: string, page: number) {
     const filter = search.toLowerCase();
@@ -179,11 +184,12 @@ export class PostgresAuthRepository implements AuthRepository {
   async findAuthenticatedSession(tokenHash: string, now: Date, signal?: AbortSignal): Promise<AuthenticatedSessionRecord | null> {
     try {
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
-      // Query covers driver queueing, startup and execution. The driver owns
-      // connection recovery; submitted reads settle without protocol cancellation.
-      markIdentityLookupPhase(signal, "query");
-      const rows = await this.sql.unsafe<(SessionRow & UserRow)[]>(
-      `select
+      markIdentityLookupPhase(signal, "acquire");
+      const rows = await this.identityReads.run(() => {
+        // Submitted reads settle under driver ownership without protocol cancellation.
+        markIdentityLookupPhase(signal, "query");
+        return this.sql.unsafe<(SessionRow & UserRow)[]>(
+          `select
         s.session_id, s.user_id, s.token_hash,
         s.credential_version, s.created_at, s.expires_at, s.revoked_at,
         u.username, u.normalized_username, u.display_name, u.role, u.password_hash,
@@ -196,8 +202,9 @@ export class PostgresAuthRepository implements AuthRepository {
         and s.expires_at > $2
         and u.status = 'active'
         and u.credential_version = s.credential_version`,
-      [tokenHash, now]
-    );
+          [tokenHash, now]
+        );
+      }, signal);
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("auth_query_aborted");
       markIdentityLookupPhase(signal, "map");
       const row = rows[0];

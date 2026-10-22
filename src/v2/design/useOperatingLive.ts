@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { OPERATING_METRIC_IDS } from "../../../contracts/operating-detail-projection";
 import { fetchDailyDashboard, V2RequestError, readV2RequestDiagnostics } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
@@ -11,8 +11,10 @@ import { BiQueryJobTerminalError, BiQueryJobWaitError } from "../api/query-jobs"
 
 const MAX_OPERATING_REQUESTS = 6;
 
+export type OperatingRequestScope = Pick<LiveDashboardReading, "query" | "state" | "dataEnvironment" | "platforms" | "operatingAsyncPidGroups" | "refreshRevision">;
+
 /** Independent per-PID snapshots; failed or missing results never become fixtures. */
-export function useOperatingLive(live: LiveDashboardReading | null, platform = "all") {
+export function useOperatingResources(live: OperatingRequestScope | null) {
   const [resources, setResources] = useState<OperatingResources>({});
   const [progress, setProgress] = useState<OperatingReadProgress | null>(null);
   const platforms = live?.platforms ?? [], date = live?.query.dateRange[1] ?? "";
@@ -20,10 +22,16 @@ export function useOperatingLive(live: LiveDashboardReading | null, platform = "
   const asyncGroups = currentDataEnvironmentPreference() === "test" ? live?.operatingAsyncPidGroups : undefined;
   // The route's dataScopeKey remounts on environment changes; provenance arrival is not a new query.
   const key = JSON.stringify([Boolean(live), date, platforms.map(platform => platform.pid), asyncGroups]);
+  const activeKey = useRef(key);
   const revision = live?.refreshRevision ?? 0;
   const progressScopeKey = JSON.stringify([key, revision]);
   useEffect(() => {
-    if (!live) return;
+    activeKey.current = key;
+    if (!live) {
+      setResources(current => Object.keys(current).length ? {} : current);
+      setProgress(null);
+      return;
+    }
     const controller = new AbortController();
     setProgress({ scopeKey: progressScopeKey, total: platforms.length, completed: 0,
       ...(asyncGroups ? { jobs: Object.fromEntries(asyncGroups.map((_, index) => [String(index), { settled: false }])) } : {}) });
@@ -91,6 +99,16 @@ export function useOperatingLive(live: LiveDashboardReading | null, platform = "
     void Promise.all(Array.from({ length: Math.min(MAX_OPERATING_REQUESTS, platforms.length) }, worker));
     return () => controller.abort();
   }, [key, revision]);
+  return {
+    resources: activeKey.current === key ? resources : Object.fromEntries(platforms.map(platform => [platform.pid, { status: "loading" as const }])),
+    progress: activeKey.current === key ? progress : null,
+    progressScopeKey
+  };
+}
+
+export function useOperatingLive(live: LiveDashboardReading | null, platform = "all", shared?: ReturnType<typeof useOperatingResources>) {
+  const own = useOperatingResources(shared ? null : live);
+  const { resources, progress, progressScopeKey } = shared ?? own;
   const columnMetadataKey = useMemo(() => operatingLiveColumnMetadataKey(live, resources, platform), [live, resources, platform]);
   const columns = useMemo(() => operatingLiveColumns(live, resources, platform), [live, columnMetadataKey]);
   const rows = useMemo(() => live ? operatingLiveRows(live, resources, platform) : null, [live, resources, platform]);

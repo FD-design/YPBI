@@ -1,12 +1,13 @@
 import { useState } from "react";
-import type { DailyDashboardCatalog, DailyDashboardQuery } from "../../../../contracts/daily-dashboard";
+import type { DailyDashboardCatalog, DailyDashboardQuery, DailyDashboardSuccess } from "../../../../contracts/daily-dashboard";
 import type { V2PlatformCatalogSuccess } from "../../../../contracts/bi-v2";
 import { DateRangePicker } from "../../../components/ui/DateRangePicker";
 import { MenuSelect } from "../../../components/ui/MenuSelect";
 import { fetchDailyDashboard } from "../../api/client";
-import { useV2Resource } from "../../api/useV2Resource";
+import type { V2ResourceState } from "../../api/useV2Resource";
+import { useDailyBoardResource } from "./useDailyBoardResources";
 import { useDataEnvironment } from "../../app/DataEnvironmentProvider";
-import { navigate } from "../../app/router";
+import { navigate, useBrowserLocation } from "../../app/router";
 import { ResourceFailurePanel, StatePanel } from "../../components/StatePanel";
 import "./connected-daily-board.css";
 
@@ -20,8 +21,13 @@ function formatValue(value: number | null, unit: string) {
 }
 
 export default function ConnectedDailyBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: Board; platforms: Platforms; operatingAsyncPidGroups?: readonly (readonly string[])[] }) {
+  const location = useBrowserLocation();
+  const resource = useDailyBoardResource(JSON.stringify(query), (signal) => fetchDailyDashboard(query, board.metricIds, signal));
+  return <DailyBoardPresentation key={JSON.stringify([query, new URLSearchParams(location.search).get("compare")])} query={query} board={board} platforms={platforms} resource={resource} />;
+}
+
+function DailyBoardPresentation({ query, board, platforms, resource }: { query: DailyDashboardQuery; board: Board; platforms: Platforms; resource: { state: V2ResourceState<DailyDashboardSuccess>; retry: () => void } }) {
   const environment = useDataEnvironment();
-  const resource = useV2Resource(JSON.stringify(query), (signal) => fetchDailyDashboard(query, board.metricIds, signal));
   const [range, setRange] = useState({ start: query.dateRange[0], end: query.dateRange[1] });
   const [pid, setPid] = useState(query.pid);
   const today = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);

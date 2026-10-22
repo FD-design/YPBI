@@ -52,6 +52,7 @@ function transactionHarness(unsafeResponses: unknown[][], revokeError?: Error) {
     }
   );
   const sql = {
+    options: { max: 4 },
     begin: async (callback: (transactionSql: Sql) => Promise<unknown>) => {
       try {
         return await callback(transaction as unknown as Sql);
@@ -86,7 +87,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
       }
     );
     const unsafe = () => { reads++; started(); return pending; };
-    const sql = { unsafe } as unknown as Sql;
+    const sql = { unsafe, options: { max: 4 } } as unknown as Sql;
     const repository = new PostgresAuthRepository(sql);
     const controller = new AbortController();
     beginIdentityLookupDiagnostics(controller.signal, 3000);
@@ -120,7 +121,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     const pending = Object.assign(new Promise<never>((_resolve, reject) => { rejectQuery = reject; }), {
       cancel: () => { throw new Error("identity must not send protocol cancellation"); }
     });
-    const repository = new PostgresAuthRepository({ unsafe: () => { started(); return pending; } } as unknown as Sql);
+    const repository = new PostgresAuthRepository({ options: { max: 4 }, unsafe: () => { started(); return pending; } } as unknown as Sql);
     const controller = new AbortController();
     beginIdentityLookupDiagnostics(controller.signal, 3000);
     const lookup = repository.findAuthenticatedSession("a".repeat(64), new Date(), controller.signal);
@@ -137,7 +138,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     let fail: (error: Error) => void = () => undefined;
     let reads = 0;
     const pending = new Promise((_resolve, reject) => { fail = reject; });
-    const sql = { unsafe: () => { reads++; return pending; } } as unknown as Sql;
+    const sql = { options: { max: 4 }, unsafe: () => { reads++; return pending; } } as unknown as Sql;
     const controller = new AbortController();
     const lookup = new PostgresAuthRepository(sql).findAuthenticatedSession("a".repeat(64), new Date(), controller.signal);
     controller.abort(new Error("lookup cancelled"));
@@ -149,7 +150,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
 
   test("已取消的身份请求不提交数据库查询", async () => {
     let reads = 0;
-    const sql = { unsafe: async () => { reads++; return []; } } as unknown as Sql;
+    const sql = { options: { max: 4 }, unsafe: async () => { reads++; return []; } } as unknown as Sql;
     const controller = new AbortController();
     controller.abort();
     await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("a".repeat(64), new Date(), controller.signal)).rejects.toThrow();
@@ -159,7 +160,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
   test("身份SQL错误保留原错误与query阶段诊断", async () => {
     const failure = new Error("statement failed");
     const unsafe = () => Promise.reject(failure);
-    const sql = { unsafe } as unknown as Sql;
+    const sql = { unsafe, options: { max: 4 } } as unknown as Sql;
     const signal = new AbortController().signal;
     beginIdentityLookupDiagnostics(signal, 3000);
     await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("a".repeat(64), new Date(), signal)).rejects.toBe(failure);
@@ -170,7 +171,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     test(`身份查询${code}错误保留且不自动重试`, async () => {
       let reads = 0;
       const failure = Object.assign(new Error("memory query failure"), { code });
-      const sql = { unsafe: () => { reads++; return Promise.reject(failure); } } as unknown as Sql;
+      const sql = { options: { max: 4 }, unsafe: () => { reads++; return Promise.reject(failure); } } as unknown as Sql;
       await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("a".repeat(64), new Date())).rejects.toBe(failure);
       expect(reads).toBe(1);
     });
@@ -179,7 +180,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
   test("调用方取消原因与连接错误同码时，成功结算仍拒绝身份", async () => {
     const controller = new AbortController();
     const reason = Object.assign(new Error("memory client cancellation"), { code: "ECONNRESET" });
-    const sql = { unsafe: async () => { controller.abort(reason); return []; } } as unknown as Sql;
+    const sql = { options: { max: 4 }, unsafe: async () => { controller.abort(reason); return []; } } as unknown as Sql;
     await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("a".repeat(64), new Date(), controller.signal)).rejects.toBe(reason);
   });
 
@@ -189,7 +190,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
     const calls: CapturedUnsafeCall[] = [];
     const row = { ...userRow({ must_change_password: false }), session_id: "session-test", token_hash: tokenHash,
       user_created_at: now, expires_at: new Date(now.getTime() + 60_000), revoked_at: null };
-    const sql = { unsafe: async (query: string, values: unknown[]) => { calls.push({ query, values }); return [row]; } } as unknown as Sql;
+    const sql = { options: { max: 4 }, unsafe: async (query: string, values: unknown[]) => { calls.push({ query, values }); return [row]; } } as unknown as Sql;
     const result = await new PostgresAuthRepository(sql).findAuthenticatedSession(tokenHash, now);
     expect(result?.session.id).toBe("session-test");
     expect(result?.user.role).toBe("reader");
@@ -203,7 +204,7 @@ describe("PostgresAuthRepository 账号权限维护", () => {
   test("查询成功但账号数据非法时不授予身份", async () => {
     const row = { ...userRow({ role: "invalid-role" }), session_id: "session-test", token_hash: "c".repeat(64),
       user_created_at: new Date(), expires_at: new Date(), revoked_at: null };
-    const sql = { unsafe: async () => [row] } as unknown as Sql;
+    const sql = { options: { max: 4 }, unsafe: async () => [row] } as unknown as Sql;
     const signal = new AbortController().signal;
     beginIdentityLookupDiagnostics(signal, 3000);
     await expect(new PostgresAuthRepository(sql).findAuthenticatedSession("c".repeat(64), new Date(), signal)).rejects.toThrow("未知 BI 角色");

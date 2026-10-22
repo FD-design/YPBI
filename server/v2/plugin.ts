@@ -133,6 +133,10 @@ async function requirePrincipal(
       identityTimeoutMs
     );
   } catch (error) {
+    if (clientAbortController.signal.aborted) {
+      reply.hijack();
+      return null;
+    }
     request.log.error({ requestId: request.id, outcome: "identity_provider_failed", identityLookup: identityLookupFailureDiagnostics(clientAbortController.signal) }, "v2 identity provider failed");
     sendV2Error(request, reply, 503, "IDENTITY_PROVIDER_UNAVAILABLE", "正式身份来源当前不可用");
     return null;

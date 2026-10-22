@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { DailyDashboardCatalog, DailyDashboardQuery, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import type { V2PlatformCatalogSuccess } from "../../../contracts/bi-v2";
-import { fetchDailyDashboard } from "../api/client";
-import { useV2Resource, type V2ResourceState } from "../api/useV2Resource";
+import type { V2ResourceState } from "../api/useV2Resource";
+import { useDailyBoardResources } from "../features/dashboards/useDailyBoardResources";
 import { useAuthentication } from "../app/AuthProvider";
 import { navigate, useBrowserLocation } from "../app/router";
 import { RefreshNotice, RequestFailureDetails } from "../components/StatePanel";
@@ -20,7 +20,7 @@ import { PreviewBoardPresentation } from "./PreviewBoardPresentation";
 import { downloadPreviewWorkbook, type WorkbookSheet } from "./preview-workbook";
 import { validRange as validTopicRange } from "./topic-preview-fixtures";
 import { validDemoRange } from "./extended-board-model";
-import { previousDailyQuery, supplementaryDailyQuery } from "../features/dashboards/daily-reference-plan";
+import { OperatingLiveResources } from "./OperatingLiveResources";
 import { availablePeriodStatistics, periodStatisticLabel } from "../features/dashboards/live-period-statistics";
 import { playbackDiagnosisBoardSheets } from "./live-playback-groups";
 import { calculationInputValues, diagnosticRatioInputs, DIAGNOSTIC_INPUTS_LABEL, retentionReferenceRatio } from "../features/dashboards/diagnostic-inputs";
@@ -66,22 +66,38 @@ export function connectedBoardExportSheets(live: LiveDashboardReading): Workbook
   ];
 }
 
-export default function ConnectedBoard({ query, board, platforms, operatingAsyncPidGroups }: { query: DailyDashboardQuery; board: DailyDashboardCatalog["items"][number]; platforms: V2PlatformCatalogSuccess["data"]["items"]; operatingAsyncPidGroups?: readonly (readonly string[])[] }) {
+type ConnectedBoardProps = { query: DailyDashboardQuery; board: DailyDashboardCatalog["items"][number]; platforms: V2PlatformCatalogSuccess["data"]["items"]; operatingAsyncPidGroups?: readonly (readonly string[])[] };
+
+export default function ConnectedBoard(props: ConnectedBoardProps) {
+  const { query, board, platforms, operatingAsyncPidGroups } = props;
   const location = useBrowserLocation();
   const compared = new URLSearchParams(location.search).get("compare") === "previous";
-  const previousQuery = previousDailyQuery(query);
-  const referenceQuery = supplementaryDailyQuery(query, compared);
-  const { state, retry } = useV2Resource(JSON.stringify(query), async signal => board.metricIds.length ? fetchDailyDashboard(query, board.metricIds, signal) : null);
-  const previous = useV2Resource(JSON.stringify([previousQuery, compared]), async signal => compared && board.metricIds.length ? fetchDailyDashboard(previousQuery, board.metricIds, signal) : null);
-  const reference = useV2Resource(JSON.stringify(["day-references", referenceQuery]), async signal => referenceQuery && board.metricIds.length ? fetchDailyDashboard(referenceQuery, board.metricIds, signal) : null);
+  const resources = useDailyBoardResources(query, board.metricIds, compared);
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const refresh = () => { setRefreshRevision(revision => revision + 1); resources.current.retry(); resources.previous.retry(); if (resources.referenceQuery) resources.reference.retry(); };
+  const state = resources.current.state;
+  const readingState: V2ResourceState<DailyDashboardSuccess> = state.status === "success"
+    ? state.data ? { ...state, data: state.data } : { status: "loading" } : state;
+  return <OperatingLiveResources live={board.id === "5.2" ? {
+    query, state: readingState, dataEnvironment: readingState.status === "success" ? dailyDashboardEnvironment(readingState.data) : undefined,
+    platforms, operatingAsyncPidGroups, refreshRevision
+  } : null}>
+    <ConnectedBoardPresentation key={JSON.stringify([query, new URLSearchParams(location.search).get("compare")])}
+      {...props} compared={compared} resources={resources} readingState={readingState} refresh={refresh} refreshRevision={refreshRevision} />
+  </OperatingLiveResources>;
+}
+
+function ConnectedBoardPresentation({ query, board, platforms, operatingAsyncPidGroups, compared, resources, readingState, refresh, refreshRevision }: ConnectedBoardProps & {
+  compared: boolean; resources: ReturnType<typeof useDailyBoardResources>; readingState: V2ResourceState<DailyDashboardSuccess>; refresh: () => void; refreshRevision: number;
+}) {
+  const { state } = resources.current;
+  const { previous, reference, previousQuery, referenceQuery } = resources;
   const [range, setRange] = useState({ start: query.dateRange[0], end: query.dateRange[1] }), [pid, setPid] = useState(query.pid);
   const [comparison, setComparison] = useState(compared ? "previous" : "none");
-  const [refreshRevision, setRefreshRevision] = useState(0);
   const authentication = useAuthentication();
   const canExport = authentication.state.status === "authenticated" && authentication.state.session.user.permissions.includes("bi:export");
   const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   const dirty = range.start !== query.dateRange[0] || range.end !== query.dateRange[1] || pid !== query.pid || compared !== (comparison === "previous");
-  const refresh = () => { setRefreshRevision(revision => revision + 1); retry(); previous.retry(); if (referenceQuery) reference.retry(); };
   const apply = () => {
     if (!dirty) { refresh(); return; }
     const params = new URLSearchParams(window.location.search);
@@ -92,8 +108,6 @@ export default function ConnectedBoard({ query, board, platforms, operatingAsync
     if (!canExport || state.status !== "success" || !state.data || dirty) return;
     downloadPreviewWorkbook(board.title, connectedBoardExportSheets(reading), "pending");
   };
-  const readingState: V2ResourceState<DailyDashboardSuccess> = state.status === "success"
-    ? state.data ? { ...state, data: state.data } : { status: "loading" } : state;
   const reading: LiveDashboardReading = { query, metricIds: board.metricIds, state: readingState, dataEnvironment: readingState.status === "success" ? dailyDashboardEnvironment(readingState.data) : undefined, platformName: platforms.find(item => item.pid === query.pid)!.name,
     platforms, operatingAsyncPidGroups, controls: {
       date: <DateRangePicker value={range} onChange={setRange} today={today} maxDate={today} maxDays={366} boundaryLabel="可选择日期截至" />,

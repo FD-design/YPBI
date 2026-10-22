@@ -6,6 +6,10 @@ import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardC
 import { currentDataEnvironmentPreference, setDataEnvironmentPreference } from "../api/dataEnvironmentPreference";
 import { useCohortReading } from "./ConnectedCohorts";
 import { useOperatingLive } from "./useOperatingLive";
+import { useOperatingResources } from "./useOperatingLive";
+import { useDailyBoardResource, useDailyBoardResources } from "../features/dashboards/useDailyBoardResources";
+import { V2RequestError } from "../api/client";
+import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 
 // The project has no DOM test runtime. This test-only dispatcher runs the real
 // hooks and effects, including cleanup, without mocking resources or using a browser.
@@ -137,6 +141,127 @@ function requests({ ignoreAbort = false }: { ignoreAbort?: boolean } = {}) {
 }
 const success = (query: DailyDashboardQuery, value = 8) => ({ status: "success" as const, data: payload(query, value), refreshing: false, refreshError: null });
 const range = { start: "2020-01-01", end: "2020-01-01" };
+
+function stableBoard(live: LiveDashboardReading, compared: boolean) {
+  const daily = useDailyBoardResources(live.query, ["M020"], compared);
+  const state = daily.current.state;
+  const reading: LiveDashboardReading = { ...live, state: state.status === "success"
+    ? state.data ? { ...state, data: state.data } : { status: "loading" } : state,
+    dataEnvironment: state.status === "success" ? dailyDashboardEnvironment(state.data) : undefined };
+  return { daily, reading, operating: useOperatingResources(reading) };
+}
+
+test("稳定日板数据容器在展示重挂与PID/开始日/对比切换时复用20份快照，显式刷新重读", async () => {
+  let live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: OPERATING_METRIC_IDS,
+    platforms: ["PH", "TT", ...Array.from({ length: 18 }, (_, index) => `QA${index + 1}`)].map(pid => ({ pid, name: pid })) };
+  let compared = false;
+  const pending = requests(), container = hook(() => stableBoard(live, compared));
+  const finish = async (count: number) => {
+    for (let i = 0; i < 50 && pending.length < count; i++) { pending.forEach(item => item.succeed()); await flush(); }
+    pending.forEach(item => item.succeed()); await flush(); expect(pending).toHaveLength(count);
+  };
+  await finish(21);
+  let presentation = hook(() => useOperatingLive(container.value.reading, "all", container.value.operating));
+  expect(presentation.value.columns).toHaveLength(93);
+  expect(presentation.value.rows).toHaveLength(20);
+  const current = container.value.daily.current.state;
+  compared = true; container.render(); await finish(23);
+  expect(container.value.daily.current.state).toBe(current);
+  expect(pending.filter(item => !item.query.projection).map(item => item.query.dateRange)).toEqual([
+    ["2020-01-10", "2020-01-10"], ["2020-01-09", "2020-01-09"], ["2020-01-03", "2020-01-03"]
+  ]);
+  compared = false; container.render(); await flush();
+  expect(pending).toHaveLength(23);
+  expect(container.value.daily.current.state).toBe(current);
+  for (const query of [
+    { ...live.query, pid: "TT" },
+    { ...live.query, pid: "TT", dateRange: ["2020-01-04", "2020-01-10"] as [string, string] }
+  ]) {
+    live = { ...live, query };
+    const before = pending.length;
+    expect(container.render().daily.current.state.status).toBe("loading");
+    await finish(before + 1);
+    presentation.dispose();
+    presentation = hook(() => useOperatingLive(container.value.reading, "all", container.value.operating));
+    await flush();
+    expect(pending.filter(item => item.query.projection)).toHaveLength(20);
+    expect(presentation.value.rows).toHaveLength(20);
+    expect(presentation.value.columns).toHaveLength(93);
+  }
+  live = { ...live, refreshRevision: 1 };
+  container.value.daily.current.retry(); container.value.daily.previous.retry(); container.render();
+  await finish(46);
+  expect(pending.filter(item => item.query.projection)).toHaveLength(40);
+  expect(new Set(pending.filter(item => item.query.projection).map(item => JSON.stringify(item.query))).size).toBe(20);
+});
+
+test("日板同scope刷新保留旧结果及完整错误诊断，scope变化在effect前隐藏旧状态并隔离迟到结果", async () => {
+  let key = "first";
+  const pending: { key: string; signal: AbortSignal; resolve: (value: string) => void; reject: (error: unknown) => void }[] = [];
+  const container = hook(() => useDailyBoardResource(key, signal => new Promise<string>((resolve, reject) => pending.push({ key, signal, resolve, reject }))));
+  pending[0].resolve("first-result"); await flush();
+  container.value.retry(); await flush();
+  expect(container.value.state).toMatchObject({ status: "success", data: "first-result", refreshing: true });
+  pending[1].reject(new V2RequestError("来源拒绝", { kind: "error", code: "UPSTREAM_REJECTED", status: 502, requestId: "scoped-request", upstreamBusinessCode: 400, upstreamHttpStatus: 200 }));
+  await flush();
+  expect(container.value.state).toMatchObject({ status: "success", data: "first-result", refreshing: false,
+    refreshError: { message: "来源拒绝", code: "UPSTREAM_REJECTED", requestId: "scoped-request", upstreamBusinessCode: 400, upstreamHttpStatus: 200 } });
+  container.value.retry(); await flush();
+  key = "second";
+  expect(container.render().state).toEqual({ status: "loading" });
+  expect(pending[2].signal.aborted).toBe(true);
+  pending[3].resolve("second-result"); await flush();
+  pending[2].resolve("late-first-result"); await flush();
+  expect(container.value.state).toEqual({ status: "success", data: "second-result", refreshing: false, refreshError: null });
+});
+
+for (const scope of ["environment", "account"] as const) test(`稳定数据容器的${scope}作用域卸载清空主值和经营旧值并隔离旧请求`, async () => {
+  let live = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: OPERATING_METRIC_IDS };
+  const pending = requests({ ignoreAbort: true });
+  let container = hook(() => stableBoard(live, false));
+  await flush(); pending.forEach(item => item.succeed()); await flush();
+  let presentation = hook(() => useOperatingLive(container.value.reading, "all", container.value.operating));
+  expect(presentation.value.rows!.some(row => row.values.some(value => value.current !== null))).toBe(true);
+  live = { ...live, refreshRevision: 1 }; container.value.daily.current.retry(); container.render(); await flush();
+  expect(pending).toHaveLength(6);
+  container.dispose(); presentation.dispose();
+  if (scope === "environment") setDataEnvironmentPreference("test");
+  live = { ...live, refreshRevision: 0 };
+  container = hook(() => stableBoard(live, false));
+  presentation = hook(() => useOperatingLive(container.value.reading, "all", container.value.operating));
+  expect(container.value.daily.current.state.status).toBe("loading");
+  expect(presentation.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);
+  await flush();
+  expect(pending.slice(3, 6).every(item => item.signal.aborted)).toBe(true);
+  pending.slice(3, 6).forEach(item => item.succeed(9)); await flush();
+  expect(container.value.daily.current.state.status).toBe("loading");
+  presentation.render();
+  expect(presentation.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);
+  pending.slice(6).forEach(item => item.succeed(4)); await flush(); presentation.render();
+  expect(container.value.daily.current.state.status).toBe("success");
+  expect(presentation.value.rows!.some(row => row.values.some(value => value.current === .4))).toBe(true);
+});
+
+for (const change of ["date", "ordered-pids", "test-groups"] as const) test(`经营${change}变更在effect前隐藏旧失败诊断和旧进度`, async () => {
+  if (change === "test-groups") setDataEnvironmentPreference("test");
+  let live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" },
+    ...(change === "test-groups" ? { operatingAsyncPidGroups: [["PH"], ["TT"]] } : {}) };
+  let requestId = "old-scope-failure";
+  globalThis.fetch = (async () => Response.json({ success: false,
+    error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "身份暂不可用", requestId } }, { status: 503 })) as typeof fetch;
+  const container = hook(() => useOperatingResources(live));
+  await flush();
+  expect(container.value.resources.PH).toMatchObject({ status: "failure", requestId: "old-scope-failure" });
+  requestId = "new-scope-failure";
+  live = change === "date" ? { ...live, query: { ...live.query, dateRange: ["2020-01-11", "2020-01-11"] } }
+    : change === "ordered-pids" ? { ...live, platforms: [...live.platforms!].reverse() }
+    : { ...live, operatingAsyncPidGroups: [["PH", "TT"]] };
+  const firstRender = container.render();
+  expect(firstRender.resources).toEqual({ PH: { status: "loading" }, TT: { status: "loading" } });
+  expect(firstRender.progress).toBeNull();
+  await flush();
+  expect(container.value.resources.PH).toMatchObject({ status: "failure", requestId: "new-scope-failure" });
+});
 
 test("独立注册两期初次查询及整页重试不等待主查询成功", async () => {
   let live = reading();

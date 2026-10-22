@@ -219,7 +219,7 @@ describe("PostgreSQL 身份查询取消与连接复用", () => {
     });
   });
 
-  test("4连接20次已提交读取取消后自然结算且全部拒绝身份，后续查询可复用连接池", async () => {
+  test("4连接20次读取取消后仅4条在途SQL结算，后续查询可复用连接池", async () => {
     await withDatabase(4, async (repository, wire) => {
       const controllers = Array.from({ length: 20 }, () => new AbortController());
       let settled = 0;
@@ -227,7 +227,7 @@ describe("PostgreSQL 身份查询取消与连接复用", () => {
       await until(() => wire.identityWrites === 4, "4条身份SELECT未占满池");
       controllers.forEach(controller => controller.abort(new Error("memory cancelled batch")));
       await pause();
-      expect(settled).toBe(0);
+      expect(settled).toBe(16);
       expect(wire.identityWrites).toBe(4);
       expect(wire.cancelPackets).toBe(0);
       wire.holdIdentity = false;
@@ -235,9 +235,42 @@ describe("PostgreSQL 身份查询取消与连接复用", () => {
       expect((await Promise.all(pending)).every(result => result.status === "rejected")).toBe(true);
       const recovered = await Promise.all(Array.from({ length: 20 }, () => lookup(repository)));
       expect(recovered.every(value => value === null)).toBe(true);
-      expect(wire.identityWrites).toBe(40);
+      expect(wire.identityWrites).toBe(24);
       expect(wire.cancelPackets).toBe(0);
       expect(wire.sockets).toHaveLength(4);
+    });
+  });
+
+  test("取消积压不提交多余SQL，下一健康身份查询在原3秒期限内恢复", async () => {
+    await withDatabase(4, async (repository, wire) => {
+      let storageSettled = 0;
+      const provider: IdentityProvider = { resolve: async ({ signal }) => {
+        await lookup(repository, signal).finally(() => { storageSettled++; });
+        return { status: "unauthenticated" };
+      } };
+      const controllers = Array.from({ length: 20 }, () => new AbortController());
+      const cancelledRequests = controllers.map(controller => outcome(resolveIdentity(provider, {
+        headers: {}, ip: "127.0.0.1", signal: controller.signal
+      })));
+      await until(() => wire.identityWrites === 4, "首批4条身份SELECT未开始");
+      controllers.forEach(controller => controller.abort(new Error("memory cancelled batch")));
+      expect((await Promise.all(cancelledRequests)).every(result => result.status === "rejected")).toBe(true);
+      // Each statement settles well within the existing 2.5s database limit.
+      const tick = setInterval(() => {
+        wire.sockets.filter(socket => socket.activeIdentity).forEach(socket => socket.finish());
+      }, 1_200);
+      try {
+        await expect(resolveIdentity(provider, { headers: {}, ip: "127.0.0.1" }))
+          .resolves.toEqual({ status: "unauthenticated" });
+        expect(storageSettled).toBe(21);
+        expect(wire.identityWrites).toBe(5);
+        expect(wire.sockets).toHaveLength(4);
+        expect(wire.cancelPackets).toBe(0);
+      } finally {
+        clearInterval(tick);
+        wire.holdIdentity = false;
+        wire.sockets.filter(socket => socket.activeIdentity).forEach(socket => socket.finish());
+      }
     });
   });
 
