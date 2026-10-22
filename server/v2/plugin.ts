@@ -37,6 +37,7 @@ import { QueryJobBusinessError } from "../upstream/query-jobs";
 import { biQueryJobHandleSchema } from "../../contracts/query-jobs";
 import type { OperatingQueryJobService } from "./operating-query-jobs.service";
 import { getEnabledPlatformByPid } from "../platforms/registry";
+import { operatingQueryEnvironmentEnabled } from "./operating-query-eligibility";
 
 export interface V2MetricQueryExecutor {
   execute(query: V2MetricQuery): Promise<V2MetricQuerySuccess>;
@@ -55,6 +56,7 @@ export interface V2BiPluginOptions {
   queryJobService?: Pick<BiQueryJobService, "create" | "status" | "result">;
   operatingQueryJobService?: Pick<OperatingQueryJobService, "create" | "status" | "result" | "handles">;
   productionDailyDashboardEnabled?: boolean;
+  productionOperatingAsyncEnabled?: boolean;
   dataEnvironmentResolver?: {
     testAvailable: boolean;
     resolveTest(request: FastifyRequest, principal: Principal):
@@ -212,6 +214,11 @@ function metricQueryResponseMatchesRequest(result: V2MetricQuerySuccess, query: 
 }
 
 export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, options) => {
+  const operatingAsyncAvailable = (environment: "test" | "production") => (
+    operatingQueryEnvironmentEnabled(environment,
+      options.productionDailyDashboardEnabled === true && options.productionOperatingAsyncEnabled === true)
+    && Boolean(options.dailyDashboardService && options.queryJobService && options.operatingQueryJobService)
+  );
   const identityTimeoutMs = options.identityTimeoutMs ?? DEFAULT_IDENTITY_TIMEOUT_MS;
   const resolveMetricDefinition = options.metricDefinitionResolver ?? getV2MetricDefinition;
   const requireContext = async (request: FastifyRequest, reply: FastifyReply): Promise<V2RequestContext | null> => {
@@ -286,7 +293,7 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
     if (!context) return;
     const enabled = context.environment.mode === "test" || options.productionDailyDashboardEnabled === true;
     const catalog = dailyDashboardCatalog(enabled && Boolean(options.dailyDashboardService));
-    const operatingAsyncEnabled = context.environment.mode === "test" && Boolean(options.dailyDashboardService && options.queryJobService && options.operatingQueryJobService);
+    const operatingAsyncEnabled = operatingAsyncAvailable(context.environment.mode);
     const bySite = new Map<string, string[]>();
     if (operatingAsyncEnabled) for (const platform of listV2Platforms(context.principal.pidScope)) {
       const site = getEnabledPlatformByPid(platform.pid)!.siteId;
@@ -336,7 +343,7 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
   const queryJobHandler = (operation: "create" | "status" | "result") => async (request: FastifyRequest, reply: FastifyReply) => {
     const context = await requireContext(request, reply);
     if (!context) return;
-    if (!options.queryJobService || context.environment.mode !== "test") {
+    if (!options.queryJobService || context.environment.mode === "production" && !operatingAsyncAvailable("production")) {
       return sendV2Error(request, reply, 422, "QUERY_JOBS_DISABLED", "当前环境尚未启用异步查询");
     }
     const handle = operation === "create" ? null : biQueryJobHandleSchema.safeParse((request.params as { handle?: unknown }).handle);
@@ -345,6 +352,9 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
     const operating = operation === "create"
       ? request.body !== null && typeof request.body === "object" && Reflect.get(request.body, "kind") === "operating-snapshot"
       : options.operatingQueryJobService?.handles(handleValue) === true;
+    if (context.environment.mode === "production" && !operating) {
+      return sendV2Error(request, reply, 422, "QUERY_JOBS_DISABLED", "当前环境尚未启用该异步查询");
+    }
     if (operating && !options.operatingQueryJobService) return sendV2Error(request, reply, 422, "QUERY_JOBS_DISABLED", "当前环境尚未启用经营异步查询");
     const service = operating ? options.operatingQueryJobService! : options.queryJobService;
     const controller = new AbortController();

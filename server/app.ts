@@ -692,11 +692,12 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const productionDailyReadingEnabled = env.NODE_ENV === "production"
     && env.BI_PRODUCTION_DASHBOARD_READING_ENABLED;
   const formalDailyReadingEnabled = localDailyReadingEnabled || productionDailyReadingEnabled;
+  const productionOperatingAsyncEnabled = productionDailyReadingEnabled && env.BI_PRODUCTION_OPERATING_ASYNC_ENABLED;
   const dailyDashboardService = formalDailyReadingEnabled || previewEnabled
     ? new DailyDashboardService(upstream, undefined, app.log, { sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS, readTraceEnabled: true }) : undefined;
-  const queryJobService = previewEnabled ? new BiQueryJobService(new QueryJobsClient(upstream)) : undefined;
+  const queryJobService = previewEnabled || productionOperatingAsyncEnabled ? new BiQueryJobService(new QueryJobsClient(upstream)) : undefined;
   const operatingQueryJobService = queryJobService && dailyDashboardService
-    ? new OperatingQueryJobService(queryJobService, dailyDashboardService) : undefined;
+    ? new OperatingQueryJobService(queryJobService, dailyDashboardService, undefined, { productionEnabled: productionOperatingAsyncEnabled }) : undefined;
   app.addHook("onClose", async () => { operatingQueryJobService?.close(); });
 
   await app.register(v2BiPlugin, {
@@ -707,6 +708,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     queryJobService,
     operatingQueryJobService,
     productionDailyDashboardEnabled: formalDailyReadingEnabled,
+    productionOperatingAsyncEnabled,
     dataEnvironmentResolver: {
       testAvailable: previewEnabled,
       resolveTest: resolvePreviewForPrincipal

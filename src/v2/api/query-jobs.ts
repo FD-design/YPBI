@@ -76,6 +76,7 @@ interface QueryJobProtocol<Request, Progress extends BiQueryJobProgress, Created
   validateProgress: (progress: Progress, request: Request) => boolean;
   progressSnapshot: (progress: Progress) => Progress;
   finish: (result: Result, request: Request) => Completed | null;
+  isCurrentScope?: () => boolean;
 }
 
 /** Shared bounded lifecycle; each public protocol validates its own request and result scope. */
@@ -99,6 +100,7 @@ export function createQueryJobProtocolRunner<Request, Progress extends BiQueryJo
     const check = () => {
       options.signal?.throwIfAborted();
       controller.signal.throwIfAborted();
+      if (protocol.isCurrentScope?.() === false) return invalidQueryJobScope();
       if (now() >= deadline) throw new BiQueryJobWaitError(handle);
     };
     const delay = async () => {

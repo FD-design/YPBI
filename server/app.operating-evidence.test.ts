@@ -92,6 +92,7 @@ async function createHarness(options: {
     TOKEN_MAINTENANCE_KEY: maintenancePassword, BI_PUBLIC_ORIGIN: publicOrigin,
     BI_V2_CORE_OVERVIEW_QUERY_ENABLED: false, BI_LOCAL_DASHBOARD_READING_ENABLED: false,
     BI_PRODUCTION_DASHBOARD_READING_ENABLED: true, BI_TEST_DATA_PREVIEW_ENABLED: true,
+    BI_PRODUCTION_OPERATING_ASYNC_ENABLED: false,
     REQUEST_TIMEOUT_MS: 1_000, MAX_PLATFORM_CONCURRENCY: 1, ...options.env
   };
   const authService = { csrfMatches: (session: string, csrf: string | undefined) => session === ordinarySession && csrf === csrfToken } as BiAuthService;

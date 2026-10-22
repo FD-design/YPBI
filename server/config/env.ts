@@ -31,6 +31,7 @@ const envSchema = z.object({
   BI_V2_CORE_OVERVIEW_QUERY_ENABLED: explicitBoolean,
   BI_LOCAL_DASHBOARD_READING_ENABLED: explicitBoolean,
   BI_PRODUCTION_DASHBOARD_READING_ENABLED: explicitBoolean,
+  BI_PRODUCTION_OPERATING_ASYNC_ENABLED: explicitBoolean,
   BI_TEST_DATA_PREVIEW_ENABLED: explicitBoolean,
   UPSTREAM_TEST_API_BASE_URL: z.preprocess(emptyStringAsUndefined, z.url().optional()),
   UPSTREAM_TEST_USER_NAME: z.preprocess(emptyStringAsUndefined, z.string().min(1).optional()),
@@ -48,6 +49,8 @@ function productionSourceWithReadingDefaults(source: NodeJS.ProcessEnv) {
     ...source,
     BI_PRODUCTION_DASHBOARD_READING_ENABLED: source.BI_PRODUCTION_DASHBOARD_READING_ENABLED?.trim()
       || String(authorizedDeployment && productionDashboardReadingDefaults.enabled),
+    BI_PRODUCTION_OPERATING_ASYNC_ENABLED: source.BI_PRODUCTION_OPERATING_ASYNC_ENABLED?.trim()
+      || String(authorizedDeployment && productionDashboardReadingDefaults.operatingAsyncEnabled),
     BI_TEST_DATA_PREVIEW_ENABLED: source.BI_TEST_DATA_PREVIEW_ENABLED?.trim() || String(productionDataPreviewDefaults.enabled),
     UPSTREAM_TEST_API_BASE_URL: source.UPSTREAM_TEST_API_BASE_URL?.trim() || productionDataPreviewDefaults.baseUrl,
     UPSTREAM_TEST_USER_NAME: source.UPSTREAM_TEST_USER_NAME?.trim() || source.UPSTREAM_USER_NAME.trim()

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { AppEnv } from "../config/env";
 import { UpstreamClient } from "./client";
 import { QueryJobBusinessError, QueryJobsClient, type QueryJobCreateRequest } from "./query-jobs";
@@ -16,6 +17,7 @@ const env = (): AppEnv => ({
   WORKSPACE_FILE: join(tmpdir(), `query-job-unused-${randomUUID()}`, "workspace.json"),
   BI_V2_CORE_OVERVIEW_QUERY_ENABLED: false, BI_LOCAL_DASHBOARD_READING_ENABLED: false,
   BI_PRODUCTION_DASHBOARD_READING_ENABLED: false, BI_TEST_DATA_PREVIEW_ENABLED: true,
+  BI_PRODUCTION_OPERATING_ASYNC_ENABLED: false,
   REQUEST_TIMEOUT_MS: 1000, MAX_PLATFORM_CONCURRENCY: 1
 });
 const body = (pid = "PH"): QueryJobCreateRequest => ({ queries: [{ query: {
@@ -113,6 +115,48 @@ describe("查询任务专用传输与来源绑定", () => {
     configuration.UPSTREAM_API_BASE_URL = "https://changed.example.invalid";
     await expect(client.status(renamed, taskId)).rejects.toMatchObject({ statusCode: 409 });
     expect(count).toBe(0);
+  });
+
+  for (const [site, pid, otherPid, originalToken] of [
+    ["primary", "PH", "FBI", "fixture-primary-token"],
+    ["secondary", "FBI", "PH", "fixture-secondary-token"]
+  ] as const) test(`正式${site}配对保存修订单调前进，恢复旧Token也不能恢复旧任务绑定`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ypbi-query-binding-"));
+    try {
+      const configuration = { ...env(), UPSTREAM_CREDENTIALS_FILE: join(directory, "credentials.json") };
+      let rejectProbe = false, jobReads = 0;
+      const upstream = new UpstreamClient(configuration, async (input, init) => {
+        const url = new URL(input.toString());
+        if (url.pathname.endsWith("/pDaySum")) return response({ code: rejectProbe ? 2002 : 200 });
+        jobReads++;
+        return response(init?.method === "POST" ? created() : url.pathname.endsWith("/result") ? result() : status());
+      });
+      const jobs = new QueryJobsClient(upstream);
+      const original = jobs.contextForPid(pid), other = jobs.contextForPid(otherPid);
+      const testBefore = await runWithUpstreamRequestProfile(preview(), async () => [jobs.contextForPid(pid), jobs.contextForPid(otherPid)]);
+      rejectProbe = true;
+      await expect(upstream.updateCredential(site, "fixture-rejected-token")).rejects.toMatchObject({ code: "UPSTREAM_AUTH_FAILED" });
+      expect(jobs.contextForPid(pid)).toEqual(original);
+      rejectProbe = false;
+      await upstream.updateCredential(site, "fixture-rotated-token");
+      const rotated = jobs.contextForPid(pid);
+      await upstream.updateCredential(site, originalToken);
+      const restored = jobs.contextForPid(pid);
+      expect(restored.accountRef).toBe(original.accountRef);
+      expect(restored.sourceRef).not.toBe(original.sourceRef);
+      expect(restored.sourceRef).not.toBe(rotated.sourceRef);
+      expect(jobs.contextForPid(otherPid)).toEqual(other);
+      const testAfter = await runWithUpstreamRequestProfile(preview(), async () => [jobs.contextForPid(pid), jobs.contextForPid(otherPid)]);
+      expect(testAfter).toEqual(testBefore);
+      for (const context of [original, rotated]) {
+        await expect(jobs.create(context, body(pid))).rejects.toMatchObject({ code: "UPSTREAM_QUERY_JOB_CONTEXT_CHANGED" });
+        await expect(jobs.status(context, taskId)).rejects.toMatchObject({ code: "UPSTREAM_QUERY_JOB_CONTEXT_CHANGED" });
+        await expect(jobs.result(context, taskId, 1)).rejects.toMatchObject({ code: "UPSTREAM_QUERY_JOB_CONTEXT_CHANGED" });
+      }
+      expect(jobReads).toBe(0);
+      expect((await jobs.status(restored, taskId)).msg.status).toBe("RUNNING");
+      expect(jobReads).toBe(1);
+    } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
   test("配额按实际后台账号归并，逻辑站点/环境仍由来源绑定隔离", async () => {

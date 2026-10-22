@@ -53,6 +53,7 @@ export class UpstreamClient {
   private readonly requestWorkQueue: RequestWorkQueue;
   private credentialUpdateQueue: Promise<void> = Promise.resolve();
   private credentials: PersistedCredentials = {};
+  private readonly credentialRevisions: Record<CredentialSite, number> = { primary: 0, secondary: 0 };
   private nextPhysicalReadId = 0;
 
   constructor(
@@ -192,6 +193,7 @@ export class UpstreamClient {
       await unlink(temporary).catch(() => undefined);
     }
     this.credentials = next;
+    this.credentialRevisions[site]++;
     this.responseCache.clear();
     this.inFlight.clear();
     return this.credentialStatus().find((item) => item.site === site)!;
@@ -285,7 +287,8 @@ export class UpstreamClient {
     if (!profile.token || !validUserName(profile.userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源账号尚未完整配置", 503);
     const environment = requestProfile?.environment ?? "production";
     const accountRef = createHash("sha256").update(JSON.stringify([new URL(profile.baseUrl).origin, profile.userName])).digest("hex");
-    const sourceRef = createHash("sha256").update(JSON.stringify([accountRef, environment, platform.siteId, profile.token, requestProfile?.cachePartition ?? null])).digest("hex");
+    const credentialRevision = requestProfile ? null : this.credentialRevisions[platform.siteId];
+    const sourceRef = createHash("sha256").update(JSON.stringify([accountRef, environment, platform.siteId, profile.token, requestProfile?.cachePartition ?? null, credentialRevision])).digest("hex");
     return Object.freeze({ routingPid: authorizedPid, siteId: platform.siteId, environment, accountRef, sourceRef });
   }
 

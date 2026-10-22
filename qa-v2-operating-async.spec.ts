@@ -70,7 +70,7 @@ function response(query: DailyDashboardQuery): DailyDashboardV2Success {
 }
 
 type Stage = "queued" | "running" | "projection" | "complete" | "failed";
-async function fixtures(page: Page, mode: "test" | "production" = "test") {
+async function fixtures(page: Page, mode: "test" | "production" = "test", asyncEnabled = true) {
   let stage: Stage = "queued";
   const dailyCalls: DailyDashboardQuery[] = [], creates: OperatingQueryJobRequest[] = [];
   const reads: { pid: string; result: boolean; stage: Stage }[] = [], external: string[] = [], unexpected: string[] = [];
@@ -95,7 +95,7 @@ async function fixtures(page: Page, mode: "test" | "production" = "test") {
       const catalog = structuredClone(generated.catalog);
       delete catalog.data.operatingAsyncEnabled;
       delete catalog.data.operatingAsyncPidGroups;
-      if (mode === "test") Object.assign(catalog.data, { operatingAsyncEnabled: true, operatingAsyncPidGroups: groups });
+      if (asyncEnabled) Object.assign(catalog.data, { operatingAsyncEnabled: true, operatingAsyncPidGroups: groups });
       return route.fulfill({ json: catalog });
     }
     if (path.endsWith("/catalog/platforms")) return route.fulfill({ json: { success: true, data: { items: platforms } } });
@@ -103,11 +103,11 @@ async function fixtures(page: Page, mode: "test" | "production" = "test") {
       const query = request.postDataJSON() as DailyDashboardQuery;
       dailyCalls.push(query);
       // The original whole-board read stays synchronous in both environments.
-      if (mode === "test") expect(query.projection).toBeUndefined();
+      if (asyncEnabled) expect(query.projection).toBeUndefined();
       return route.fulfill({ json: response(query) });
     }
     if (path === "/api/bi/v2/queries/jobs" && request.method() === "POST") {
-      expect(mode).toBe("test");
+      expect(asyncEnabled).toBe(true);
       const body = operatingQueryJobRequestSchema.parse(request.postDataJSON());
       expect(body.date).toBe(date);
       expect(groups).toContainEqual(body.pids);
@@ -117,7 +117,7 @@ async function fixtures(page: Page, mode: "test" | "production" = "test") {
     }
     const match = path.match(/^\/api\/bi\/v2\/queries\/jobs\/([^/]+)(\/result)?$/);
     if (match && request.method() === "GET") {
-      expect(mode).toBe("test");
+      expect(asyncEnabled).toBe(true);
       const index = handles.indexOf(match[1]);
       expect(index).toBeGreaterThanOrEqual(0);
       const current = stage, pid = groups[index][0];
@@ -170,9 +170,11 @@ const detail = (page: Page) => page.getByRole("dialog", { name: "活跃用户人
 const url = `${base}/dashboards/public?board=5.2&pid=PH&start=2026-09-02&end=${date}`;
 const labels: Record<string, string> = { READY: "已返回", SOURCE_INCOMPLETE: "来源不完整", PROCESSING: "计算中", FAILED: "加工失败", no_record: "当日未返回记录" };
 
-test("测试两站异步进度、投影等待、93列真实状态、已开三期详情与完整XLSX同源", async ({ page }, info) => {
+for (const mode of ["test", "production"] as const) {
+const environmentLabel = mode === "test" ? "测试" : "正式";
+test(`${environmentLabel}两站异步进度、投影等待、93列真实状态、已开三期详情与完整XLSX同源`, async ({ page }, info) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
-  const control = await fixtures(page);
+  const control = await fixtures(page, mode);
   await page.goto(url);
   await expect(rows(page)).toHaveCount(2);
   await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
@@ -229,14 +231,14 @@ test("测试两站异步进度、投影等待、93列真实状态、已开三期
 
   await local(page).getByRole("button", { name: "导出经营明细", exact: true }).click();
   const exportDialog = page.getByRole("dialog", { name: "导出经营明细", exact: true });
-  await expect(exportDialog).toContainText("测试");
+  await expect(exportDialog).toContainText(environmentLabel);
   const downloading = page.waitForEvent("download");
   await exportDialog.getByRole("button", { name: "下载 XLSX", exact: true }).click();
   const download = await downloading;
   expect(download.suggestedFilename()).toMatch(/^经营明细.*\.xlsx$/);
   const workbook = readWorkbook(readFileSync((await download.path())!));
   expect([...workbook.keys()]).toEqual(["00_导出说明", "01_经营明细", "02_数值摘要", "03_字段说明", "04_计算输入"]);
-  expect(workbook.get("00_导出说明")!.flat().join(" ")).toContain("测试");
+  expect(workbook.get("00_导出说明")!.flat().join(" ")).toContain(environmentLabel);
   expect(workbook.get("03_字段说明")).toHaveLength(94);
   const sheet = workbook.get("01_经营明细")!;
   expect(sheet).toHaveLength(3);
@@ -269,8 +271,8 @@ test("测试两站异步进度、投影等待、93列真实状态、已开三期
   expect(control.external).toEqual([]); expect(control.unexpected).toEqual([]); expect(errors).toEqual([]);
 });
 
-test("任务FAILED只影响所属站点，保留错误码且不回退同步或静默重建", async ({ page }, info) => {
-  const control = await fixtures(page);
+test(`${environmentLabel}任务FAILED只影响所属站点，保留错误码且不回退同步或静默重建`, async ({ page }, info) => {
+  const control = await fixtures(page, mode);
   await page.goto(url);
   await expect.poll(() => control.creates.length).toBe(2);
   control.advance("failed");
@@ -288,9 +290,10 @@ test("任务FAILED只影响所属站点，保留错误码且不回退同步或�
   expect(control.dailyCalls.some(query => query.projection)).toBe(false);
   expect(control.external).toEqual([]); expect(control.unexpected).toEqual([]);
 });
+}
 
 test("正式目录不提供异步能力时保留原同步93列与真实状态，不创建任务", async ({ page }) => {
-  const control = await fixtures(page, "production");
+  const control = await fixtures(page, "production", false);
   await page.goto(url);
   await expect(rows(page)).toHaveCount(2);
   await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);

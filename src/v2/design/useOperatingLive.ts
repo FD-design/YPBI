@@ -3,7 +3,7 @@ import { OPERATING_METRIC_IDS } from "../../../contracts/operating-detail-projec
 import { fetchDailyDashboard, V2RequestError, readV2RequestDiagnostics } from "../api/client";
 import { shiftDate } from "../../components/ui/date-range-model";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
-import { operatingLiveRows, operatingLiveColumns, operatingLiveColumnMetadataKey, operatingResource, operatingDataEnvironment, type OperatingResources } from "./operating-live-model";
+import { operatingLiveRows, operatingLiveColumns, operatingLiveColumnMetadataKey, operatingResource, type OperatingResources } from "./operating-live-model";
 import { completeOperatingPlatformQuery, operatingReadNotice, type OperatingReadProgress } from "./operating-read-progress";
 import { runOperatingQueryJob } from "../api/operating-query-jobs";
 import { currentDataEnvironmentPreference } from "../api/dataEnvironmentPreference";
@@ -18,10 +18,10 @@ export function useOperatingResources(live: OperatingRequestScope | null) {
   const [resources, setResources] = useState<OperatingResources>({});
   const [progress, setProgress] = useState<OperatingReadProgress | null>(null);
   const platforms = live?.platforms ?? [], date = live?.query.dateRange[1] ?? "";
-  const environment = live ? operatingDataEnvironment(live) : undefined;
-  const asyncGroups = currentDataEnvironmentPreference() === "test" ? live?.operatingAsyncPidGroups : undefined;
-  // The route's dataScopeKey remounts on environment changes; provenance arrival is not a new query.
-  const key = JSON.stringify([Boolean(live), date, platforms.map(platform => platform.pid), asyncGroups]);
+  const environment = currentDataEnvironmentPreference();
+  const asyncGroups = live?.operatingAsyncPidGroups;
+  // Request intent invalidates the scope immediately; provenance arrival is not a new query.
+  const key = JSON.stringify([Boolean(live), environment, date, platforms.map(platform => platform.pid), asyncGroups]);
   const activeKey = useRef(key);
   const revision = live?.refreshRevision ?? 0;
   const progressScopeKey = JSON.stringify([key, revision]);

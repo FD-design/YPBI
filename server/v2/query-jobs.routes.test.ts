@@ -83,6 +83,57 @@ describe("BI异步路由边界", () => {
     }
     expect(seen).toHaveLength(0); expect(operatingSeen).toHaveLength(0);
   });
+  test("正式显式准入只开放经营三步，通用自定义任务和未知句柄保持关闭", async () => {
+    const seen: unknown[] = [], operatingSeen: unknown[] = [];
+    const instance = await app({ productionOperatingAsyncEnabled: true, queryJobService: service(seen),
+      operatingQueryJobService: operatingService(operatingSeen), dailyDashboardService: { execute: async () => { throw new Error("unused"); } } });
+    for (const [method, suffix] of [["POST", ""], ["GET", `/${operatingHandle}`], ["GET", `/${operatingHandle}/result`]] as const) {
+      const response = await instance.inject({ method, url: `/api/bi/v2/queries/jobs${suffix}`,
+        ...(method === "POST" ? { payload: { kind: "operating-snapshot", pids: ["PH"], date: "2026-10-17" } } : {}) });
+      expect(response.statusCode).toBe(200);
+    }
+    expect(operatingSeen).toHaveLength(3);
+    expect(operatingSeen.every(value => (value as { profile: unknown }).profile === undefined)).toBe(true);
+    for (const [method, suffix] of [["POST", ""], ["GET", `/${handle}`], ["GET", `/${handle}/result`]] as const) {
+      const response = await instance.inject({ method, url: `/api/bi/v2/queries/jobs${suffix}`, ...(method === "POST" ? { payload: { queries: [] } } : {}) });
+      expect(response.statusCode).toBe(422); expect(response.json().error.code).toBe("QUERY_JOBS_DISABLED");
+    }
+    expect(seen).toHaveLength(0); expect(operatingSeen).toHaveLength(3);
+  });
+  for (const unavailable of ["production-flag", "daily-flag", "daily-service", "query-service", "operating-service"] as const) {
+    test(`正式${unavailable}未就绪时目录与三步同时关闭，不访问旧句柄`, async () => {
+      const seen: unknown[] = [], operatingSeen: unknown[] = [];
+      const instance = await app({ productionOperatingAsyncEnabled: unavailable !== "production-flag",
+        productionDailyDashboardEnabled: unavailable !== "daily-flag",
+        dailyDashboardService: unavailable === "daily-service" ? undefined : { execute: async () => { throw new Error("unused"); } },
+        queryJobService: unavailable === "query-service" ? undefined : service(seen),
+        operatingQueryJobService: unavailable === "operating-service" ? undefined : operatingService(operatingSeen) });
+      const catalog = (await instance.inject("/api/bi/v2/catalog/readable-dashboards")).json();
+      expect(catalog.data.operatingAsyncEnabled).toBe(false); expect(catalog.data.operatingAsyncPidGroups).toBeUndefined();
+      for (const [method, suffix] of [["POST", ""], ["GET", `/${operatingHandle}`], ["GET", `/${operatingHandle}/result`]] as const) {
+        const response = await instance.inject({ method, url: `/api/bi/v2/queries/jobs${suffix}`,
+          ...(method === "POST" ? { payload: { kind: "operating-snapshot", pids: ["PH"], date: "2026-10-17" } } : {}) });
+        expect(response.statusCode).toBe(422); expect(response.json().error.code).toBe("QUERY_JOBS_DISABLED");
+      }
+      expect(seen).toHaveLength(0); expect(operatingSeen).toHaveLength(0);
+    });
+  }
+  test("正式目录仅发布授权同站PID组，测试预览缺失仍独立拒绝", async () => {
+    const seen: unknown[] = [];
+    const instance = await app({ productionOperatingAsyncEnabled: true, queryJobService: service(), operatingQueryJobService: operatingService(seen),
+      dailyDashboardService: { execute: async () => { throw new Error("unused"); } },
+      identityProvider: { resolve: async () => ({ status: "authenticated", principal: { subjectId: "fixture", roles: ["viewer"], permissions: ["bi:read"], pidScope: ["PH", "FBI", "UNKNOWN"] } }) },
+      dataEnvironmentResolver: { testAvailable: true, resolveTest: () => ({ status: "expired" }) } });
+    const catalog = dailyDashboardCatalogSchema.parse((await instance.inject("/api/bi/v2/catalog/readable-dashboards")).json());
+    expect(catalog.data.operatingAsyncEnabled).toBe(true);
+    expect(catalog.data.operatingAsyncPidGroups?.flat().sort()).toEqual(["FBI", "PH"]);
+    expect(catalog.data.operatingAsyncPidGroups?.every(group => new Set(group.map(pid => getEnabledPlatformByPid(pid)?.siteId)).size === 1)).toBe(true);
+    for (const url of ["/api/bi/v2/catalog/readable-dashboards", `/api/bi/v2/queries/jobs/${operatingHandle}`, `/api/bi/v2/queries/jobs/${operatingHandle}/result`]) {
+      const response = await instance.inject({ url, headers: testHeaders });
+      expect(response.statusCode).toBe(409); expect(response.json().error.code).toBe("DATA_PREVIEW_SESSION_REQUIRED");
+    }
+    expect(seen).toHaveLength(0);
+  });
   test("经营kind与句柄只转给经营编排，旧显式查询协议保持独立", async () => {
     const seen: unknown[] = [], operatingSeen: unknown[] = [];
     const instance = await app({ queryJobService: service(seen), operatingQueryJobService: operatingService(operatingSeen), dataEnvironmentResolver });

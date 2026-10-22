@@ -4,7 +4,8 @@ import type { DailyDashboardQuery } from "../../../contracts/daily-dashboard";
 import { DAILY_STATISTICS_VERSION } from "../../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "../../../contracts/operating-detail-projection";
 import { operatingQueryDateRange } from "../../../contracts/operating-query-jobs";
-import { currentDataEnvironmentPreference, setDataEnvironmentPreference } from "../api/dataEnvironmentPreference";
+import { currentDataEnvironmentPreference, setDataEnvironmentPreference, type DataEnvironmentMode } from "../api/dataEnvironmentPreference";
+import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 import type { LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { useOperatingLive } from "./useOperatingLive";
 
@@ -149,14 +150,14 @@ test("日期切换取消旧轮，迟到响应不计入新进度或覆盖新结�
   });
 });
 
-test("测试模式按服务器站点组运行任务，成功投影保持93列真实状态，失败组不转同步", async () => {
+for (const environment of ["test", "production"] as const) test(`${environment}模式按服务器站点组运行任务，成功投影保持93列真实状态，失败组不转同步`, async () => {
   const originalFetch = globalThis.fetch, originalEnvironment = currentDataEnvironmentPreference(), harness = hookHarness();
-  setDataEnvironmentPreference("test");
+  setDataEnvironmentPreference(environment);
   const calls: string[] = [], handles = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
-  const live = { ...reading(), dataEnvironment: "test" as const, operatingAsyncPidGroups: [["PH"], ["TT"]] };
+  const live = { ...reading(), dataEnvironment: environment, operatingAsyncPidGroups: [["PH"], ["TT"]] };
   globalThis.fetch = (async (path, init) => {
     calls.push(String(path));
-    expect(new Headers(init?.headers).get("x-ypbi-data-environment")).toBe("test");
+    expect(new Headers(init?.headers).get("x-ypbi-data-environment")).toBe(environment);
     const request = init?.body ? JSON.parse(String(init.body)) : null;
     const index = request ? request.pids[0] === "PH" ? 0 : 1 : String(path).includes(handles[0]) ? 0 : 1;
     const scope = { kind: "operating-snapshot", pids: [index ? "TT" : "PH"], date: "2020-01-01", handle: handles[index] };
@@ -174,6 +175,7 @@ test("测试模式按服务器站点组运行任务，成功投影保持93列真
     expect(current.notice.progress).toBeNull();
     expect(current.resources.PH.status === "success" && current.resources.PH.data.data.series).toHaveLength(93);
     expect(current.resources.PH.status === "success" && current.resources.PH.data.data.series[0].points[0].sourceStatus).toBe("PROCESSING");
+    expect(current.resources.PH.status === "success" && dailyDashboardEnvironment(current.resources.PH.data)).toBe(environment);
     expect(current.resources.TT).toMatchObject({ status: "failure", code: "QUERY_JOB_FAILED", message: "查询任务执行失败" });
     expect(calls.filter(path => path === "/api/bi/v2/queries/jobs")).toHaveLength(2);
     expect(calls.some(path => path.includes("daily-reading"))).toBe(false);
@@ -198,8 +200,8 @@ test("异步目录漏平台或重复平台时失败关闭，不偷偷改用同�
   } finally { globalThis.fetch = originalFetch; setDataEnvironmentPreference(originalEnvironment); }
 });
 
-function asyncReading(pids = ["PH"]): LiveDashboardReading {
-  return { ...reading(pids), dataEnvironment: "test", operatingAsyncPidGroups: pids.map(pid => [pid]) };
+function asyncReading(pids = ["PH"], environment: DataEnvironmentMode = "test"): LiveDashboardReading {
+  return { ...reading(pids), dataEnvironment: environment, operatingAsyncPidGroups: pids.map(pid => [pid]) };
 }
 
 interface PendingJobRead {
@@ -210,9 +212,9 @@ interface PendingJobRead {
   finish: (payload: unknown, status?: number) => void;
 }
 
-async function withJobReads(run: (harness: ReturnType<typeof hookHarness>, pending: PendingJobRead[]) => Promise<void>) {
+async function withJobReads(run: (harness: ReturnType<typeof hookHarness>, pending: PendingJobRead[]) => Promise<void>, mode: DataEnvironmentMode = "test") {
   const originalFetch = globalThis.fetch, environment = currentDataEnvironmentPreference(), harness = hookHarness(), pending: PendingJobRead[] = [];
-  setDataEnvironmentPreference("test");
+  setDataEnvironmentPreference(mode);
   globalThis.fetch = (async (path, init) => new Promise<Response>(resolve => {
     pending.push({ path: String(path), body: init?.body ? JSON.parse(String(init.body)) : null,
       signal: init?.signal, headers: new Headers(init?.headers), finish: (payload, status = 200) => resolve(Response.json(payload, { status })) });
@@ -356,7 +358,7 @@ test("异步刷新创建失败保留原结果与时间，权限拒绝清除旧�
   });
 }, 10_000);
 
-test("环境作用域卸载停止旧异步创建，正式新作用域仅同步读取且不接收旧进度", async () => {
+test("环境作用域卸载停止旧异步创建，正式能力禁用时沿原同步读取且不接收旧进度", async () => {
   await withJobReads(async (oldHarness, pending) => {
     const old = asyncReading();
     oldHarness.render(old); oldHarness.flushEffects();
@@ -364,7 +366,7 @@ test("环境作用域卸载停止旧异步创建，正式新作用域仅同步�
     oldHarness.unmount();
     expect(pending[0].signal?.aborted).toBe(true);
     setDataEnvironmentPreference("production");
-    const current = { ...reading(["PH"]), operatingAsyncPidGroups: [["PH"]] }, newHarness = hookHarness();
+    const current = reading(["PH"]), newHarness = hookHarness();
     try {
       newHarness.render(current); newHarness.flushEffects();
       await until(() => pending.length === 2);
@@ -379,5 +381,66 @@ test("环境作用域卸载停止旧异步创建，正式新作用域仅同步�
       expect(result.notice).toEqual({ progress: null, retained: null });
       expect(pending).toHaveLength(2);
     } finally { newHarness.unmount(); }
+  });
+});
+
+for (const environment of ["test", "production"] as const) test(`${environment}未收到服务器异步分组时保持同步93列读取`, async () => {
+  await withJobReads(async (harness, pending) => {
+    const live = { ...reading(), dataEnvironment: environment };
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 2);
+    expect(pending.every(read => read.path === "/api/bi/v2/queries/dashboards/daily-reading")).toBe(true);
+    expect(pending.every(read => read.headers.get("x-ypbi-data-environment") === environment)).toBe(true);
+    for (const read of pending) read.finish(success(read.body as unknown as DailyDashboardQuery, "PROCESSING", "2026-10-21T03:00:00Z"));
+    await until(() => harness.render(live).notice.progress === null);
+    const result = harness.render(live);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows!.every(row => row.values.length === 93)).toBe(true);
+    expect(result.resources.PH.status === "success" && result.resources.PH.data.data.series[0].points[0].sourceStatus).toBe("PROCESSING");
+  }, environment);
+});
+
+for (const rejection of [
+  { status: 401, code: "AUTHENTICATION_REQUIRED" },
+  { status: 403, code: "PID_ACCESS_DENIED" },
+  { status: 409, code: "DATA_PREVIEW_SESSION_REQUIRED" },
+  { status: 409, code: "QUERY_JOB_CONTEXT_CHANGED" },
+  { status: 422, code: "QUERY_JOBS_DISABLED" }
+]) test(`正式任务${rejection.code}失败保持原拒绝，不转同步请求`, async () => {
+  await withJobReads(async (harness, pending) => {
+    const live = asyncReading(["PH"], "production");
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 1);
+    pending[0].finish({ success: false, error: { code: rejection.code, message: "查询任务拒绝", requestId: "fixture-rejected" } }, rejection.status);
+    await until(() => harness.render(live).resources.PH?.status === "failure");
+    expect(harness.render(live).resources.PH).toMatchObject({ status: "failure", code: rejection.code });
+    expect(harness.render(live).notice.progress).toBeNull();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].path).toBe("/api/bi/v2/queries/jobs");
+  }, "production");
+});
+
+test("同一经营容器环境变化立即隐藏旧状态并取消旧创建，新环境独立创建任务", async () => {
+  await withJobReads(async (harness, pending) => {
+    const old = asyncReading(), current = asyncReading(["PH"], "production");
+    harness.render(old); harness.flushEffects();
+    await until(() => pending.length === 1);
+    setDataEnvironmentPreference("production");
+    expect(harness.render(current).resources.PH).toEqual({ status: "loading" });
+    expect(harness.render(current).notice.progress).toBeNull();
+    harness.flushEffects();
+    await until(() => pending.length === 2);
+    expect(pending[0].signal?.aborted).toBe(true);
+    expect(pending[0].headers.get("x-ypbi-data-environment")).toBe("test");
+    expect(pending[1].headers.get("x-ypbi-data-environment")).toBe("production");
+    pending[0].finish({ success: true, data: { ...jobScope(old, "PH", "22222222-2222-4222-8222-222222222222"), reused: false } });
+    await finishJob(pending, current, 1);
+    await until(() => harness.render(current).resources.PH?.status === "success");
+    const result = harness.render(current);
+    expect(result.resources.PH.status === "success" && dailyDashboardEnvironment(result.resources.PH.data)).toBe("production");
+    expect(result.rows![0].values).toHaveLength(93);
+    expect(pending).toHaveLength(4);
+    expect(pending.some(read => read.path.includes("22222222"))).toBe(false);
+    expect(pending.every(read => read.path.startsWith("/api/bi/v2/queries/jobs"))).toBe(true);
   });
 });

@@ -19,6 +19,7 @@ describe("正式日看板读取配置", () => {
   for (const nodeEnv of ["development", "test"] as const) {
     test(`${nodeEnv} 普通配置默认关闭正式日看板读取`, () => {
       expect(loadEnv({ NODE_ENV: nodeEnv }).BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(false);
+      expect(loadEnv({ NODE_ENV: nodeEnv }).BI_PRODUCTION_OPERATING_ASYNC_ENABLED).toBe(false);
       expect(loadEnv({ NODE_ENV: nodeEnv, BI_PUBLIC_ORIGIN: deployedOrigin }).BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(false);
     });
   }
@@ -27,6 +28,7 @@ describe("正式日看板读取配置", () => {
     test(`唯一生产部署 ${origin} 默认开启正式日看板读取`, () => {
       const env = loadEnv({ ...productionSource, BI_PUBLIC_ORIGIN: origin });
       expect(env.BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(true);
+      expect(env.BI_PRODUCTION_OPERATING_ASYNC_ENABLED).toBe(true);
       expect(env.BI_LOCAL_DASHBOARD_READING_ENABLED).toBe(false);
       expect(env.BI_V2_CORE_OVERVIEW_QUERY_ENABLED).toBe(false);
     });
@@ -41,6 +43,7 @@ describe("正式日看板读取配置", () => {
   for (const origin of ["https://unknown.example.test", "https://187.77.129.207.nip.io:8443", "https://187.77.129.207.nip.io.other.example.test"]) {
     test(`未登记生产 Origin ${origin} 默认关闭正式读取`, () => {
       expect(loadEnv({ ...productionSource, BI_PUBLIC_ORIGIN: origin }).BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(false);
+      expect(loadEnv({ ...productionSource, BI_PUBLIC_ORIGIN: origin }).BI_PRODUCTION_OPERATING_ASYNC_ENABLED).toBe(false);
     });
   }
 
@@ -48,6 +51,18 @@ describe("正式日看板读取配置", () => {
     expect(loadEnv({ ...productionSource, BI_PRODUCTION_DASHBOARD_READING_ENABLED: "true" }).BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(true);
     for (const value of ["1", "yes", "TRUE"]) {
       expect(() => loadEnv({ ...productionSource, BI_PRODUCTION_DASHBOARD_READING_ENABLED: value })).toThrow("环境变量配置错误");
+    }
+  });
+
+  test("正式经营异步可独立显式关闭，配置仅接受明确布尔且独立于测试预览", () => {
+    const disabled = loadEnv({ ...productionSource, BI_PRODUCTION_OPERATING_ASYNC_ENABLED: "false" });
+    expect(disabled.BI_PRODUCTION_OPERATING_ASYNC_ENABLED).toBe(false);
+    expect(disabled.BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(true);
+    expect(disabled.BI_TEST_DATA_PREVIEW_ENABLED).toBe(true);
+    expect(loadEnv({ ...productionSource, BI_TEST_DATA_PREVIEW_ENABLED: "false" }).BI_PRODUCTION_OPERATING_ASYNC_ENABLED).toBe(true);
+    expect(loadEnv({ ...productionSource, BI_PUBLIC_ORIGIN: "https://other.example.test", BI_PRODUCTION_OPERATING_ASYNC_ENABLED: "true" }).BI_PRODUCTION_OPERATING_ASYNC_ENABLED).toBe(true);
+    for (const value of ["1", "0", "yes", "TRUE"]) {
+      expect(() => loadEnv({ ...productionSource, BI_PRODUCTION_OPERATING_ASYNC_ENABLED: value })).toThrow("环境变量配置错误");
     }
   });
 

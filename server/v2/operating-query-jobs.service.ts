@@ -11,6 +11,7 @@ import { toBeijingDate } from "../upstream/date";
 import { BiQueryJobError, type BiQueryJobService } from "./query-jobs.service";
 import { dailyDashboardMatchesMapping, type DailyDashboardService, type OperatingModernSources } from "./daily-dashboard.service";
 import { createOperatingQueryPlan, normalizeOperatingQueryResults, type OperatingQueryPlan } from "./operating-query-plan";
+import { operatingQueryEnvironmentEnabled } from "./operating-query-eligibility";
 
 type Jobs = Pick<BiQueryJobService, "create" | "status" | "result">;
 type Daily = Pick<DailyDashboardService, "executeOperating">;
@@ -28,17 +29,19 @@ const PROJECTION_WAIT_MS = 5 * 60_000 + 120_000 + 30_000;
 function invalid(message = "经营任务结果未通过范围校验") {
   return new BiQueryJobError("QUERY_JOB_RESULT_INVALID", 502, message);
 }
-function requireTest() {
-  if (currentUpstreamRequestProfile()?.environment !== "test") {
-    throw new BiQueryJobError("QUERY_JOB_FORBIDDEN", 403, "经营异步查询仅在已验证的测试环境使用");
-  }
-}
 
 /** Ephemeral server plans reference existing identity-bound jobs; browsers never supply source rows. */
 export class OperatingQueryJobService {
   private readonly entries = new Map<string, Entry>();
   private creating = 0;
-  constructor(private readonly jobs: Jobs, private readonly daily: Daily, private readonly now = Date.now) {}
+  constructor(private readonly jobs: Jobs, private readonly daily: Daily, private readonly now = Date.now,
+    private readonly options: { productionEnabled?: boolean } = {}) {}
+
+  private requireEnvironment() {
+    if (!operatingQueryEnvironmentEnabled(currentUpstreamRequestProfile()?.environment ?? "production", this.options.productionEnabled)) {
+      throw new BiQueryJobError("QUERY_JOB_FORBIDDEN", 403, "当前环境尚未启用经营异步查询");
+    }
+  }
 
   handles(handle: string) { return this.entries.has(handle); }
 
@@ -64,7 +67,7 @@ export class OperatingQueryJobService {
   }
 
   async create(principal: Principal, raw: unknown, signal?: AbortSignal) {
-    requireTest(); signal?.throwIfAborted();
+    this.requireEnvironment(); signal?.throwIfAborted();
     const parsed = operatingQueryJobRequestSchema.safeParse(raw);
     if (!parsed.success) throw new BiQueryJobError("QUERY_JOB_INVALID", 400, "经营任务参数不合法");
     for (const [handle, entry] of this.entries) if (this.now() - entry.createdAt >= BINDING_TTL_MS) {
@@ -89,7 +92,7 @@ export class OperatingQueryJobService {
         timer: setTimeout(() => { entry.error = invalid("经营查询本地等待已结束，请重新查询"); this.stop(entry, entry.error); }, PROJECTION_WAIT_MS) };
       entry.timer.unref?.();
       this.entries.set(handle, entry);
-      // Legacy consumers start inside this request's test profile and await only server-validated modern sources.
+      // Legacy consumers retain the creating request's environment and await validated modern sources.
       void Promise.all(scope.pids.map(pid => Promise.resolve().then(() => this.daily.executeOperating({ boardId: "5.2", projection: "operating_snapshot", pid, dateRange: plan.dateRange }, sources.then(values => {
         const source = values.get(pid); if (!source) throw invalid(); return source;
       }), controller.signal)))).then(dashboards => {
@@ -109,7 +112,7 @@ export class OperatingQueryJobService {
   }
 
   async status(principal: Principal, handle: string, signal?: AbortSignal) {
-    requireTest(); signal?.throwIfAborted();
+    this.requireEnvironment(); signal?.throwIfAborted();
     const entry = this.entry(handle);
     const response = await this.jobs.status(principal, entry.jobHandle, signal);
     signal?.throwIfAborted();
@@ -119,7 +122,7 @@ export class OperatingQueryJobService {
   }
 
   async result(principal: Principal, handle: string, signal?: AbortSignal) {
-    requireTest(); signal?.throwIfAborted();
+    this.requireEnvironment(); signal?.throwIfAborted();
     const entry = this.entry(handle);
     const response = await this.jobs.result(principal, entry.jobHandle, signal);
     signal?.throwIfAborted();

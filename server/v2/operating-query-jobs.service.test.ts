@@ -18,16 +18,18 @@ afterEach(() => { for (const service of services.splice(0)) service.close(); });
 const inTest = <T>(operation: () => Promise<T>, source = profile) => runWithUpstreamRequestProfile(source, operation);
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 
-function fixture(holdLegacy = false) {
+function fixture(holdLegacy = false, productionEnabled = false) {
   let time = Date.parse("2026-10-21T04:20:00Z"), state: QueryJobStatus["msg"]["status"] = "RUNNING";
+  let productionSourceVersion = "v1";
   let queries: QueryJobCreateRequest | undefined, creates = 0, reads = 0;
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const legacy: { path: string; profile: unknown }[] = [];
   const contextForPid = (routingPid: string): QueryJobContext => {
     const current = currentUpstreamRequestProfile();
-    return { routingPid, siteId: getEnabledPlatformByPid(routingPid)!.siteId, environment: current ? "test" : "production",
-      accountRef: current?.userName ?? "production-account", sourceRef: `${current?.token}:${current?.cachePartition}` };
+    const siteId = getEnabledPlatformByPid(routingPid)!.siteId;
+    return { routingPid, siteId, environment: current ? "test" : "production",
+      accountRef: current?.userName ?? `${siteId}-production-account`, sourceRef: current ? `${current.token}:${current.cachePartition}` : `${siteId}:${productionSourceVersion}` };
   };
   const taskId = "0123456789abcdef0123456789abcdef";
   const message = () => ({ taskId, status: state, totalUnits: queries!.queries.length,
@@ -45,8 +47,10 @@ function fixture(holdLegacy = false) {
     if (holdLegacy) await gate;
     throw new UpstreamError("UPSTREAM_FAILED", "Fixture legacy source unavailable");
   } }, () => new Date(time));
-  const service = new OperatingQueryJobService(jobs, daily, () => time); services.push(service);
+  const options = { productionEnabled };
+  const service = new OperatingQueryJobService(jobs, daily, () => time, options); services.push(service);
   return { service, legacy, release, state: (next: typeof state) => { state = next; }, advance: (ms: number) => { time += ms; },
+    rotateProduction: () => { productionSourceVersion = "v2"; }, disableProduction: () => { options.productionEnabled = false; },
     counts: () => ({ creates, reads }), request: () => queries };
 }
 
@@ -76,7 +80,7 @@ describe("服务器经营任务编排", () => {
     });
   });
 
-  test("正式环境不能直接调用编排，浏览器不能提交业务rows或自定义计划", async () => {
+  test("正式环境默认关闭，浏览器不能提交业务rows或自定义计划", async () => {
     const f = fixture();
     await expect(f.service.create(principal, request)).rejects.toMatchObject({ code: "QUERY_JOB_FORBIDDEN" });
     await inTest(async () => {
@@ -85,6 +89,73 @@ describe("服务器经营任务编排", () => {
       }
     });
     expect(f.counts().creates).toBe(0); expect(f.legacy).toHaveLength(0);
+  });
+
+  for (const pid of ["PH", "FBI"]) test(`显式开启正式${pid}原站点计划并交付93列，legacy保留正式环境`, async () => {
+    const f = fixture(false, true), reader = { ...principal, pidScope: [pid] };
+    const created = await f.service.create(reader, { ...request, pids: [pid] });
+    await settle();
+    expect(f.request()!.queries.every(unit => unit.query.pid === pid)).toBe(true);
+    expect(f.legacy.length).toBeGreaterThan(0);
+    expect(f.legacy.every(call => call.profile === undefined && !/bi\/v1\/(metrics|playback)/.test(call.path))).toBe(true);
+    expect((await f.service.status(reader, created.data.handle)).data.status).toBe("RUNNING");
+    f.state("SUCCEEDED");
+    await f.service.result(reader, created.data.handle); await settle();
+    const result = await f.service.result(reader, created.data.handle);
+    expect(result.data.phase).toBe("complete");
+    expect(result.data.dashboards?.[0].data.query.pid).toBe(pid);
+    expect(result.data.dashboards?.[0].data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
+    expect(operatingQueryJobResultSchema.safeParse(result).success).toBe(true);
+    expect(JSON.stringify(result)).not.toMatch(/production-account|sourceRef|fixture-token/);
+  });
+
+  test("正式任务不接受跨站、越权PID、业务行或自定义计划", async () => {
+    const f = fixture(false, true);
+    await expect(f.service.create({ ...principal, pidScope: "all" }, { ...request, pids: ["PH", "FBI"] })).rejects.toMatchObject({ code: "QUERY_JOB_INVALID" });
+    await expect(f.service.create(principal, { ...request, pids: ["FBI"] })).rejects.toMatchObject({ code: "QUERY_JOB_FORBIDDEN" });
+    await expect(f.service.create({ ...principal, permissions: [] }, request)).rejects.toMatchObject({ code: "QUERY_JOB_FORBIDDEN" });
+    for (const payload of [{ ...request, rows: [] }, { ...request, queries: [] }]) {
+      await expect(f.service.create(principal, payload)).rejects.toMatchObject({ code: "QUERY_JOB_INVALID" });
+    }
+    expect(f.counts().creates).toBe(0); expect(f.legacy).toHaveLength(0);
+  });
+
+  test("正式句柄逐次校验身份、权限、PID、环境与凭据；无效访问零来源请求", async () => {
+    const f = fixture(false, true), created = await f.service.create(principal, request);
+    for (const changed of [
+      { ...principal, subjectId: "other" }, { ...principal, securityVersion: "v2" },
+      { ...principal, roles: ["maintainer"] }, { ...principal, permissions: [] },
+      { ...principal, pidScope: ["FBI"] }, { ...principal, pidScope: ["PH", "FBI"] }
+    ]) for (const method of ["status", "result"] as const) {
+      await expect(f.service[method](changed, created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_NOT_FOUND" });
+    }
+    for (const method of ["status", "result"] as const) {
+      await inTest(async () => { await expect(f.service[method](principal, created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_CONTEXT_CHANGED" }); });
+    }
+    f.rotateProduction();
+    for (const method of ["status", "result"] as const) await expect(f.service[method](principal, created.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_CONTEXT_CHANGED" });
+    expect(f.counts().reads).toBe(0);
+  });
+
+  test("正式关闭后旧句柄三步均拒绝，测试句柄也不能跨到正式读取", async () => {
+    const f = fixture(false, true), production = await f.service.create(principal, request);
+    const testJob = await inTest(() => f.service.create(principal, request));
+    for (const method of ["status", "result"] as const) await expect(f.service[method](principal, testJob.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_CONTEXT_CHANGED" });
+    f.disableProduction();
+    await expect(f.service.create(principal, request)).rejects.toMatchObject({ code: "QUERY_JOB_FORBIDDEN" });
+    for (const method of ["status", "result"] as const) await expect(f.service[method](principal, production.data.handle)).rejects.toMatchObject({ code: "QUERY_JOB_FORBIDDEN" });
+    expect((await inTest(() => f.service.status(principal, testJob.data.handle))).data.status).toBe("RUNNING");
+    expect(f.counts().reads).toBe(1);
+  });
+
+  for (const terminal of ["FAILED", "EXPIRED"] as const) test(`正式${terminal}保留终态且不回退同步或其他环境`, async () => {
+    const f = fixture(false, true), created = await f.service.create(principal, request);
+    f.state(terminal);
+    const result = await f.service.result(principal, created.data.handle);
+    expect(result.data).toMatchObject({ status: terminal, phase: "query" });
+    expect(result.data).not.toHaveProperty("dashboards");
+    expect(f.counts().creates).toBe(1);
+    expect(f.legacy.every(call => call.profile === undefined && !/bi\/v1\/(metrics|playback)/.test(call.path))).toBe(true);
   });
 
   test("同站和PID授权在创建前由原任务服务校验", async () => {
