@@ -23,7 +23,9 @@ export class SourceReadBudget {
   get expired() { return this.didExpire; }
   get signal() { return this.controller.signal; }
 
-  private failure() { return new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504); }
+  private failure() { return new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, {
+    origin: this.consumerSignal?.aborted || this.disposed || !this.didExpire ? "consumer_cancelled" : "source_budget"
+  }); }
 
   private expire() {
     if (this.disposed || this.didExpire) return;

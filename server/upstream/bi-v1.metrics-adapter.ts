@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { biQueryJobUnitResultSchema } from "../../contracts/query-jobs";
-import { UpstreamError, type UpstreamClient } from "./client";
+import { getUpstreamReadFailure, UpstreamError, type UpstreamClient } from "./client";
 import { canIsolateBiV1Request } from "./bi-v1.request-isolation";
+import { recordUpstreamReadBoundaryFailure } from "./read-trace";
 
 export const BI_V1_METRICS_API = "/api/admin/bi/v1/metrics";
 
@@ -353,8 +354,7 @@ function isRecoverableSingleMetricTransportFailure(error: unknown) {
   if (!(error instanceof UpstreamError)) return false;
   if (error.code === "UPSTREAM_NETWORK_ERROR" || error.code === "UPSTREAM_FAILED") return error.statusCode >= 500;
   // Physical HTTP and shared-queue expiry use this canonical timeout. Source
-  // budget / caller cancellation uses "后台来源读取超时" and must still abort
-  // the whole read rather than being presented as one metric's source state.
+  // budget closure uses its explicit diagnostic; caller cancellation propagates.
   return error.code === "UPSTREAM_TIMEOUT" && error.statusCode === 504 && error.message === "后台接口请求超时";
 }
 
@@ -401,9 +401,14 @@ export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, quer
   });
   // Scope checks precede value validation so a malformed value cannot turn a
   // cross-PID, date or metric conflict into a recoverable schema error.
-  const scope = scopeEnvelopeSchema.safeParse(payload);
-  assertMetricScope(scope.success ? scope.data.msg.rows : [], query);
-  return parseEnvelope(payload, query);
+  try {
+    const scope = scopeEnvelopeSchema.safeParse(payload);
+    assertMetricScope(scope.success ? scope.data.msg.rows : [], query);
+    return parseEnvelope(payload, query);
+  } catch (error) {
+    recordUpstreamReadBoundaryFailure({ code: error instanceof UpstreamError ? error.code : undefined, failure: getUpstreamReadFailure(error) ?? { origin: "validation" } });
+    throw error;
+  }
 }
 
 export function aggregateBiV1MetricDays(
@@ -527,6 +532,7 @@ export function aggregateBiV1MetricDays(
             : { dataStatus: "READY", state: "available", value: numerator / denominator, numerator, denominator, unit: row.unit };
         } catch (error) {
           if (!(error instanceof UpstreamError)) throw error;
+          recordUpstreamReadBoundaryFailure({ code: error.code, failure: { origin: "validation" } });
           metrics[key] = invalidMetric();
         }
       }
@@ -547,21 +553,40 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
 
   const days: BiV1MetricDay[] = [];
   for (let date = query.startDate; date <= query.endDate; date = nextDate(date)) days.push({ date, metrics: {} });
-  // The finite metric registry bounds this to one batch plus one sequential
-  // request per metric. Every retry keeps the same client, PID and date range.
-  for (const metricCode of metricCodes) {
-    if (metricCodes.length > 1) {
+  for (const day of days) for (const code of metricCodes) {
+    day.metrics[requestedMetricKey(code, query)] = { ...unavailable(null), state: "source_failure" };
+  }
+  let next = 0;
+  let stopped = false;
+  // Recovery shares the existing physical queue and source budget. At most
+  // three distinct metrics run together, with one attempt per registered code.
+  const worker = async () => {
+    while (!stopped && next < metricCodes.length) {
+      const metricCode = metricCodes[next++];
+      if (metricCodes.length === 1) continue;
       try {
         const singleQuery = { ...query, metricCodes: [metricCode] };
         const message = await queryBiV1Metrics(client, singleQuery);
-        aggregateBiV1MetricDays(message, singleQuery).forEach((day, index) => Object.assign(days[index].metrics, day.metrics));
-        continue;
+        if (stopped) return;
+        const completed = aggregateBiV1MetricDays(message, singleQuery);
+        const byDate = new Map(completed.map(day => [day.date, day]));
+        for (const day of days) Object.assign(day.metrics, byDate.get(day.date)!.metrics);
       } catch (error) {
-        if (!canIsolateBiV1Request(error) && !isRecoverableSingleMetricTransportFailure(error)) throw error;
+        if (error instanceof UpstreamError && error.code === "UPSTREAM_TIMEOUT" && error.statusCode === 504
+          && getUpstreamReadFailure(error)?.origin === "source_budget") {
+          // Completed single-metric results retain their validated values and
+          // states; expiry closes only the unfinished part of this bounded read.
+          stopped = true;
+          return;
+        }
+        if (!canIsolateBiV1Request(error) && !isRecoverableSingleMetricTransportFailure(error)) {
+          stopped = true;
+          throw error;
+        }
       }
     }
-    for (const day of days) day.metrics[requestedMetricKey(metricCode, query)] = { ...unavailable(null), state: "source_failure" };
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, metricCodes.length) }, worker));
   // Split requests have no single upstream envelope, watermark or rule version.
   return { message: null, days };
 }

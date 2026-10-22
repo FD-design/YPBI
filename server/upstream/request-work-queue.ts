@@ -1,7 +1,7 @@
 interface RequestWorkQueueOptions {
   maxActive?: number;
   maxQueued?: number;
-  timeoutError?: () => Error;
+  timeoutError?: (reason: "cancelled" | "deadline") => Error;
   overflowError?: () => Error;
 }
 
@@ -19,7 +19,7 @@ function positiveInteger(value: number, name: string) {
 export class RequestWorkQueue {
   private readonly maxActive: number;
   private readonly maxQueued: number;
-  private readonly timeoutError: () => Error;
+  private readonly timeoutError: (reason: "cancelled" | "deadline") => Error;
   private readonly overflowError: () => Error;
   private readonly waiting: QueuedWork[] = [];
   private active = 0;
@@ -35,7 +35,7 @@ export class RequestWorkQueue {
   run<T>(work: (remainingMs: number) => Promise<T> | T, timeoutMs: number, signal?: AbortSignal): Promise<T> {
     positiveInteger(timeoutMs, "timeoutMs");
     const deadline = performance.now() + timeoutMs;
-    if (signal?.aborted) return Promise.reject(this.timeoutError());
+    if (signal?.aborted) return Promise.reject(this.timeoutError("cancelled"));
     if (this.active >= this.maxActive && this.waiting.length >= this.maxQueued) {
       return Promise.reject(this.overflowError());
     }
@@ -44,7 +44,7 @@ export class RequestWorkQueue {
         if (item.timer !== undefined) clearTimeout(item.timer);
         signal?.removeEventListener("abort", cancelWaiting);
         const remainingMs = Math.ceil(deadline - performance.now());
-        if (remainingMs <= 0 || signal?.aborted) { reject(this.timeoutError()); return; }
+        if (remainingMs <= 0 || signal?.aborted) { reject(this.timeoutError(signal?.aborted ? "cancelled" : "deadline")); return; }
         this.active++;
         const release = () => { this.active--; this.drain(); };
         try {
@@ -60,7 +60,7 @@ export class RequestWorkQueue {
         this.waiting.splice(index, 1);
         if (item.timer !== undefined) clearTimeout(item.timer);
         signal?.removeEventListener("abort", cancelWaiting);
-        reject(this.timeoutError());
+        reject(this.timeoutError(signal?.aborted ? "cancelled" : "deadline"));
         this.drain();
       };
       if (this.active < this.maxActive && this.waiting.length === 0) item.start();

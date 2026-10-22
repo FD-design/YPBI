@@ -10,15 +10,17 @@ const registration = { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2
 describe("来源预算与指标拆单恢复边界", () => {
   for (const mode of ["async_rejection", "sync_throw"] as const)
     for (const position of ["last", "middle"] as const)
-      test(`${position}单指标${mode}晚于墙钟deadline时不返回partial或继续拆单`, async () => {
+      test(`${position}单指标${mode}越过墙钟deadline时不接纳迟到结果或启动后续物理读取`, async () => {
         let now = 100;
         const clock = spyOn(performance, "now").mockImplementation(() => now);
         const budget = new SourceReadBudget(10);
         const calls: string[] = [];
+        const started: string[] = [];
         const physicalTimeout = new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504);
         const client = { get: (_path: string, params: Record<string, string>) => {
           calls.push(params.metricCodes);
           return budget.read<unknown>(() => {
+            started.push(params.metricCodes);
             if (params.metricCodes.includes(",")) return Promise.resolve({ code: 400, err: "不支持的指标编码 M058" });
             if (params.metricCodes === "M008") return Promise.resolve(registration);
             now = 111;
@@ -28,9 +30,18 @@ describe("来源预算与指标拆单恢复边界", () => {
         } };
         const metricCodes = position === "last" ? ["M008", "M058"] as const : ["M008", "M058", "M020"] as const;
         try {
-          await expect(readBiV1MetricDays(client, { pid: "PH", startDate: "2020-01-01", endDate: "2020-01-01", metricCodes }))
-            .rejects.toMatchObject({ code: "UPSTREAM_TIMEOUT", message: "后台来源读取超时" });
-          expect(calls).toEqual([metricCodes.join(","), "M008", "M058"]);
+          const result = await readBiV1MetricDays(client, { pid: "PH", startDate: "2020-01-01", endDate: "2020-01-01", metricCodes });
+          expect(result.message).toBeNull();
+          expect(result.days).toHaveLength(1);
+          expect(Object.keys(result.days[0].metrics)).toEqual([...metricCodes]);
+          // M008's raw promise resolves before the deadline, but its budget
+          // delivery and metric validation have not completed before M058
+          // advances the wall clock. It is not a completed valid result.
+          for (const code of metricCodes) expect(result.days[0].metrics[code]).toEqual({
+            state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null
+          });
+          expect(calls).toEqual([metricCodes.join(","), ...metricCodes]);
+          expect(started).toEqual([metricCodes.join(","), "M008", "M058"]);
           expect(budget.expired).toBe(true);
         } finally { budget.dispose(); clock.mockRestore(); }
       });

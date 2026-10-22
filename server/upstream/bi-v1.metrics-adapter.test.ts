@@ -723,7 +723,7 @@ describe("bi-v1 批量请求有界隔离", () => {
       const result = await readBiV1MetricDays(client, query);
       expect(result.message).toBeNull();
       expect(calls.map(call => call.metricCodes)).toEqual(["M008,M113,M112,M060,M114", ...query.metricCodes]);
-      expect(maxInFlight).toBe(1);
+      expect(maxInFlight).toBe(3);
       for (const call of calls) expect(call).toMatchObject({ pid: "PH", startDate: "2020-01-01", endDate: "2020-01-02", granularity: "day", includeIncomplete: "true" });
       const metrics = result.days[0].metrics;
       expect(metrics.M008).toEqual({ state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null });
@@ -739,6 +739,26 @@ describe("bi-v1 批量请求有界隔离", () => {
     expect(calls).toBe(1);
     expect(result.message).toEqual(payload);
     expect(result.days[0].metrics.M114).toMatchObject({ value: 1, dataStatus: "READY" });
+  });
+
+  test("单项隔离以三个worker并发读取，尾项进入释放槽且每项只请求一次", async () => {
+    const calls: string[] = [];
+    const releases = new Map<string, () => void>();
+    const gates = new Map(query.metricCodes.map(code => [code, new Promise<void>(resolve => releases.set(code, resolve))]));
+    const pending = readBiV1MetricDays({ get: async (_path, params) => {
+      calls.push(params.metricCodes);
+      if (params.metricCodes.includes(",")) return { code: 400, err: "不支持的指标编码 M008" };
+      await gates.get(params.metricCodes as typeof query.metricCodes[number]);
+      return { code: 200, msg: message(paymentRows.filter(row => row.metricCode === params.metricCodes)) };
+    } }, query);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const firstWave = calls.slice(1);
+    releases.forEach(release => release());
+    const result = await pending;
+    expect(firstWave).toEqual(query.metricCodes.slice(0, 3));
+    expect(calls).toEqual([query.metricCodes.join(","), ...query.metricCodes]);
+    expect(new Set(calls).size).toBe(calls.length);
+    expect(result.days[0].metrics.M114).toMatchObject({ state: "available", value: 1 });
   });
 
   for (const invalidField of ["numerator", "denominator", "unit"] as const) {
@@ -883,27 +903,132 @@ describe("bi-v1 批量请求有界隔离", () => {
   test("单项恢复过程中遇到范围冲突或鉴权失败立即停止后续请求", async () => {
     for (const failure of ["scope", "auth"] as const) {
       const calls: string[] = [];
+      let releasePeers!: () => void;
+      const peers = new Promise<void>(resolve => releasePeers = resolve);
       await expect(readBiV1MetricDays({ get: async (_path, params) => {
         calls.push(params.metricCodes);
-        if (params.metricCodes.includes("M008")) return { code: 400, err: "未知指标 M008" };
+        if (params.metricCodes.includes(",")) return { code: 400, err: "未知指标 M008" };
+        if (params.metricCodes !== "M113") { await peers; return { code: 200, msg: message([]) }; }
         if (failure === "auth") throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", 401);
         return { code: 200, msg: message(paymentRows) };
       } }, query)).rejects.toMatchObject({ code: failure === "auth" ? "UPSTREAM_AUTH_FAILED" : "BI_V1_SCOPE_CONFLICT" });
-      expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113"]);
+      releasePeers();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113", "M112"]);
     }
   });
 
   test("单项恢复过程中的显式来源取消继续整体传播", async () => {
     const calls: string[] = [];
     const cancellation = new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504);
+    let releasePeers!: () => void;
+    const peers = new Promise<void>(resolve => releasePeers = resolve);
     await expect(readBiV1MetricDays({ get: async (_path, params) => {
       calls.push(params.metricCodes);
       if (params.metricCodes.includes(",")) return { code: 400, err: "不支持的指标编码 M008" };
-      if (params.metricCodes === "M008") return { code: 200, msg: message([dated(makeRow("M008", "count", 0, 0, 0))]) };
+      if (params.metricCodes !== "M113") { await peers; return { code: 200, msg: message([]) }; }
       throw cancellation;
     } }, query)).rejects.toBe(cancellation);
-    expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113"]);
+    releasePeers();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113", "M112"]);
   });
+
+  test("拆单来源预算到期保留已校验的三日零值和真实未就绪状态，未完成项失败并停止后续读取", async () => {
+    const dates = ["2020-01-01", "2020-01-02", "2020-01-03"] as const;
+    const filters = { sourceType: "natural" as const };
+    const scoped = { ...query, endDate: dates[2], metricCodes: ["M008", "M020", "M058", "M113", "M112", "M060"] as const,
+      dimensionFilters: filters, dimensions: ["sourceType"] as const };
+    const calls: string[] = [];
+    const expiry = new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, { origin: "source_budget" });
+    let expire!: () => void, releaseLate!: () => void, allStarted!: () => void;
+    const budget = new Promise<never>((_resolve, reject) => expire = () => reject(expiry));
+    const late = new Promise<void>(resolve => releaseLate = resolve);
+    const started = new Promise<void>(resolve => allStarted = resolve);
+    const pending = readBiV1MetricDays({ get: async (_path, params) => {
+      calls.push(params.metricCodes);
+      if (params.metricCodes.includes(",")) return { code: 400, err: "不支持的指标编码 M058" };
+      if (params.metricCodes === "M008") return { code: 200, msg: message(dates.map((businessDate, index) => ({
+        ...makeRow("M008", "count", index, index, 0, filters), businessDate
+      }))) };
+      if (params.metricCodes === "M020") return { code: 200, msg: message(dates.map((businessDate, index) => ({
+        ...makeRow("M020", "ratio", null, 0, 0, filters, (["NOT_MATURE", "PROCESSING", "FAILED"] as const)[index]), businessDate
+      }))) };
+      if (calls.length === 6) allStarted();
+      if (params.metricCodes === "M058") return budget;
+      await late;
+      return { code: 200, msg: message(dates.map(businessDate => ({
+        ...makeRow(params.metricCodes as "M113" | "M112", "count", 9, 9, 0, filters), businessDate
+      }))) };
+    } }, scoped);
+    await started;
+    expire();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    releaseLate();
+    const result = await pending;
+
+    expect(calls).toEqual(["M008,M020,M058,M113,M112,M060", "M008", "M020", "M058", "M113", "M112"]);
+    expect(result.message).toBeNull();
+    expect(result.days.map(day => day.metrics[biV1MetricKey("M008", filters)])).toMatchObject([
+      { state: "available", dataStatus: "READY", value: 0 },
+      { state: "available", dataStatus: "READY", value: 1 },
+      { state: "available", dataStatus: "READY", value: 2 }
+    ]);
+    expect(result.days.map(day => day.metrics[biV1MetricKey("M020", filters)])).toMatchObject([
+      { state: "immature", dataStatus: "NOT_MATURE", value: null },
+      { state: "no_value", dataStatus: "PROCESSING", value: null },
+      { state: "source_failure", dataStatus: "FAILED", value: null }
+    ]);
+    for (const day of result.days) for (const code of ["M058", "M113", "M112", "M060"] as const) {
+      expect(day.metrics[biV1MetricKey(code, filters)]).toEqual({ state: "source_failure", dataStatus: null,
+        value: null, numerator: null, denominator: null, unit: null });
+    }
+  });
+
+  test("拆单首项来源预算到期只结算失败状态，不再发起剩余指标", async () => {
+    const calls: string[] = [];
+    const expiry = new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, { origin: "source_budget" });
+    const result = await readBiV1MetricDays({ get: async (_path, params) => {
+      calls.push(params.metricCodes);
+      if (params.metricCodes.includes(",")) return { code: 400, err: "不支持的指标编码 M008" };
+      throw expiry;
+    } }, query);
+    expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113", "M112"]);
+    expect(Object.keys(result.days[0].metrics)).toHaveLength(query.metricCodes.length);
+    expect(Object.values(result.days[0].metrics).every(point => point.state === "source_failure"
+      && point.dataStatus === null && point.value === null)).toBe(true);
+  });
+
+  test("整批读取来源预算到期仍直接传播，不进入拆单", async () => {
+    let calls = 0;
+    const expiry = new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, { origin: "source_budget" });
+    await expect(readBiV1MetricDays({ get: async () => { calls++; throw expiry; } }, query)).rejects.toBe(expiry);
+    expect(calls).toBe(1);
+  });
+
+  for (const [label, failure] of [
+    ["无预算诊断的来源超时", new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504)],
+    ["用户取消", new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, { origin: "consumer_cancelled" })],
+    ["鉴权失败", new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", 401)],
+    ["PID权限拒绝", new UpstreamError("UPSTREAM_INVALID_REQUEST", "当前账号没有 PID 权限", 422)],
+    ["范围冲突", new UpstreamError("BI_V1_SCOPE_CONFLICT", "指标范围与请求不一致", 502)]
+  ] as const) {
+    test(`已成功单项后${label}仍整体拒绝且停止读取`, async () => {
+      const calls: string[] = [];
+      let releasePeers!: () => void;
+      const peers = new Promise<void>(resolve => releasePeers = resolve);
+      await expect(readBiV1MetricDays({ get: async (_path, params) => {
+        calls.push(params.metricCodes);
+        if (params.metricCodes.includes(",")) return { code: 400, err: "不支持的指标编码 M008" };
+        if (params.metricCodes === "M008") return { code: 200, msg: message([dated(makeRow("M008", "count", 0, 0, 0))]) };
+        if (params.metricCodes !== "M060") { await peers; return { code: 200, msg: message([]) }; }
+        throw failure;
+      } }, query)).rejects.toBe(failure);
+      releasePeers();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(calls).toEqual(["M008,M113,M112,M060,M114", "M008", "M113", "M112", "M060"]);
+    });
+  }
 });
 
 describe("bi-v1 通用指标适配", () => {

@@ -28,7 +28,7 @@ import {
 import { CoreOverviewPeriodResolutionError } from "./core-overview/core-overview-period";
 import { V2MetricQueryError } from "./metric-query.service";
 import { bindClientRequestAbort } from "../http/client-request-abort";
-import { dailyDashboardCatalog, dailyDashboardMatchesMapping, type DailyDashboardExecutor } from "./daily-dashboard.service";
+import { dailyDashboardCatalog, dailyDashboardMatchesMapping, dailyDashboardScopeTag, type DailyDashboardExecutor } from "./daily-dashboard.service";
 import { dailyDashboardQuerySchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery } from "../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS } from "../../contracts/operating-detail-projection";
 import { runWithUpstreamRequestProfile, type UpstreamRequestProfile } from "../upstream/request-profile";
@@ -317,7 +317,9 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
         request.log.warn({ outcome: "response_contract_conflict", durationMs: Date.now() - startedAt }, "daily dashboard query rejected");
         return sendV2Error(request, reply, 502, "DAILY_SOURCE_CONFLICT", "数据结构或范围异常，未显示本次结果");
       }
-      request.log.info({ outcome: "success", durationMs: Date.now() - startedAt, boardId: board.id }, "daily dashboard query completed");
+      request.log.info({ outcome: "success", durationMs: Date.now() - startedAt, boardId: board.id,
+        queryId: result.data.data.queryId, scopeTag: dailyDashboardScopeTag(query.data, context.environment.mode)
+      }, "daily dashboard query completed");
       return result.data;
     } catch (error) {
       request.log.warn({ outcome: "query_failed", durationMs: Date.now() - startedAt, errorCode: error instanceof UpstreamError ? error.code : "invalid_response" }, "daily dashboard query failed");

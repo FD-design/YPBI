@@ -306,7 +306,10 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const result = await pending;
     held.channels.forEach(read => read.resolve());
     assertProjection(result, await fixture({ beforeMetricRead: rejectOverallBatch }).service.execute(query));
-    expect(requestedBeforeRecovery.slice(1)).toEqual(["M001", "M002", "M003"]);
+    // The held M003 keeps the group incomplete while independent metrics use
+    // the other recovery slots, each exactly once and in registered order.
+    expect(requestedBeforeRecovery.slice(1)).toEqual(requestedBeforeRecovery[0].split(","));
+    expect(new Set(requestedBeforeRecovery.slice(1)).size).toBe(requestedBeforeRecovery.length - 1);
     expect(cancelledBeforeRecovery).toEqual([false, false, false]);
     expect(completedBeforeRecovery).toBe(false);
     expect(held.channels.map(read => read.signal?.aborted)).toEqual([true, true, true]);

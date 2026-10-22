@@ -693,7 +693,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     && env.BI_PRODUCTION_DASHBOARD_READING_ENABLED;
   const formalDailyReadingEnabled = localDailyReadingEnabled || productionDailyReadingEnabled;
   const dailyDashboardService = formalDailyReadingEnabled || previewEnabled
-    ? new DailyDashboardService(upstream, undefined, app.log, { sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS }) : undefined;
+    ? new DailyDashboardService(upstream, undefined, app.log, { sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS, readTraceEnabled: true }) : undefined;
   const queryJobService = previewEnabled ? new BiQueryJobService(new QueryJobsClient(upstream)) : undefined;
   const operatingQueryJobService = queryJobService && dailyDashboardService
     ? new OperatingQueryJobService(queryJobService, dailyDashboardService) : undefined;

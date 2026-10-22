@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import plan from "../../contracts/official-dashboards.json";
@@ -18,7 +18,9 @@ import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, supportsAcquisiti
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
 export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRechargeSucRate";
 export const CHECKIN_OVERVIEW_API = "/api/admin/dataDashboard/overview";
-import { UpstreamError, type UpstreamClient } from "../upstream/client";
+import { getUpstreamReadFailure, UpstreamError, type UpstreamClient } from "../upstream/client";
+import { currentUpstreamRequestProfile } from "../upstream/request-profile";
+import { UpstreamReadTrace, runWithUpstreamReadTrace, runWithUpstreamReadContext, recordUpstreamReadBoundaryFailure, type UpstreamReadGroupId, type UpstreamReadTraceSnapshot } from "../upstream/read-trace";
 import { toBeijingDate } from "../upstream/date";
 import { sourceReadErrorCode, type SourceReadErrorCodeCounts } from "./source-read-diagnostics";
 import { SourceReadBudget } from "./source-read-budget";
@@ -474,7 +476,32 @@ type SourceReadDiagnostics = {
   budgetExpired: boolean;
   errorCodeCounts: SourceReadErrorCodeCounts;
 };
-type DailyDashboardLogger = { info(fields: { queryId: string; boardId: string; sources: SourceReadDiagnostics[] }, message: string): void };
+type DailyDashboardLogger = { info(fields: {
+  queryId: string; boardId: string; sources: SourceReadDiagnostics[];
+  scopeTag?: string; readTrace?: UpstreamReadTraceSnapshot;
+  sourceFailureOrigins?: Array<{ sourceId: SourceReadDiagnostics["sourceId"]; counts: Record<string, number> }>;
+  failedPoints?: Array<{ metricId: string; pointIndexes: number[] }>;
+}, message: string): void };
+export function dailyDashboardScopeTag(query: DailyDashboardQuery, environment: "production" | "test" = "production"): string {
+  return createHash("sha256").update(JSON.stringify([environment, query.boardId, query.pid, query.dateRange, query.projection ?? null])).digest("hex").slice(0, 16);
+}
+function metricReadGroup(query: BiV1MetricQuery): UpstreamReadGroupId {
+  const filters = query.dimensionFilters;
+  if (!filters || Object.keys(filters).length === 0) return "overall";
+  if (filters.paymentMethod) return filters.paymentMethod === "ali_pay" ? "ali" : filters.paymentMethod === "wx_pay" ? "wx" : filters.paymentMethod === "usdt_pay" ? "usdt" : "unknown";
+  if (filters.sourceType) return filters.sourceType === "natural" ? "natural" : filters.sourceType === "internal_channel" ? "internal" : "unknown";
+  if (filters.clientPlatform) {
+    if (!["android", "ios"].includes(filters.clientPlatform)) return "unknown";
+    if (filters.userCohort === "old") return filters.clientPlatform === "android" ? "android_old" : "ios_old";
+    return filters.clientPlatform as "android" | "ios";
+  }
+  return filters.userCohort === "new" ? "new" : filters.userCohort === "old" ? "old" : "unknown";
+}
+function noteReadBoundaryFailure(error: unknown): void {
+  const validation = error instanceof z.ZodError || error instanceof UpstreamError && ["DAILY_SOURCE_CONFLICT", "BI_V1_RESPONSE_INVALID", "BI_V1_SCOPE_CONFLICT", "BI_V1_VALUE_CONFLICT"].includes(error.code);
+  recordUpstreamReadBoundaryFailure({ code: error instanceof UpstreamError ? error.code : undefined,
+    failure: getUpstreamReadFailure(error) ?? (validation ? { origin: "validation" } : undefined) });
+}
 export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardSuccess> }
 /** Server-only normalized sources; these are never accepted from a browser. */
 export interface OperatingModernSources {
@@ -486,8 +513,12 @@ export interface OperatingModernSources {
 }
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
-  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number } = {}) {}
+  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number; readTraceEnabled?: boolean } = {}) {}
   execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
+    if (this.options.readTraceEnabled && this.logger && query.projection === "operating_snapshot") {
+      const trace = new UpstreamReadTrace();
+      return runWithUpstreamReadTrace(trace, () => this.executeSources(query, consumerSignal, undefined, trace));
+    }
     return this.executeSources(query, consumerSignal);
   }
   executeOperating(query: DailyDashboardQuery, sources: Promise<OperatingModernSources>, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
@@ -510,7 +541,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     void pending.catch(() => undefined);
     return this.executeSources(query, consumerSignal, pending);
   }
-  private async executeSources(query: DailyDashboardQuery, consumerSignal?: AbortSignal, operatingSources?: Promise<OperatingModernSources>): Promise<DailyDashboardV2Success> {
+  private async executeSources(query: DailyDashboardQuery, consumerSignal?: AbortSignal, operatingSources?: Promise<OperatingModernSources>, readTrace?: UpstreamReadTrace): Promise<DailyDashboardV2Success> {
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     if (query.projection !== undefined && !dailyDashboardQuerySchema.safeParse(query).success) throw new UpstreamError("INVALID_DAILY_READING_QUERY", "看板查询参数不合法", 400);
     const fetchedAt = this.now().toISOString();
@@ -518,13 +549,14 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const ids = operatingSnapshot && query.boardId === "5.2" ? OPERATING_METRIC_IDS as readonly CandidateId[] : boardMetrics[query.boardId] ?? [];
     if (!ids.length) throw new UpstreamError("DAILY_BOARD_NOT_READY", "该看板尚无可读取的日数据", 422);
     const sourceDiagnostics: SourceReadDiagnostics[] = [];
+    const sourceFailureOrigins = new Map<SourceReadDiagnostics["sourceId"], Record<string, number>>();
     const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: Pick<UpstreamClient, "get">) => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
       const budget = new SourceReadBudget(this.options.sourceReadTimeoutMs ?? 10_000, consumerSignal);
       const source: SourceReadDiagnostics = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, abandonedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} };
       if (this.logger) sourceDiagnostics.push(source);
       try {
-        return await read({ get: async (...args) => {
+        return await runWithUpstreamReadContext({ sourceId }, () => read({ get: async (...args) => {
           let started = false;
           try {
             const result = await budget.read(() => {
@@ -544,6 +576,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
                   source.failedReadCallCount++;
                   const errorCode = sourceReadErrorCode(error);
                   source.errorCodeCounts[errorCode] = (source.errorCodeCounts[errorCode] ?? 0) + 1;
+                  if (readTrace) {
+                    const counts = sourceFailureOrigins.get(sourceId) ?? {};
+                    const origin = getUpstreamReadFailure(error)?.origin ?? "unknown";
+                    counts[origin] = (counts[origin] ?? 0) + 1;
+                    sourceFailureOrigins.set(sourceId, counts);
+                  }
                 }
               } else {
                 source.abandonedReadCallCount++;
@@ -551,7 +589,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             }
             throw error;
           }
-        } });
+        } }));
       } finally {
         source.budgetExpired = budget.expired;
         budget.dispose();
@@ -579,7 +617,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       if (!z.iso.date().safeParse(date).success || row.pid !== query.pid || date < query.dateRange[0] || date > query.dateRange[1] || byDate.has(date)) throw badSource();
       byDate.set(date, row);
     }
-    } catch { dailyFailure = true; byDate.clear(); } });
+    } catch (error) { noteReadBoundaryFailure(error); dailyFailure = true; byDate.clear(); } });
     const cohorts = new Map<string, z.infer<typeof rowSchema>>();
     const needsCohorts = sourceIds.some(id => usesLegacyCohortSource(mappings[id]));
     let cohortFailure = false;
@@ -592,7 +630,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           if (!z.iso.date().safeParse(date).success || row.pid !== query.pid || date < query.dateRange[0] || date > query.dateRange[1] || cohorts.has(date)) throw badSource();
           cohorts.set(date, row);
         }
-      } catch { cohortFailure = true; cohorts.clear(); }
+      } catch (error) { noteReadBoundaryFailure(error); cohortFailure = true; cohorts.clear(); }
     } });
     const today = toBeijingDate(fetchedAt);
     const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
@@ -614,7 +652,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             result.msg.pageData.forEach(row => assertScopeEcho(row, query.pid, date));
             if(result.msg.pageData.some(row=>toBeijingDate(row.sumDate)!==date))throw badSource();
             paymentDays.set(date,result.msg);
-          } catch { paymentFailures.add(date); }
+          } catch (error) { noteReadBoundaryFailure(error); paymentFailures.add(date); }
         }
       }));
     } });
@@ -635,7 +673,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
               assertScopeEcho(result.msg.totalData[0], query.pid, date);
               channelDays.set(date, result.msg.totalData[0]);
             }
-          } catch { channelFailures.add(date); }
+          } catch (error) { noteReadBoundaryFailure(error); channelFailures.add(date); }
         }
       };
       await Promise.all(Array.from({ length: Math.min(3, dates.length) }, worker));
@@ -653,7 +691,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             if (result.msg.date !== date) throw badSource();
             assertScopeEcho(result.msg, query.pid, date);
             checkinDays.set(date, result.msg);
-          } catch { checkinFailures.add(date); }
+          } catch (error) { noteReadBoundaryFailure(error); checkinFailures.add(date); }
         }
       }));
     });
@@ -666,7 +704,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           const date = dates[next++];
           if (date >= today) { watchDays.set(date, { state: "no_value", value: null }); continue; }
           try { watchDays.set(date, await readWatchAttemptDay(client, query.pid, date)); }
-          catch { watchFailures.add(date); }
+          catch (error) { noteReadBoundaryFailure(error); watchFailures.add(date); }
         }
       }));
     });
@@ -685,8 +723,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           catch (error) { playbackGroups = failedPlaybackGroups(error); }
         }
         try { aggregateBiV1Playback(message, scope).forEach(day => playbackDays.set(day.date, day)); }
-        catch { playbackFailure = true; playbackDays.clear(); }
+        catch (error) { noteReadBoundaryFailure(error); playbackFailure = true; playbackDays.clear(); }
       } catch (error) {
+        noteReadBoundaryFailure(error);
         playbackFailure = true;
         playbackDays.clear();
         if (query.boardId === "5.12") playbackGroups = failedPlaybackGroups(error);
@@ -700,13 +739,14 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const requests = dailyDashboardMetricQueries(query);
       const readGroup = async (request: BiV1MetricQuery) => {
         try {
-          const result = await readBiV1MetricDays(client, request);
+          const result = await runWithUpstreamReadContext({ groupId: metricReadGroup(request) }, () => readBiV1MetricDays(client, request));
           for (const day of result.days) {
             const existing = biV1MetricDays.get(day.date) ?? { date: day.date, metrics: {} };
             Object.assign(existing.metrics, day.metrics);
             biV1MetricDays.set(day.date, existing);
           }
-        } catch {
+        } catch (error) {
+          runWithUpstreamReadContext({ groupId: metricReadGroup(request) }, () => noteReadBoundaryFailure(error));
           // Each filter group is independent. Missing or failed slices cannot
           // borrow the overall value or overwrite another group's healthy result.
           for (const date of dates) {
@@ -739,7 +779,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       try {
         const result = await readBiV1MonthlyMetricDays(client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] }, today);
         result.days.forEach(day => monthlyDays.set(day.date, day));
-      } catch {
+      } catch (error) {
+        noteReadBoundaryFailure(error);
         for (const date of dates) {
           monthlyDays.set(date, { date, metrics: { M018: { state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null } } });
         }
@@ -912,6 +953,19 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     try {
       this.logger?.info({ queryId: result.data.queryId, boardId: query.boardId, sources: sourceDiagnostics.filter(source => source.readCallCount > 0 || source.abandonedReadCallCount > 0) }, "daily dashboard source reads completed");
     } catch { /* Query results remain available when diagnostic logging fails. */ }
+    if (readTrace) try {
+      this.logger?.info({
+        queryId: result.data.queryId, boardId: query.boardId,
+        scopeTag: dailyDashboardScopeTag(query, currentUpstreamRequestProfile()?.environment ?? "production"),
+        sources: sourceDiagnostics.filter(source => source.readCallCount > 0 || source.abandonedReadCallCount > 0),
+        sourceFailureOrigins: [...sourceFailureOrigins].map(([sourceId, counts]) => ({ sourceId, counts })),
+        failedPoints: result.data.series.flatMap(series => {
+          const pointIndexes = series.points.flatMap((point, index) => point.state === "source_failure" && point.sourceStatus !== "FAILED" ? [index] : []);
+          return pointIndexes.length ? [{ metricId: series.metric.id, pointIndexes }] : [];
+        }),
+        readTrace: readTrace.snapshot()
+      }, "daily dashboard read trace completed");
+    } catch { /* Private tracing never changes the public result. */ }
     return result;
   }
 }
