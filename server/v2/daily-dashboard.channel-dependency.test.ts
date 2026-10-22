@@ -4,7 +4,7 @@ import type { DailyDashboardQuery, DailyDashboardV2Success } from "../../contrac
 import { OPERATING_METRIC_IDS, operatingSnapshotDates } from "../../contracts/operating-detail-projection";
 import { loadEnv } from "../config/env";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, type BiV1MetricDimensionFilters } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamClient, UpstreamError } from "../upstream/client";
 import { CHANNEL_V2_API, DailyDashboardService, PAYMENT_RATE_API } from "./daily-dashboard.service";
 
@@ -28,9 +28,11 @@ function channelPayload(date: string) {
     vipChargeAmt: 12.34, goldChargeAmt: 0, newUserVipChargeAmt: 0, newUserGoldChargeAmt: 0 }] } };
 }
 function fixture(options: {
-  status?: (code: string, date: string) => ModernStatus;
+  status?: (code: string, date: string, filters: BiV1MetricDimensionFilters) => ModernStatus;
   holdChannel?: boolean;
   modernGate?: Promise<void>;
+  metricGroupGate?: { filters: BiV1MetricDimensionFilters; promise: Promise<void> };
+  beforeMetricRead?: (params: Record<string, string>) => void | Promise<void>;
   dailyGate?: Promise<void>;
   playbackGate?: Promise<void>;
   monthlyGate?: Promise<void>;
@@ -50,15 +52,21 @@ function fixture(options: {
     }
     const envelope = (rows: unknown[]) => ({ code: 200, msg: { metricVersion: "bi-v1", generatedAt: now().toISOString(), watermark: null, rows } });
     if (path === BI_V1_METRICS_API || path === BI_V1_PLAYBACK_API) {
+      const filters = JSON.parse(params.dimensionFilters ?? "{}");
       if (path === BI_V1_METRICS_API) {
         await options.modernGate;
         if (params.granularity === "summary") await options.monthlyGate;
+        else if (options.metricGroupGate
+          && Object.keys(filters).length === Object.keys(options.metricGroupGate.filters).length
+          && Object.entries(options.metricGroupGate.filters).every(([key, value]) => filters[key] === value)) {
+          await options.metricGroupGate.promise;
+        }
+        await options.beforeMetricRead?.(params);
         if (options.metricsFailure) throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture unavailable");
       } else await options.playbackGate;
-      const filters = JSON.parse(params.dimensionFilters ?? "{}");
       const dates = params.granularity === "summary" ? [""] : allDates;
       return envelope(dates.flatMap(date => params.metricCodes.split(",").flatMap(code => {
-        const status = path === BI_V1_PLAYBACK_API ? "READY" : options.status?.(code, date) ?? "READY";
+        const status = path === BI_V1_PLAYBACK_API ? "READY" : options.status?.(code, date, filters) ?? "READY";
         if (status === "empty") return [];
         const ratio = ratios.has(code) || code === "M110";
         const scalar = options.zeroInputs && ["M095", "M002"].includes(code) ? 0 : code === "M058" ? 12.34 : code === "M102" ? 7200 : code === "M034" ? 1 : 2;
@@ -186,6 +194,123 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     dependency.resolve(); await pending;
     expect(held.channels.every(read => read.signal?.aborted)).toBe(true);
     held.channels.forEach(read => read.resolve());
+  });
+
+  for (const filters of [
+    { paymentMethod: "ali_pay" },
+    { userCohort: "new" },
+    { sourceType: "natural" },
+    { sourceType: "internal_channel" },
+    { clientPlatform: "android" }
+  ] as const) test(`无关现代分组${JSON.stringify(filters)}挂起时释放渠道，93列三期保持`, async () => {
+    const unrelated = deferred();
+    const held = fixture({ metricGroupGate: { filters, promise: unrelated.promise }, holdChannel: true });
+    const pending = held.service.execute(query); let completed = false;
+    void pending.then(() => { completed = true; });
+    await flush();
+    const cancelledBeforeRelease = held.channels.map(read => read.signal?.aborted);
+    const completedBeforeRelease = completed;
+    unrelated.resolve();
+    const result = await pending;
+    held.channels.forEach(read => read.resolve());
+    assertProjection(result, await fixture().service.execute(query));
+    expect(cancelledBeforeRelease).toEqual([true, true, true]);
+    expect(completedBeforeRelease).toBe(false);
+  });
+
+  for (const filters of [{}, { userCohort: "old" }] as const)
+    test(`渠道实际依赖分组${JSON.stringify(filters)}挂起时不得提前取消，93列三期保持`, async () => {
+      const dependency = deferred();
+      const held = fixture({ metricGroupGate: { filters, promise: dependency.promise }, holdChannel: true });
+      const pending = held.service.execute(query); let completed = false;
+      void pending.then(() => { completed = true; });
+      await flush();
+      const cancelledBeforeRelease = held.channels.map(read => read.signal?.aborted);
+      const completedBeforeRelease = completed;
+      dependency.resolve();
+      const result = await pending;
+      held.channels.forEach(read => read.resolve());
+      assertProjection(result, await fixture().service.execute(query));
+      expect(cancelledBeforeRelease).toEqual([false, false, false]);
+      expect(completedBeforeRelease).toBe(false);
+      expect(held.channels.map(read => read.signal?.aborted)).toEqual([true, true, true]);
+    });
+
+  test("总体组晚到传输失败仍等待合法旧渠道，93列三期保持", async () => {
+    const dependency = deferred();
+    const beforeMetricRead = (params: Record<string, string>) => {
+      if (params.granularity === "day" && !params.dimensionFilters) {
+        throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture overall unavailable");
+      }
+    };
+    const held = fixture({ beforeMetricRead, metricGroupGate: { filters: {}, promise: dependency.promise }, holdChannel: true });
+    const pending = held.service.execute(query); let completed = false;
+    void pending.then(() => { completed = true; });
+    await flush();
+    const cancelledBeforeFailure = held.channels.map(read => read.signal?.aborted);
+    dependency.resolve(); await flush();
+    const cancelledAfterFailure = held.channels.map(read => read.signal?.aborted);
+    const completedBeforeLegacy = completed;
+    held.channels.forEach(read => read.resolve());
+    const result = await pending;
+    assertProjection(result, await fixture({ beforeMetricRead }).service.execute(query));
+    expect(cancelledBeforeFailure).toEqual([false, false, false]);
+    expect(cancelledAfterFailure).toEqual([false, false, false]);
+    expect(completedBeforeLegacy).toBe(false);
+    expect(point(result, "M003")).toMatchObject({ state: "available", value: 6 });
+    expect(point(result, "M006")).toMatchObject({ state: "available", value: 1.5 });
+  });
+
+  test("old组晚到SOURCE_INCOMPLETE仍等待合法旧渠道，93列三期保持", async () => {
+    const dependency = deferred();
+    const status = (code: string, _date: string, filters: BiV1MetricDimensionFilters): ModernStatus =>
+      filters.userCohort === "old" && !filters.clientPlatform && ["M026", "M081"].includes(code) ? "SOURCE_INCOMPLETE" : "READY";
+    const held = fixture({ status, metricGroupGate: { filters: { userCohort: "old" }, promise: dependency.promise }, holdChannel: true });
+    const pending = held.service.execute(query); let completed = false;
+    void pending.then(() => { completed = true; });
+    await flush();
+    const cancelledBeforeIncomplete = held.channels.map(read => read.signal?.aborted);
+    dependency.resolve(); await flush();
+    const cancelledAfterIncomplete = held.channels.map(read => read.signal?.aborted);
+    const completedBeforeLegacy = completed;
+    held.channels.forEach(read => read.resolve());
+    const result = await pending;
+    assertProjection(result, await fixture({ status }).service.execute(query));
+    expect(cancelledBeforeIncomplete).toEqual([false, false, false]);
+    expect(cancelledAfterIncomplete).toEqual([false, false, false]);
+    expect(completedBeforeLegacy).toBe(false);
+    expect(point(result, "M026.old")).toMatchObject({ state: "available", value: 6 });
+    expect(point(result, "M081.old")).toMatchObject({ state: "available", value: 0.6 });
+  });
+
+  test("总体批量拒绝后单指标隔离未完成不得提前取消渠道，93列三期保持", async () => {
+    const recovery = deferred();
+    const requests: string[] = [];
+    const rejectOverallBatch = (params: Record<string, string>) => {
+      if (params.granularity === "day" && !params.dimensionFilters && params.metricCodes.includes(",")) {
+        throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "unsupported metrics", 422);
+      }
+    };
+    const held = fixture({ holdChannel: true, beforeMetricRead: async params => {
+      if (params.granularity === "day" && !params.dimensionFilters) requests.push(params.metricCodes);
+      rejectOverallBatch(params);
+      if (params.granularity === "day" && !params.dimensionFilters && params.metricCodes === "M003") await recovery.promise;
+    } });
+    const pending = held.service.execute(query); let completed = false;
+    void pending.then(() => { completed = true; });
+    await flush();
+    const requestedBeforeRecovery = [...requests];
+    const cancelledBeforeRecovery = held.channels.map(read => read.signal?.aborted);
+    const completedBeforeRecovery = completed;
+    recovery.resolve();
+    const result = await pending;
+    held.channels.forEach(read => read.resolve());
+    assertProjection(result, await fixture({ beforeMetricRead: rejectOverallBatch }).service.execute(query));
+    expect(requestedBeforeRecovery.slice(1)).toEqual(["M001", "M002", "M003"]);
+    expect(cancelledBeforeRecovery).toEqual([false, false, false]);
+    expect(completedBeforeRecovery).toBe(false);
+    expect(held.channels.map(read => read.signal?.aborted)).toEqual([true, true, true]);
+    expect(point(result, "M003")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
   });
 
   for (const gate of ["playbackGate", "monthlyGate", "cohortGate", "paymentGate"] as const) test(`${gate}未完成时已无用途渠道立即释放，完整投影保持`, async () => {

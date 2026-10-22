@@ -693,10 +693,31 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }
     });
     const biV1MetricDays = new Map<string, BiV1MetricDay>();
+    const metricGroupTasks = new Map<string, Promise<void>>();
     const biV1MetricTask = operatingSources ? operatingSources.then(source => {
       source.metricDays.forEach(day => biV1MetricDays.set(day.date, day));
     }) : readSource("metrics", async (client) => {
       const requests = dailyDashboardMetricQueries(query);
+      const readGroup = async (request: BiV1MetricQuery) => {
+        try {
+          const result = await readBiV1MetricDays(client, request);
+          for (const day of result.days) {
+            const existing = biV1MetricDays.get(day.date) ?? { date: day.date, metrics: {} };
+            Object.assign(existing.metrics, day.metrics);
+            biV1MetricDays.set(day.date, existing);
+          }
+        } catch {
+          // Each filter group is independent. Missing or failed slices cannot
+          // borrow the overall value or overwrite another group's healthy result.
+          for (const date of dates) {
+            const existing = biV1MetricDays.get(date) ?? { date, metrics: {} };
+            for (const code of request.metricCodes) existing.metrics[biV1MetricKey(code, request.dimensionFilters)] = {
+              state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null
+            };
+            biV1MetricDays.set(date, existing);
+          }
+        }
+      };
       let next = 0;
       // Operating reads submit independent groups to the shared physical-request
       // queue; a slow group does not reserve an otherwise idle source slot.
@@ -704,24 +725,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       await Promise.all(Array.from({ length: metricWorkers }, async () => {
         while (next < requests.length) {
           const request = requests[next++];
-          try {
-            const result = await readBiV1MetricDays(client, request);
-            for (const day of result.days) {
-              const existing = biV1MetricDays.get(day.date) ?? { date: day.date, metrics: {} };
-              Object.assign(existing.metrics, day.metrics);
-              biV1MetricDays.set(day.date, existing);
-            }
-          } catch {
-            // Each filter group is independent. Missing or failed slices cannot
-            // borrow the overall value or overwrite another group's healthy result.
-            for (const date of dates) {
-              const existing = biV1MetricDays.get(date) ?? { date, metrics: {} };
-              for (const code of request.metricCodes) existing.metrics[biV1MetricKey(code, request.dimensionFilters)] = {
-                state: "source_failure", dataStatus: null, value: null, numerator: null, denominator: null, unit: null
-              };
-              biV1MetricDays.set(date, existing);
-            }
-          }
+          const task = readGroup(request);
+          for (const code of request.metricCodes) metricGroupTasks.set(biV1MetricKey(code, request.dimensionFilters), task);
+          await task;
         }
       }));
     });
@@ -858,12 +864,22 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const selectionIds = [...channelIds, ...inputIds];
       const dependencyApis = new Set(sourceApis(inputIds));
       if (channelIds.some(id => mappings[id].biV1Metric)) dependencyApis.add(BI_V1_METRICS_API);
+      // A group settles only after its metric isolation and merged inputs are complete.
+      // Unrelated filter groups do not keep unused legacy channel requests alive.
+      const metricSelectionTasks = new Set<Promise<void>>();
+      for (const id of selectionIds) {
+        const mapping = mappings[id];
+        if (!mapping.biV1Metric || mapping.biV1Metric === "M018") continue;
+        const task = operatingSources ? biV1MetricTask : metricGroupTasks.get(biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions));
+        if (!task) throw new Error("Channel selection metric group task missing");
+        metricSelectionTasks.add(task);
+      }
       const tasksByApi = new Map<string, Promise<unknown>>([
         [P_DAY_SUM_API, dailyTask], [RETENTION_PLUS_API, cohortTask], [CHANNEL_V2_API, channelTask],
         [PAYMENT_RATE_API, paymentTask], [CHECKIN_OVERVIEW_API, checkinTask], [REALTIME_API, watchTask],
         [BI_V1_PLAYBACK_API, playbackTask],
         [BI_V1_METRICS_API, Promise.all([
-          ...(selectionIds.some(id => mappings[id].biV1Metric && mappings[id].biV1Metric !== "M018") ? [biV1MetricTask] : []),
+          ...metricSelectionTasks,
           ...(selectionIds.some(id => mappings[id].biV1Metric === "M018") ? [monthlyTask] : [])
         ])]
       ]);
