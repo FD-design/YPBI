@@ -33,3 +33,18 @@ test("诊断展示拒绝非法数值且不读取额外原始错误字段", () =>
   expect(renderToStaticMarkup(<RequestFailureDetails {...invalid as unknown as V2RequestDiagnostics} />)).toBe("");
   expect(renderToStaticMarkup(<RequestFailureDetails upstreamBusinessCode={NaN} upstreamHttpStatus={200.5} />)).toBe("");
 });
+
+test("失败详情并列显示BI主码和安全任务错误码，沿用现有错误区域", () => {
+  for (const code of ["QUERY_JOB_FAILED", "QUERY_JOB_EXPIRED"]) {
+    const html = renderToStaticMarkup(<ResourceFailurePanel state={{ status: "failure", kind: "error", code,
+      message: "查询任务已结束", queryJobErrorCode: "DEADLINE_EXCEEDED" }} onRetry={() => {}} />);
+    expect(html).toContain(`错误代码：${code}`);
+    expect(html).toContain("任务错误码：DEADLINE_EXCEEDED");
+    expect(html).not.toContain("请求编号：");
+    expect(html).not.toContain("上游 HTTP：");
+  }
+  for (const queryJobErrorCode of ["<script>secret</script>", "EXECUTION_FAILED ", "x-token=fixture", 400]) {
+    const invalid = { queryJobErrorCode, errorCode: "EXECUTION_FAILED", token: "fixture-secret" } as unknown as V2RequestDiagnostics;
+    expect(renderToStaticMarkup(<RequestFailureDetails {...invalid} />)).toBe("");
+  }
+});

@@ -132,6 +132,27 @@ describe("BI 查询任务独立协议客户端", () => {
     expect(updates.map(item => item.status)).toEqual([taskStatus]); expect(f.calls).toHaveLength(2);
   });
 
+  for (const taskStatus of ["FAILED", "EXPIRED"] as const) test(`${taskStatus}保留安全任务错误码与主错误码，不重建任务`, async () => {
+    const f = fixture((_path, _init, index) => index === 0 ? created() : state(taskStatus, { errorCode: "DEADLINE_EXCEEDED" }));
+    const error = await f.run(request()).catch(error => error);
+    expect(error).toBeInstanceOf(BiQueryJobTerminalError);
+    expect(error).toMatchObject({ code: taskStatus === "FAILED" ? "QUERY_JOB_FAILED" : "QUERY_JOB_EXPIRED",
+      queryJobErrorCode: "DEADLINE_EXCEEDED", progress: { status: taskStatus, errorCode: "DEADLINE_EXCEEDED" } });
+    expect(f.calls.map(call => call.init.method)).toEqual(["POST", "GET"]);
+  });
+
+  test("非法任务错误码在协议入口失败关闭，终态错误类不投影原始字符串", async () => {
+    console.warn = () => undefined;
+    for (const errorCode of ["<script>secret</script>", "x-token=fixture", "EXECUTION_FAILED ", 400]) {
+      const f = fixture((_path, _init, index) => index === 0 ? created() : state("FAILED", { errorCode }));
+      await expect(f.run(request())).rejects.toMatchObject({ code: "INVALID_V2_RESPONSE" });
+      expect(f.calls).toHaveLength(2);
+      const error = new BiQueryJobTerminalError({ ...progress("FAILED"), errorCode } as unknown as BiQueryJobProgress);
+      expect(error.queryJobErrorCode).toBeUndefined();
+      expect(error.message).toBe("查询任务执行失败");
+    }
+  });
+
   test("状态成功后结果已过期，以结果实际状态失败关闭", async () => {
     const responses = [created(), state("SUCCEEDED"), state("EXPIRED")];
     const updates: Readonly<BiQueryJobProgress>[] = [];

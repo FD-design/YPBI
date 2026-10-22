@@ -3,7 +3,7 @@ import {
   biQueryJobCreatedSchema, biQueryJobProgressSchema, biQueryJobRequestSchema,
   biQueryJobResultSchema, biQueryJobStatusSchema, type BiQueryJobRequest
 } from "../../../contracts/query-jobs";
-import { parseResponse, V2RequestError } from "./client";
+import { parseResponse, readV2RequestDiagnostics, V2RequestError } from "./client";
 import { dataEnvironmentHeaders } from "./dataEnvironmentPreference";
 
 export type BiQueryJobProgress = z.infer<typeof biQueryJobProgressSchema>;
@@ -36,10 +36,12 @@ export class BiQueryJobWaitError extends Error {
 
 export class BiQueryJobTerminalError extends Error {
   readonly code: "QUERY_JOB_FAILED" | "QUERY_JOB_EXPIRED";
+  readonly queryJobErrorCode?: BiQueryJobProgress["errorCode"];
   constructor(readonly progress: Readonly<BiQueryJobProgress>) {
     super(progress.status === "EXPIRED" ? "查询结果已过期，请重新查询" : "查询任务执行失败");
     this.name = "BiQueryJobTerminalError";
     this.code = progress.status === "EXPIRED" ? "QUERY_JOB_EXPIRED" : "QUERY_JOB_FAILED";
+    this.queryJobErrorCode = readV2RequestDiagnostics({ queryJobErrorCode: progress.errorCode }).queryJobErrorCode;
   }
 }
 

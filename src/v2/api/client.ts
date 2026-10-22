@@ -16,6 +16,7 @@ import {
 } from "../../../contracts/bi-v2";
 import { notifyAuthenticationRequired } from "./authEvents";
 import { dailyDashboardCatalogSchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery, type DailyDashboardQuery } from "../../../contracts/daily-dashboard";
+import { biQueryJobProgressSchema } from "../../../contracts/query-jobs";
 import { dataEnvironmentHeaders } from "./dataEnvironmentPreference";
 import { recordDailyDashboardEnvironment } from "./daily-dashboard-environment";
 import { reportInvalidResponse } from "./response-format-diagnostics";
@@ -30,6 +31,7 @@ export interface V2RequestDiagnostics {
   requestId?: string;
   upstreamBusinessCode?: number;
   upstreamHttpStatus?: number;
+  queryJobErrorCode?: z.infer<typeof biQueryJobProgressSchema>["errorCode"];
 }
 
 export function readV2RequestDiagnostics(source: unknown): V2RequestDiagnostics {
@@ -44,6 +46,8 @@ export function readV2RequestDiagnostics(source: unknown): V2RequestDiagnostics 
   if (typeof candidate.upstreamHttpStatus === "number" && Number.isInteger(candidate.upstreamHttpStatus) && candidate.upstreamHttpStatus >= 100 && candidate.upstreamHttpStatus <= 599) {
     diagnostics.upstreamHttpStatus = candidate.upstreamHttpStatus;
   }
+  const queryJobErrorCode = biQueryJobProgressSchema.shape.errorCode.safeParse(candidate.queryJobErrorCode);
+  if (queryJobErrorCode.success && queryJobErrorCode.data !== undefined) diagnostics.queryJobErrorCode = queryJobErrorCode.data;
   return diagnostics;
 }
 
@@ -54,6 +58,7 @@ export class V2RequestError extends Error {
   readonly requestId?: string;
   readonly upstreamBusinessCode?: number;
   readonly upstreamHttpStatus?: number;
+  readonly queryJobErrorCode?: V2RequestDiagnostics["queryJobErrorCode"];
 
   constructor(message: string, options: V2RequestDiagnostics & { kind: V2FailureKind; code: string; status: number }) {
     super(message);
@@ -64,6 +69,7 @@ export class V2RequestError extends Error {
     this.requestId = options.requestId;
     this.upstreamBusinessCode = options.upstreamBusinessCode;
     this.upstreamHttpStatus = options.upstreamHttpStatus;
+    this.queryJobErrorCode = readV2RequestDiagnostics(options).queryJobErrorCode;
   }
 }
 

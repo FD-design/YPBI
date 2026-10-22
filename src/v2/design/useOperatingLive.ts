@@ -42,7 +42,7 @@ export function useOperatingResources(live: OperatingRequestScope | null) {
     const fail = (pid: string, error: unknown) => {
       if (controller.signal.aborted) return;
       const failure = error instanceof V2RequestError ? error : error instanceof BiQueryJobTerminalError || error instanceof BiQueryJobWaitError
-        ? new V2RequestError(error.message, { kind: "error", code: error.code, status: 0 })
+        ? new V2RequestError(error.message, { ...readV2RequestDiagnostics(error), kind: "error", code: error.code, status: 0 })
         : new V2RequestError("经营明细读取失败", { kind: "error", code: "OPERATING_READ_FAILED", status: 0 });
       setResources(current => {
         const prior = operatingResource(current[pid], pid, date, environment);

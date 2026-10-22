@@ -283,6 +283,7 @@ test(`${environmentLabel}任务FAILED只影响所属站点，保留错误码且�
   const failed = trigger(page, "M087:overall", "TT");
   await failed.scrollIntoViewIfNeeded(); await failed.click();
   await expect(detail(page)).toContainText("错误代码：QUERY_JOB_FAILED");
+  await expect(detail(page)).toContainText("任务错误码：EXECUTION_FAILED");
   await expect(detail(page).locator("tbody tr").first().locator("td").nth(2)).toContainText("读取失败");
   await page.screenshot({ path: info.outputPath("operating-async-task-failed.png") });
   expect(control.reads.some(read => read.pid === "TT" && read.result)).toBe(false);

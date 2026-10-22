@@ -86,8 +86,8 @@ test("错误日期、平台或缺列结果拒绝，不复用其他结果或转�
   } finally { console.warn = warn; }
 });
 
-test("任务FAILED保留终态，不请求结果或静默重建", async () => {
-  const f = fixture([created(), { success: true, data: { ...progress("FAILED"), errorCode: "EXECUTION_FAILED" } }]);
-  await expect(f.run(input)).rejects.toMatchObject({ code: "QUERY_JOB_FAILED" });
+for (const status of ["FAILED", "EXPIRED"] as const) test(`经营任务${status}保留安全错误码，不请求结果或静默重建`, async () => {
+  const f = fixture([created(), { success: true, data: { ...progress(status), errorCode: "EXECUTION_FAILED" } }]);
+  await expect(f.run(input)).rejects.toMatchObject({ code: status === "FAILED" ? "QUERY_JOB_FAILED" : "QUERY_JOB_EXPIRED", queryJobErrorCode: "EXECUTION_FAILED" });
   expect(f.calls).toHaveLength(2);
 });

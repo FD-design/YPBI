@@ -148,12 +148,28 @@ describe("V2安全请求诊断", () => {
     }
   });
 
-  test("白名单仅返回四项诊断，保留合法0业务码和HTTP边界且不改写来源", () => {
+  test("白名单仅返回已登记诊断，保留合法0业务码和HTTP边界且不改写来源", () => {
     for (const upstreamHttpStatus of [100, 200, 599]) {
       const source = Object.freeze({ code: rejection.code, requestId: rejection.requestId, upstreamBusinessCode: 0, upstreamHttpStatus,
         message: "fake-secret-error-message", token: "fake-secret-token", status: 400, extra: "ignored" });
       expect(v2Client.readV2RequestDiagnostics(source)).toEqual({ code: rejection.code, requestId: rejection.requestId, upstreamBusinessCode: 0, upstreamHttpStatus });
       expect(source.message).toBe("fake-secret-error-message");
+    }
+  });
+
+  test("任务错误码沿用协议白名单，与BI主码独立且不读取原始错误", () => {
+    for (const queryJobErrorCode of ["QUEUE_TIMEOUT", "DEADLINE_EXCEEDED", "LEASE_EXHAUSTED", "RESULT_TOO_LARGE", "RESULT_CAPACITY", "EXECUTION_FAILED", "UNKNOWN"] as const) {
+      const source = Object.freeze({ code: "QUERY_JOB_FAILED", queryJobErrorCode, message: "fake-secret-message", token: "fake-secret-token" });
+      const failure = new V2RequestError("查询任务执行失败", { ...source, kind: "error", status: 0 });
+      expect(v2Client.readV2RequestDiagnostics(source)).toEqual({ code: "QUERY_JOB_FAILED", queryJobErrorCode });
+      expect(v2Client.readV2RequestDiagnostics(failure)).toEqual({ code: "QUERY_JOB_FAILED", queryJobErrorCode });
+      expect(failure.message).toBe("查询任务执行失败");
+    }
+    for (const queryJobErrorCode of [undefined, null, "", "EXECUTION_FAILED ", "execution_failed", "<script>secret</script>", "x-token=fixture", 400, true, {}, [], new String("EXECUTION_FAILED")]) {
+      expect(v2Client.readV2RequestDiagnostics({ queryJobErrorCode })).toEqual({});
+      const failure = new V2RequestError("查询任务执行失败", { kind: "error", code: "QUERY_JOB_FAILED", status: 0,
+        ...{ queryJobErrorCode } as unknown as v2Client.V2RequestDiagnostics });
+      expect(failure.queryJobErrorCode).toBeUndefined();
     }
   });
 

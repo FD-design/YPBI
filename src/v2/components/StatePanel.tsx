@@ -8,10 +8,11 @@ import { hideInternalReferenceCodes } from "../features/metrics/metric-presentat
 type StateKind = "loading" | "identity_unavailable" | "unauthenticated" | "forbidden" | "error" | "empty";
 
 export function RequestFailureDetails(props: V2RequestDiagnostics) {
-  const { code, requestId, upstreamBusinessCode, upstreamHttpStatus } = readV2RequestDiagnostics(props);
+  const { code, requestId, upstreamBusinessCode, upstreamHttpStatus, queryJobErrorCode } = readV2RequestDiagnostics(props);
   const details = [code ? `错误代码：${code}` : null, requestId ? `请求编号：${requestId}` : null,
     upstreamBusinessCode !== undefined ? `上游业务码：${upstreamBusinessCode}` : null,
-    upstreamHttpStatus !== undefined ? `上游 HTTP：${upstreamHttpStatus}` : null].filter(Boolean).join(" · ");
+    upstreamHttpStatus !== undefined ? `上游 HTTP：${upstreamHttpStatus}` : null,
+    queryJobErrorCode ? `任务错误码：${queryJobErrorCode}` : null].filter(Boolean).join(" · ");
   return details ? <small>{details}</small> : null;
 }
 
@@ -31,6 +32,7 @@ export function StatePanel({
   requestId,
   upstreamBusinessCode,
   upstreamHttpStatus,
+  queryJobErrorCode,
   action,
   compact = false
 }: {
@@ -46,7 +48,7 @@ export function StatePanel({
     <div>
       <h2>{hideInternalReferenceCodes(title)}</h2>
       <p>{hideInternalReferenceCodes(description)}</p>
-      <RequestFailureDetails code={code} requestId={requestId} upstreamBusinessCode={upstreamBusinessCode} upstreamHttpStatus={upstreamHttpStatus} />
+      <RequestFailureDetails code={code} requestId={requestId} upstreamBusinessCode={upstreamBusinessCode} upstreamHttpStatus={upstreamHttpStatus} queryJobErrorCode={queryJobErrorCode} />
     </div>
     {action && <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={action.onClick}><RefreshCw aria-hidden="true" />{action.label}</button>}
   </section>;

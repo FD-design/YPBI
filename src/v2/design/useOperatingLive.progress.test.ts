@@ -246,6 +246,75 @@ async function finishJob(pending: PendingJobRead[], live: LiveDashboardReading, 
   pending[statusIndex + 1].finish({ success: true, data: { ...progress, phase: "complete", dashboards: [success(query, "READY", "2026-10-21T02:00:00Z")] } });
 }
 
+test("任务FAILED与EXPIRED各自保留安全原因及93列三期详情，不重建或转同步", async () => {
+  await withJobReads(async (harness, pending) => {
+    const live = asyncReading(["PH", "TT"], "production");
+    const cases = [
+      { pid: "PH", handle: jobHandle, status: "FAILED", code: "QUERY_JOB_FAILED", errorCode: "DEADLINE_EXCEEDED" },
+      { pid: "TT", handle: "22222222-2222-4222-8222-222222222222", status: "EXPIRED", code: "QUERY_JOB_EXPIRED", errorCode: "RESULT_CAPACITY" }
+    ];
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 2);
+    cases.forEach((item, index) => pending[index].finish({ success: true, data: { ...jobScope(live, item.pid, item.handle), reused: false } }));
+    await new Promise(resolve => setTimeout(resolve, 2100));
+    await until(() => pending.length === 4);
+    for (const request of pending.slice(2)) {
+      const item = cases.find(item => request.path.includes(item.handle))!;
+      request.finish({ success: true, data: { ...jobScope(live, item.pid, item.handle), status: item.status,
+        phase: "query", completedUnits: 0, totalUnits: 14, attempts: 1, errorCode: item.errorCode } });
+    }
+    await until(() => harness.render(live).notice.progress === null);
+    const result = harness.render(live);
+    for (const item of cases) {
+      const diagnostics = { code: item.code, queryJobErrorCode: item.errorCode };
+      expect(result.resources[item.pid]).toMatchObject({ status: "failure", ...diagnostics });
+      const row = result.rows!.find(row => row.pid === item.pid)!;
+      expect(row.values).toHaveLength(93);
+      for (const value of row.values) for (const period of ["current", "previousDay", "previousWeek"] as const) {
+        const evidence = value.evidence![period];
+        if (evidence.state === "not_applicable") expect(evidence.requestFailure).toBeUndefined();
+        else expect(evidence.requestFailure).toEqual(diagnostics);
+      }
+    }
+    expect(pending).toHaveLength(4);
+    expect(pending.filter(request => request.body)).toHaveLength(2);
+    expect(pending.every(request => request.path.startsWith("/api/bi/v2/queries/jobs"))).toBe(true);
+  }, "production");
+});
+
+test("终态刷新失败保留旧结果与任务原因，恢复后清除整条诊断", async () => {
+  await withJobReads(async (harness, pending) => {
+    let live = asyncReading();
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 1);
+    await finishJob(pending, live);
+    await until(() => harness.render(live).resources.PH?.status === "success");
+    const prior = harness.render(live).resources.PH;
+    live = { ...live, refreshRevision: 1 };
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 4);
+    pending[3].finish({ success: true, data: { ...jobScope(live), reused: false } });
+    await new Promise(resolve => setTimeout(resolve, 2100));
+    await until(() => pending.length === 5);
+    pending[4].finish({ success: true, data: { ...jobScope(live), phase: "query", status: "FAILED", errorCode: "LEASE_EXHAUSTED" } });
+    await until(() => harness.render(live).notice.progress === null);
+    const failed = harness.render(live), diagnostics = { code: "QUERY_JOB_FAILED", queryJobErrorCode: "LEASE_EXHAUSTED" };
+    expect(failed.resources.PH).toMatchObject({ status: "success", refreshing: false, refreshError: diagnostics });
+    expect(failed.resources.PH.status === "success" && prior.status === "success" && failed.resources.PH.data === prior.data).toBe(true);
+    expect(failed.notice.retained?.firstReadAt).toBe("2026-10-21T02:00:00Z");
+    for (const value of failed.rows![0].values) expect(value.evidence!.current.requestFailure).toEqual(diagnostics);
+    live = { ...live, refreshRevision: 2 };
+    harness.render(live); harness.flushEffects();
+    await until(() => pending.length === 6);
+    await finishJob(pending, live, 5);
+    await until(() => harness.render(live).resources.PH?.status === "success" && harness.render(live).notice.progress === null);
+    const recovered = harness.render(live);
+    expect(recovered.resources.PH).toMatchObject({ status: "success", refreshError: null });
+    for (const value of recovered.rows![0].values) expect(value.evidence!.current.requestFailure).toBeUndefined();
+    expect(pending.filter(request => request.body)).toHaveLength(3);
+  });
+}, 10_000);
+
 test("异步创建HTTP400仅失败当前平台组，其他组完成93列且不转同步", async () => {
   await withJobReads(async (harness, pending) => {
     const live = asyncReading(["PH", "TT"]);
