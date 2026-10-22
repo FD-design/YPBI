@@ -187,14 +187,60 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     expect(point(result, "M006")).toMatchObject({ value: 1.5, state: "available" });
   });
 
-  for (const gate of ["dailyGate", "modernGate"] as const) test(`${gate}完成前保留渠道，使用完整输入判定回退`, async () => {
-    const dependency = deferred(), held = fixture({ [gate]: dependency.promise, holdChannel: true });
+  test("现代依赖完成前保留渠道，使用完整输入判定回退", async () => {
+    const dependency = deferred(), held = fixture({ modernGate: dependency.promise, holdChannel: true });
     const pending = held.service.execute(query); await flush();
     expect(held.channels.every(read => !read.signal?.aborted)).toBe(true);
     dependency.resolve(); await pending;
     expect(held.channels.every(read => read.signal?.aborted)).toBe(true);
     held.channels.forEach(read => read.resolve());
   });
+
+  for (const derived of [false, true]) test(`慢日汇总不保留现代已足够的渠道，READY基础派生=${derived}且93列三期保持`, async () => {
+    const daily = deferred();
+    const status = (code: string): ModernStatus => derived && ["M006", "M007"].includes(code) ? "PROCESSING" : "READY";
+    const held = fixture({ dailyGate: daily.promise, holdChannel: true, status });
+    const pending = held.service.execute(query); let completed = false;
+    void pending.then(() => { completed = true; });
+    await flush();
+    const cancelledBeforeDaily = held.channels.map(read => read.signal?.aborted);
+    const completedBeforeDaily = completed;
+    daily.resolve();
+    const result = await pending;
+    held.channels.forEach(read => read.resolve());
+    expect(cancelledBeforeDaily).toEqual([true, true, true]);
+    expect(completedBeforeDaily).toBe(false);
+    assertProjection(result, await fixture({ status }).service.execute(query));
+    for (const id of ["M006", "M007"]) expect(point(result, id)).toMatchObject({
+      state: "available", value: derived ? 1 : 0.5, sourceStatus: "READY"
+    });
+  });
+
+  for (const sourceStatus of ["SOURCE_INCOMPLETE", "empty", "invalid"] as const)
+    test(`备用M008为${sourceStatus}时仍等待实际日汇总与渠道，不把旧源当READY基础`, async () => {
+      const daily = deferred();
+      const status = (code: string, _date: string, filters: BiV1MetricDimensionFilters): ModernStatus =>
+        !Object.keys(filters).length && code === "M008" ? sourceStatus
+          : ["M006", "M007"].includes(code) ? "SOURCE_INCOMPLETE" : "READY";
+      const held = fixture({ dailyGate: daily.promise, holdChannel: true, status });
+      const pending = held.service.execute(query); let completed = false;
+      void pending.then(() => { completed = true; });
+      await flush();
+      expect(held.channels.map(read => read.signal?.aborted)).toEqual([false, false, false]);
+      held.channels.forEach(read => read.resolve()); await flush();
+      const completedBeforeDaily = completed;
+      daily.resolve();
+      const result = await pending;
+      expect(completedBeforeDaily).toBe(false);
+      assertProjection(result, await fixture({ status }).service.execute(query));
+      expect(point(result, "M008")).toMatchObject({ state: "available", value: 10 });
+      expect(point(result, "M008").sourceStatus).toBeUndefined();
+      expect(point(result, "M006")).toMatchObject({ state: "available", value: 1.5 });
+      expect(point(result, "M007")).toMatchObject({ state: "available", value: 0.75 });
+      expect(point(result, "M006").sourceStatus).toBeUndefined();
+      expect(point(result, "M007").sourceStatus).toBeUndefined();
+      expect(point(result, "M088")).toMatchObject({ state: "available", value: 1.234 });
+    });
 
   for (const filters of [
     { paymentMethod: "ali_pay" },
@@ -346,9 +392,9 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     held.channels.forEach(read => read.resolve());
   });
 
-  test("无关慢播放仍在途时释放三个物理槽供后续读取使用，默认40容量保持", async () => {
+  for (const gate of ["playback", "daily"] as const) test(`慢${gate}仍在途时释放三个物理槽供后续读取使用，默认40容量保持`, async () => {
     const base = fixture();
-    const playback = deferred(), background = deferred();
+    const dependency = deferred(), background = deferred();
     const physicalChannels: AbortSignal[] = [];
     const dispatched: string[] = [];
     let active = 0, peak = 0;
@@ -366,7 +412,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
         }
         if (url.pathname === "/api/fixture/background") { await background.promise; return Response.json({ code: 200 }); }
         if (url.pathname === "/api/fixture/later") { await background.promise; return Response.json({ code: 200 }); }
-        if (url.pathname === BI_V1_PLAYBACK_API) await playback.promise;
+        if (gate === "playback" ? url.pathname === BI_V1_PLAYBACK_API : url.pathname.endsWith("pDaySum")) await dependency.promise;
         return Response.json(await base.client.get(url.pathname, params));
       } finally { active--; }
     });
@@ -375,12 +421,12 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const blockers = Array.from({ length: 36 }, (_, index) => upstream.get("/api/fixture/background", { pid: "PH", index: String(index) }));
     const later = Array.from({ length: 3 }, (_, index) => upstream.get("/api/fixture/later", { pid: "PH", index: String(index) }));
     await flush();
-    const dispatchedBeforePlayback = dispatched.filter(path => path === "/api/fixture/later").length;
-    const cancelledBeforePlayback = physicalChannels.map(signal => signal.aborted);
-    playback.resolve(); background.resolve();
+    const dispatchedBeforeDependency = dispatched.filter(path => path === "/api/fixture/later").length;
+    const cancelledBeforeDependency = physicalChannels.map(signal => signal.aborted);
+    dependency.resolve(); background.resolve();
     const [result] = await Promise.all([pending, ...blockers, ...later]);
-    expect(dispatchedBeforePlayback).toBe(3);
-    expect(cancelledBeforePlayback).toEqual([true, true, true]);
+    expect(dispatchedBeforeDependency).toBe(3);
+    expect(cancelledBeforeDependency).toEqual([true, true, true]);
     expect(peak).toBe(40);
     expect(active).toBe(0);
     assertProjection(result, await fixture().service.execute(query));

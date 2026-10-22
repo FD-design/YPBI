@@ -2,5 +2,5 @@
 export const productionDashboardReadingDefaults = {
   publicOrigin: "https://187.77.129.207.nip.io",
   enabled: true,
-  operatingAsyncEnabled: true
+  operatingAsyncEnabled: false
 } as const;

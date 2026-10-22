@@ -235,11 +235,11 @@ type PointSourceSelection =
   | { kind: "legacy" }
   | { kind: "modern_missing" };
 
-function selectPointSource(mapping: CandidateMapping, point: BiV1MetricDay["metrics"][string] | undefined, fallbackSources: () => DailyPoint[]): PointSourceSelection {
+function selectPointSource(mapping: CandidateMapping, point: BiV1MetricDay["metrics"][string] | undefined, fallbackSources: () => DailyPoint[] | null): PointSourceSelection {
   if (mapping.fallbackFrom && !(point?.dataStatus === "READY" && point.unit === "ratio"
     && (point.state === "available" || point.state === "zero_denominator"))) {
     const sources = fallbackSources();
-    if (sources.every(source => source.sourceStatus === "READY" && source.state === "available" && source.value !== null)) {
+    if (sources?.every(source => source.sourceStatus === "READY" && source.state === "available" && source.value !== null)) {
       return { kind: "derived", sources };
     }
   }
@@ -796,11 +796,19 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       pointCache.set(key, point);
       return point;
     };
-    const pointSourceFor = (id: CandidateId, date: string) => {
+    const modernPointFor = (id: CandidateId, date: string) => {
       const mapping = mappings[id];
       const day = (id === "M018" ? monthlyDays : biV1MetricDays).get(date);
-      const modern = mapping.biV1Metric ? day?.metrics[biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions)] : undefined;
-      return selectPointSource(mapping, modern, () => mapping.fallbackFrom!.map(source => pointFor(source, date)));
+      return mapping.biV1Metric ? day?.metrics[biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions)] : undefined;
+    };
+    const pointSourceFor = (id: CandidateId, date: string) => {
+      const mapping = mappings[id];
+      return selectPointSource(mapping, modernPointFor(id, date), () => {
+        const sources = mapping.fallbackFrom!;
+        // Trend derivation uses validated READY modern facts; legacy inputs retain their own final projection.
+        return sources.every(source => modernPointFor(source, date)?.dataStatus === "READY")
+          ? sources.map(source => pointFor(source, date)) : null;
+      });
     };
     const projectPoint = (id: CandidateId, date: string): DailyPoint => {
         const mapping = mappings[id];
@@ -903,32 +911,18 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const channelIds = sourceIds.filter(id => mappings[id].channel);
       const inputIds = sourceMetricIds(channelIds.flatMap(id => mappings[id].fallbackFrom ?? []));
       const selectionIds = [...channelIds, ...inputIds];
-      const dependencyApis = new Set(sourceApis(inputIds));
-      if (channelIds.some(id => mappings[id].biV1Metric)) dependencyApis.add(BI_V1_METRICS_API);
       // A group settles only after its metric isolation and merged inputs are complete.
-      // Unrelated filter groups do not keep unused legacy channel requests alive.
+      // Channel selection waits for its modern facts; legacy-only inputs cannot supply READY trend facts.
       const metricSelectionTasks = new Set<Promise<void>>();
       for (const id of selectionIds) {
         const mapping = mappings[id];
-        if (!mapping.biV1Metric || mapping.biV1Metric === "M018") continue;
-        const task = operatingSources ? biV1MetricTask : metricGroupTasks.get(biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions));
+        if (!mapping.biV1Metric) continue;
+        const task = mapping.biV1Metric === "M018" ? monthlyTask
+          : operatingSources ? biV1MetricTask : metricGroupTasks.get(biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions));
         if (!task) throw new Error("Channel selection metric group task missing");
         metricSelectionTasks.add(task);
       }
-      const tasksByApi = new Map<string, Promise<unknown>>([
-        [P_DAY_SUM_API, dailyTask], [RETENTION_PLUS_API, cohortTask], [CHANNEL_V2_API, channelTask],
-        [PAYMENT_RATE_API, paymentTask], [CHECKIN_OVERVIEW_API, checkinTask], [REALTIME_API, watchTask],
-        [BI_V1_PLAYBACK_API, playbackTask],
-        [BI_V1_METRICS_API, Promise.all([
-          ...metricSelectionTasks,
-          ...(selectionIds.some(id => mappings[id].biV1Metric === "M018") ? [monthlyTask] : [])
-        ])]
-      ]);
-      await Promise.all([...dependencyApis].map(api => {
-        const task = tasksByApi.get(api);
-        if (!task) throw new Error("Channel selection source task missing");
-        return task;
-      }));
+      await Promise.all(metricSelectionTasks);
       for (const date of dates) {
         const needsLegacy = sourceIds.some(id => {
           if (!mappings[id].channel) return false;
