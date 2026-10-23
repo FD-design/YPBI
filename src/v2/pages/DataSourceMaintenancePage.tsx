@@ -34,6 +34,7 @@ import { useDialogBackdrop } from "../../components/ui/useDialogBackdrop";
 import { useBodyScrollLock } from "../../components/layout/useBodyScrollLock";
 import "./data-source-maintenance.css";
 import { useDataEnvironment } from "../app/DataEnvironmentProvider";
+import { OperatingQueryValidationPane } from "./OperatingQueryValidationPane";
 
 type AccessState =
   | { status: "checking" }
@@ -44,7 +45,7 @@ type AccessState =
 
 type Operation =
   | { kind: "idle" }
-  | { kind: "login" | "logout" | "preview_activate" | "preview_deactivate" | "preview_check" }
+  | { kind: "login" | "logout" | "preview_activate" | "preview_deactivate" | "preview_check" | "validation" }
   | { kind: "current" | "candidate" | "save"; site: CredentialSite };
 
 interface SiteNotice {
@@ -638,5 +639,8 @@ export function DataSourceMaintenancePage() {
     {confirmingSite && <SaveConfirmationDialog site={confirmingSite} busy={operation.kind === "save"} onCancel={() => closeSaveConfirmation(confirmingSite)} onConfirm={() => runSiteOperation("save", confirmingSite)} />}
 
     <p className="v2-maintenance-footnote">“凭证探针通过”仅说明该站点当前 Token 与用户名可以访问指定探针接口，不代表全部 PID、全部接口或指标已经验数。</p>
+    <OperatingQueryValidationPane csrfToken={csrfToken} disabled={(busy && operation.kind !== "validation") || confirmingSite !== null}
+      onBusyChange={running => { if (running) beginOperation({ kind: "validation" }); else if (latest.current.operation.kind === "validation") finishOperation(); }}
+      onMaintenanceError={handleAccessError} />
   </div>;
 }

@@ -31,6 +31,7 @@ import { DataPreviewSessions } from "./security/data-preview-session";
 import type { IdentityProvider, Principal } from "./identity/identity-provider";
 import { UnavailableIdentityProvider } from "./identity/identity-provider";
 import { resolveIdentity } from "./identity/resolve-identity";
+import { identityLookupFailureDiagnostics } from "./identity/identity-lookup-diagnostics";
 import { bindClientRequestAbort } from "./http/client-request-abort";
 import { PDaySumM016Source } from "./v2/m016-source";
 import { V2MetricQueryService } from "./v2/metric-query.service";
@@ -40,6 +41,7 @@ import { BiQueryJobService } from "./v2/query-jobs.service";
 import { OperatingQueryJobService } from "./v2/operating-query-jobs.service";
 import { operatingEvidenceQuerySchema } from "../contracts/operating-evidence";
 import { readOperatingEvidence } from "./v2/operating-evidence.service";
+import { registerAdminOperatingQueryJobs } from "./admin-operating-query-jobs";
 import { runWithUpstreamRequestProfile } from "./upstream/request-profile";
 import {
   v2BiPlugin,
@@ -260,7 +262,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       // A disconnected Bun response may still have writableEnded=false.
       // Hijacking ends Fastify's hook chain before any response or admin action.
       if (clientAbortController.signal.aborted) return reply.hijack();
-      request.log.error({ requestId: request.id, outcome: "admin_identity_failed" }, "admin identity resolution failed");
+      request.log.error({ requestId: request.id, outcome: "session_failed", identityLookup: identityLookupFailureDiagnostics(clientAbortController.signal) }, "BI user session lookup failed");
       return reply.code(503).send({
         success: false,
         error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "登录服务当前不可用", requestId: request.id }
@@ -269,6 +271,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       unbindClientAbort();
     }
     if (resolution.status === "unavailable") {
+      request.log.warn({ requestId: request.id, outcome: "session_failed", identityLookup: identityLookupFailureDiagnostics(clientAbortController.signal) }, "BI user session lookup failed");
       return reply.code(503).send({
         success: false,
         error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "登录服务当前不可用", requestId: request.id }
@@ -695,10 +698,19 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const productionOperatingAsyncEnabled = productionDailyReadingEnabled && env.BI_PRODUCTION_OPERATING_ASYNC_ENABLED;
   const dailyDashboardService = formalDailyReadingEnabled || previewEnabled
     ? new DailyDashboardService(upstream, undefined, app.log, { sourceReadTimeoutMs: env.REQUEST_TIMEOUT_MS, readTraceEnabled: true }) : undefined;
-  const queryJobService = previewEnabled || productionOperatingAsyncEnabled ? new BiQueryJobService(new QueryJobsClient(upstream)) : undefined;
+  const queryJobService = previewEnabled || productionDailyReadingEnabled ? new BiQueryJobService(new QueryJobsClient(upstream)) : undefined;
   const operatingQueryJobService = queryJobService && dailyDashboardService
     ? new OperatingQueryJobService(queryJobService, dailyDashboardService, undefined, { productionEnabled: productionOperatingAsyncEnabled }) : undefined;
-  app.addHook("onClose", async () => { operatingQueryJobService?.close(); });
+  const adminOperatingQueryJobService = productionDailyReadingEnabled && queryJobService && dailyDashboardService
+    ? new OperatingQueryJobService(queryJobService, dailyDashboardService, undefined, { productionEnabled: true }) : undefined;
+  app.addHook("onClose", async () => { operatingQueryJobService?.close(); adminOperatingQueryJobService?.close(); });
+
+  registerAdminOperatingQueryJobs(app, {
+    enabled: productionDailyReadingEnabled,
+    service: adminOperatingQueryJobService,
+    requireMaintenanceSession,
+    principalFor: request => adminPrincipals.get(request)
+  });
 
   await app.register(v2BiPlugin, {
     prefix: "/api/bi/v2",

@@ -12,3 +12,19 @@
 .v2-preview-source__head { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .v2-preview-source__actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 @media(max-width:700px) { .v2-preview-source__head { align-items:flex-start; } .v2-preview-source__actions,.v2-preview-source__actions .ui-button { width:100%; } }
+.v2-operating-validation { border:1px solid var(--color-border); border-radius:10px; background:var(--color-surface); min-width:0; }
+.v2-operating-validation>summary { padding:16px 20px; min-height:44px; cursor:pointer; font-size:var(--font-size-body); font-weight:600; }
+.v2-operating-validation__body { display:grid; gap:16px; padding:0 20px 20px; min-width:0; }
+.v2-operating-validation p,.v2-operating-validation li { margin:0; font-size:var(--font-size-body); line-height:1.6; overflow-wrap:anywhere; }
+.v2-operating-validation h3 { margin:0; font-size:var(--font-size-body); }
+.v2-operating-validation__controls { display:flex; align-items:flex-end; flex-wrap:wrap; gap:8px; }
+.v2-operating-validation__controls .ui-button { min-height:44px; }
+.v2-operating-validation__controls label { display:grid; gap:6px; font-size:var(--font-size-body-sm); }
+.v2-operating-validation__controls input { min-height:44px; padding:8px 12px; color:var(--color-text-1); background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; font:inherit; }
+.v2-operating-validation__groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.v2-operating-validation__groups article,.v2-operating-validation__comparison { display:grid; align-content:start; gap:8px; min-width:0; padding:16px; border:1px solid var(--color-border); border-radius:8px; }
+.v2-operating-validation p.v2-operating-validation__note { color:var(--color-text-2); font-size:var(--font-size-body-sm); }
+.v2-operating-validation__error { color:var(--color-danger); }
+.v2-operating-validation__summary { display:flex; gap:8px; align-items:center; font-variant-numeric:tabular-nums; }
+.v2-operating-validation__summary svg { width:16px; height:16px; flex-shrink:0; }
+@media(max-width:700px) { .v2-operating-validation__body { padding:0 16px 16px; } .v2-operating-validation>summary { padding:16px; } .v2-operating-validation__groups { grid-template-columns:1fr; } .v2-operating-validation__controls label { width:100%; } .v2-operating-validation__controls .ui-button { flex:1 1 auto; } }
