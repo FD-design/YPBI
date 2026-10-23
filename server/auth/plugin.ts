@@ -8,13 +8,14 @@ import {
   resolveSessionCookieConfiguration,
   sessionCookie
 } from "./cookies";
-import { AuthServiceError, type BiAuthService } from "./service";
+import { AuthServiceError, type BiAuthService, type ResolvedAuthSession } from "./service";
 import { PasswordWorkCapacityError } from "./password";
 import { bindClientRequestAbort } from "../http/client-request-abort";
 import {
   associateIdentityLookupFailure, beginIdentityLookupDiagnostics, freezeIdentityLookupFailure,
   identityLookupFailureDiagnostics, markIdentityLookupPhase
 } from "../identity/identity-lookup-diagnostics";
+import { IdentityDeadline } from "../identity/identity-deadline";
 
 export interface BiAuthPluginOptions {
   authService: BiAuthService;
@@ -85,7 +86,8 @@ export async function authenticatedSession(
   if (!token) return { token, session: null };
 
   const controller = new AbortController();
-  beginIdentityLookupDiagnostics(controller.signal, timeoutMs);
+  const deadline = new IdentityDeadline(controller, timeoutMs, "auth_session_lookup_timeout");
+  beginIdentityLookupDiagnostics(controller.signal, timeoutMs, undefined, deadline.startedAt);
   const recordClientAbort = () => freezeIdentityLookupFailure(controller.signal, "client_aborted");
   controller.signal.addEventListener("abort", recordClientAbort, { once: true });
   const unbindClientAbort = bindClientRequestAbort(
@@ -94,17 +96,11 @@ export async function authenticatedSession(
     controller,
     "auth_request_aborted"
   );
-  const timeout = setTimeout(
-    () => {
-      freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
-      controller.abort(new Error("auth_session_lookup_timeout"));
-    },
-    timeoutMs
-  );
+  const timeout = setTimeout(() => deadline.expire(), timeoutMs);
   timeout.unref();
 
   try {
-    controller.signal.throwIfAborted();
+    deadline.throwIfAbortedOrExpired();
     const aborted = new Promise<never>((_resolve, reject) => {
       const rejectForAbort = () => {
         reject(controller.signal.reason instanceof Error
@@ -115,13 +111,15 @@ export async function authenticatedSession(
       else controller.signal.addEventListener("abort", rejectForAbort, { once: true });
     });
     const session = await Promise.race([
-      service.resolveSession(token, controller.signal),
+      new Promise<ResolvedAuthSession | null>(resolve => resolve(service.resolveSession(token, controller.signal))),
       aborted
     ]);
-    controller.signal.throwIfAborted();
+    deadline.throwIfAbortedOrExpired();
     markIdentityLookupPhase(controller.signal, "complete");
     return { token, session };
   } catch (error) {
+    try { deadline.throwIfAbortedOrExpired(); }
+    catch (boundaryError) { error = boundaryError; }
     freezeIdentityLookupFailure(controller.signal);
     associateIdentityLookupFailure(controller.signal, request);
     throw error;

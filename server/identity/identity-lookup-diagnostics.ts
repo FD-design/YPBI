@@ -20,6 +20,7 @@ interface LookupTrace {
   deadlineMs: number;
   storageFailureCode?: IdentityStorageFailureCode;
   frozen?: IdentityLookupFailureDiagnostics;
+  settledFailure?: boolean;
 }
 
 // Signals and errors are weak keys only. No identity, credentials or SQL are
@@ -33,10 +34,10 @@ const duration = (value: number) => Number.isFinite(value) ? Math.min(Number.MAX
 const keyFor = (value: unknown): object | null => value !== null && (typeof value === "object" || typeof value === "function") ? value : null;
 function bestEffort<T>(read: () => T, fallback: T): T { try { return read(); } catch { return fallback; } }
 
-export function beginIdentityLookupDiagnostics(signal: AbortSignal, deadlineMs: number, now: () => number = () => performance.now()) {
+export function beginIdentityLookupDiagnostics(signal: AbortSignal, deadlineMs: number, now: () => number = () => performance.now(), startedAt?: number) {
   bestEffort(() => {
-    const startedAt = now();
-    traces.set(signal, { now, startedAt, phaseStartedAt: startedAt, phase: "resolve", deadlineMs: duration(deadlineMs) });
+    const initial = startedAt ?? now();
+    traces.set(signal, { now, startedAt: initial, phaseStartedAt: initial, phase: "resolve", deadlineMs: duration(deadlineMs) });
   }, undefined);
 }
 
@@ -78,16 +79,20 @@ export function freezeIdentityLookupFailure(signal: AbortSignal | undefined, cod
   return bestEffort(() => {
     const trace = signal && traces.get(signal);
     if (!trace) return unknown;
-    if (trace.frozen) return trace.frozen;
+    const settling = code === "deadline_exceeded" || code === "client_aborted";
+    if (trace.frozen && (trace.settledFailure || !settling)) return trace.frozen;
     const observedAt = trace.now();
     const elapsedMs = duration(observedAt - trace.startedAt);
-    const failureCode = code && failureCodes.has(code) ? code : trace.storageFailureCode ? "storage_unavailable" : "unknown";
+    const failureCode = code === "client_aborted" ? code
+      : observedAt - trace.startedAt >= trace.deadlineMs ? "deadline_exceeded"
+      : code && failureCodes.has(code) ? code : trace.storageFailureCode ? "storage_unavailable" : "unknown";
     trace.frozen = Object.freeze({
       failureCode, phase: trace.phase, elapsedMs,
       phaseElapsedMs: duration(observedAt - trace.phaseStartedAt), deadlineMs: trace.deadlineMs,
       deadlineOverrunMs: duration(observedAt - trace.startedAt - trace.deadlineMs),
       ...(trace.storageFailureCode ? { storageFailureCode: trace.storageFailureCode } : {})
     });
+    if (settling) trace.settledFailure = true;
     return trace.frozen;
   }, unknown as IdentityLookupFailureDiagnostics);
 }

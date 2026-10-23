@@ -8,6 +8,7 @@ import {
   associateIdentityLookupFailure, beginIdentityLookupDiagnostics,
   freezeIdentityLookupFailure, markIdentityLookupPhase
 } from "./identity-lookup-diagnostics";
+import { IdentityDeadline } from "./identity-deadline";
 
 export const DEFAULT_IDENTITY_TIMEOUT_MS = 3_000;
 
@@ -40,7 +41,8 @@ export async function resolveIdentity(
 ): Promise<IdentityResolution> {
   const { signal: externalSignal, ...providerContext } = context;
   const controller = new AbortController();
-  beginIdentityLookupDiagnostics(controller.signal, timeoutMs);
+  const deadline = new IdentityDeadline(controller, timeoutMs, "identity_timeout");
+  beginIdentityLookupDiagnostics(controller.signal, timeoutMs, undefined, deadline.startedAt);
   const abortFromExternalSignal = () => {
     if (!controller.signal.aborted) {
       freezeIdentityLookupFailure(controller.signal, "client_aborted");
@@ -52,15 +54,10 @@ export async function resolveIdentity(
   if (externalSignal?.aborted) abortFromExternalSignal();
   else externalSignal?.addEventListener("abort", abortFromExternalSignal, { once: true });
 
-  const timer = setTimeout(() => {
-    if (!controller.signal.aborted) {
-      freezeIdentityLookupFailure(controller.signal, "deadline_exceeded");
-      controller.abort(new Error("identity_timeout"));
-    }
-  }, timeoutMs);
+  const timer = setTimeout(() => deadline.expire(), timeoutMs);
   timer.unref();
   try {
-    controller.signal.throwIfAborted();
+    deadline.throwIfAbortedOrExpired();
     const aborted = new Promise<never>((_resolve, reject) => {
       const rejectForAbort = () => reject(controller.signal.reason instanceof Error
         ? controller.signal.reason
@@ -69,11 +66,14 @@ export async function resolveIdentity(
       else controller.signal.addEventListener("abort", rejectForAbort, { once: true });
     });
     const rawResolution = await Promise.race([
-      identityProvider.resolve({ ...providerContext, signal: controller.signal }),
+      new Promise<IdentityResolution>(resolve => resolve(
+        identityProvider.resolve({ ...providerContext, signal: controller.signal })
+      )),
       aborted
     ]);
-    controller.signal.throwIfAborted();
+    deadline.throwIfAbortedOrExpired();
     const parsed = identityResolutionSchema.safeParse(rawResolution);
+    deadline.throwIfAbortedOrExpired();
     if (!parsed.success) {
       freezeIdentityLookupFailure(controller.signal, "invalid_resolution");
       throw new Error("invalid_identity_resolution");
@@ -85,6 +85,8 @@ export async function resolveIdentity(
     } else markIdentityLookupPhase(controller.signal, "complete");
     return parsed.data;
   } catch (error) {
+    try { deadline.throwIfAbortedOrExpired(); }
+    catch (boundaryError) { error = boundaryError; }
     freezeIdentityLookupFailure(controller.signal);
     associateIdentityLookupFailure(controller.signal, error);
     associateIdentityLookupFailure(controller.signal, externalSignal);

@@ -2,8 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { UPSTREAM_READ_ERROR_CODES, UPSTREAM_READ_FAILURE_ORIGINS, type UpstreamReadErrorCode, type UpstreamReadFailure, type UpstreamReadFailureOrigin } from "./read-failure";
 export type { UpstreamReadErrorCode } from "./read-failure";
 
-const SOURCE_IDS = ["daily", "cohort", "payment", "channel", "checkin", "watch", "playback", "metrics", "monthly", "acquisition"] as const;
-const GROUP_IDS = ["overall", "new", "old", "android", "ios", "android_old", "ios_old", "natural", "internal", "ali", "wx", "usdt"] as const;
+export const SOURCE_IDS = ["daily", "cohort", "payment", "channel", "checkin", "watch", "playback", "metrics", "monthly", "acquisition"] as const;
+export const GROUP_IDS = ["overall", "new", "old", "android", "ios", "android_old", "ios_old", "natural", "internal", "ali", "wx", "usdt"] as const;
 export type UpstreamReadSourceId = typeof SOURCE_IDS[number] | "unknown";
 export type UpstreamReadGroupId = typeof GROUP_IDS[number] | "unknown";
 type ReadMode = "unassigned" | "cache" | "created" | "reused" | "no_physical";

@@ -81,4 +81,53 @@ describe("身份失败内部诊断", () => {
     expect(() => markIdentityLookupPhase(signal, "query")).not.toThrow();
     expect(freezeIdentityLookupFailure(signal)).toEqual({ failureCode: "unknown", phase: "unknown" });
   });
+
+  test("期限外首次存储失败按期限分类并保留存储错误类型", () => {
+    const signal = new AbortController().signal;
+    let now = 100;
+    beginIdentityLookupDiagnostics(signal, 30, () => now);
+    markIdentityLookupPhase(signal, "query");
+    now = 150;
+    recordIdentityStorageFailure(signal, { code: "ECONNRESET" });
+    expect(freezeIdentityLookupFailure(signal)).toMatchObject({ failureCode: "deadline_exceeded", phase: "query", deadlineOverrunMs: 20, storageFailureCode: "connection_unavailable" });
+  });
+
+  test("明确期限结算更新已冻结的存储失败，保留已冻结客户端取消", () => {
+    let now = 100;
+    for (const initial of ["storage_unavailable", "client_aborted"] as const) {
+      const signal = new AbortController().signal;
+      now = 100;
+      beginIdentityLookupDiagnostics(signal, 30, () => now);
+      now = 110;
+      const before = freezeIdentityLookupFailure(signal, initial);
+      now = 150;
+      const after = freezeIdentityLookupFailure(signal, "deadline_exceeded");
+      expect(after.failureCode).toBe(initial === "client_aborted" ? "client_aborted" : "deadline_exceeded");
+      if (initial === "client_aborted") expect(after).toBe(before);
+    }
+  });
+
+  test("客户端取消更新此前存储快照，期限终态不会被通用abort监听改写", () => {
+    let now = 100;
+    for (const initial of ["storage_unavailable", "deadline_exceeded"] as const) {
+      const signal = new AbortController().signal;
+      now = 100;
+      beginIdentityLookupDiagnostics(signal, 30, () => now);
+      now = 110;
+      const before = freezeIdentityLookupFailure(signal, initial);
+      now = 150;
+      const after = freezeIdentityLookupFailure(signal, "client_aborted");
+      expect(after.failureCode).toBe(initial === "deadline_exceeded" ? "deadline_exceeded" : "client_aborted");
+      if (initial === "deadline_exceeded") expect(after).toBe(before);
+    }
+  });
+
+  test("推断超时快照在请求结算前可更新为真实客户端取消", () => {
+    const signal = new AbortController().signal;
+    let now = 100;
+    beginIdentityLookupDiagnostics(signal, 30, () => now);
+    now = 150;
+    expect(freezeIdentityLookupFailure(signal).failureCode).toBe("deadline_exceeded");
+    expect(freezeIdentityLookupFailure(signal, "client_aborted").failureCode).toBe("client_aborted");
+  });
 });

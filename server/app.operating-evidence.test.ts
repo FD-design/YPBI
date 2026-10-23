@@ -38,6 +38,130 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
+describe("经营取证下载的安全读取诊断扩展", () => {
+  function assertSafeSnapshotTrace(response: LightMyRequestResponse) {
+    const data = response.json().data;
+    expect(data.readDiagnostics).toBeDefined();
+    expect(Object.keys(data.readDiagnostics).sort()).toEqual(["boundary", "schemaVersion", "trace"]);
+    expect(data.readDiagnostics).toMatchObject({
+      schemaVersion: "operating-evidence-safe-read-trace/v1",
+      boundary: { kind: "upstream-read-trace-safe-projection", rawHttp: false, rawBody: false, metricAcceptanceGranted: false }
+    });
+    expect(Object.keys(data.readDiagnostics.boundary).sort()).toEqual(["kind", "metricAcceptanceGranted", "rawBody", "rawHttp"]);
+    const trace = data.readDiagnostics.trace;
+    expect(Object.keys(trace).sort()).toEqual(["boundaryFailures", "byGroup", "bySource", "completed", "logicalReads", "physicalReads", "summary", "truncated"]);
+    expect(typeof trace.completed).toBe("boolean");
+    expect(trace.logicalReads.length).toBeGreaterThan(0);
+    expect(trace.physicalReads.length).toBeGreaterThan(0);
+    const sourceIds = ["daily", "cohort", "payment", "channel", "checkin", "watch", "playback", "metrics", "monthly", "acquisition", "unknown"];
+    const groupIds = ["overall", "new", "old", "android", "ios", "android_old", "ios_old", "natural", "internal", "ali", "wx", "usdt", "unknown"];
+    expect(Object.keys(trace.bySource).every(key => sourceIds.includes(key))).toBe(true);
+    expect(Object.keys(trace.byGroup).every(key => groupIds.includes(key))).toBe(true);
+    const outcomeKeys = ["result", "code", "origin", "upstreamHttpStatus", "upstreamBusinessCode"];
+    for (const read of trace.logicalReads) {
+      expect(Object.keys(read).every(key => ["id", "sourceId", "groupId", "mode", "physicalId", "pending", "completed", "durationMs", ...outcomeKeys].includes(key))).toBe(true);
+      expect(sourceIds).toContain(read.sourceId);
+      expect(groupIds).toContain(read.groupId);
+    }
+    for (const read of trace.physicalReads) {
+      expect(Object.keys(read).every(key => ["id", "pending", "completed", "started", "headersReceived", "bodyReceived", "durationMs", "queueWaitMs", "httpWaitMs", "headersWaitMs", "bodyWaitMs", ...outcomeKeys].includes(key))).toBe(true);
+    }
+    for (const failure of trace.boundaryFailures) {
+      expect(Object.keys(failure).every(key => ["id", "sourceId", "groupId", ...outcomeKeys].includes(key))).toBe(true);
+    }
+    const summaryKeys = [
+      "logicalReadCount", "successfulLogicalReadCount", "failedLogicalReadCount", "pendingLogicalReadCount", "physicalCreatedCount", "physicalReusedCount",
+      "cacheHitCount", "noPhysicalCount", "physicalReadCount", "completedPhysicalReadCount", "pendingPhysicalReadCount",
+      "queueWaitMs", "httpWaitMs", "headersWaitMs", "bodyWaitMs", "errorCodeCounts", "failureOriginCounts", "upstreamHttpStatusCounts", "upstreamBusinessCodeCounts"
+    ];
+    for (const summary of [trace.summary, ...Object.values(trace.bySource), ...Object.values(trace.byGroup)]) {
+      expect(Object.keys(summary as object).every(key => summaryKeys.includes(key))).toBe(true);
+    }
+    expect(Object.keys(trace.truncated).sort()).toEqual(["boundaryFailures", "logicalReads", "physicalReads"]);
+    expect(trace.summary.logicalReadCount).toBe(trace.logicalReads.length);
+    expect(trace.summary.physicalReadCount).toBe(trace.physicalReads.length);
+    expect(trace.summary.logicalReadCount).toBeGreaterThanOrEqual(data.calls.length);
+    const traceText = JSON.stringify(data.readDiagnostics);
+    for (const forbidden of ["queryId", "scopeTag", "message", "sources", "dimensionFilters", "metricCodes", businessDate, "PH", "FBI", "M016", data.projection.data.queryId]) {
+      expect(traceText).not.toContain(forbidden);
+    }
+    expect(data.query).not.toHaveProperty("readDiagnostics");
+    expect(data.projection.data).not.toHaveProperty("readDiagnostics");
+    expect(data.projection.data).not.toHaveProperty("readTrace");
+    expect(data.projection.data).not.toHaveProperty("scopeTag");
+    expect(typeof data.projection.data.queryId).toBe("string");
+    assertNoSecrets(response);
+    return trace;
+  }
+
+  for (const [pid, environment, site, hostname, token, userName] of [
+    ["PH", "production", "primary", "primary.example.test", primaryToken, "fake-primary-user"],
+    ["FBI", "production", "secondary", "secondary.example.test", secondaryToken, "fake-secondary-user"],
+    ["FBI", "test", "test", "preview.example.test", previewToken, "fake-preview-user"]
+  ] as const) {
+    test(`${environment}/${pid} snapshot附加安全trace并保持业务查询与站点隔离`, async () => {
+      const harness = await createHarness();
+      const headers = environment === "test" ? await activatePreview(harness) : await login(harness);
+      const response = await harness.request("GET", evidenceUrl({ pid, environment }), undefined, headers);
+      expect(response.statusCode).toBe(200);
+      const data = response.json().data;
+      expect(data.schemaVersion).toBe("operating-evidence/v1");
+      expect(data.environment).toBe(environment);
+      expect(data.site).toBe(site);
+      expect(data.query).toEqual({ boardId: "5.2", pid, dateRange: ["2026-10-05", businessDate], projection: "operating_snapshot" });
+      expect(data.boundary).toEqual({ kind: "upstream-client-business-field-projection", rawHttp: false, cacheSemantics: "existing-upstream-client-cache-and-inflight", httpStatusAvailable: false, metricAcceptanceGranted: false });
+      expect(dailyDashboardSuccessSchema.safeParse(data.projection).success).toBe(true);
+      expect(data.projection.data.series).toHaveLength(93);
+      expect(data.calls).toHaveLength(14);
+      expect(data.calls.every((call: OperatingEvidenceCall) => call.httpStatus === null && call.cacheHit === null && call.params.pid === pid)).toBe(true);
+      const businessRequests = harness.observedRequests.filter(item => ["/api/admin/bi/v1/metrics", "/api/admin/bi/v1/playback"].includes(item.url.pathname));
+      expect(businessRequests).toHaveLength(14);
+      expect(businessRequests.filter(item => item.url.pathname.endsWith("/metrics") && item.url.searchParams.get("granularity") === "day")).toHaveLength(12);
+      for (const call of data.calls as OperatingEvidenceCall[]) {
+        const matching = businessRequests.find(item => item.url.pathname === call.path
+          && [...item.url.searchParams].every(([key, value]) => key === "dimensionFilters"
+            ? JSON.stringify(JSON.parse(value)) === JSON.stringify(call.params.dimensionFilters)
+            : String(call.params[key as keyof typeof call.params]) === value));
+        expect(matching).toBeDefined();
+      }
+      expect(harness.observedRequests.every(item => item.url.hostname === hostname && item.token === token && item.userName === userName && item.url.searchParams.get("pid") === pid)).toBe(true);
+      const trace = assertSafeSnapshotTrace(response);
+      expect(trace.physicalReads.filter((read: { started: boolean }) => read.started)).toHaveLength(harness.observedRequests.length);
+      expect(existsSync(harness.credentialsFile)).toBe(false);
+    });
+  }
+
+  test("day保持原查询与业务投影且可不附加读取诊断", async () => {
+    const harness = await createHarness();
+    const headers = await login(harness);
+    const response = await harness.request("GET", evidenceUrl({ view: "day" }), undefined, headers);
+    expect(response.statusCode).toBe(200);
+    const data = response.json().data;
+    expect(data).not.toHaveProperty("readDiagnostics");
+    expect(data.query).toEqual({ boardId: "5.2", pid: "PH", dateRange: [businessDate, businessDate] });
+    expect(dailyDashboardSuccessSchema.safeParse(data.projection).success).toBe(true);
+    expect(data.projection.data.series).toHaveLength(121);
+    expect(data.projection.data).not.toHaveProperty("readTrace");
+    assertNoSecrets(response);
+  });
+
+  for (const [name, resolution, maintenance, status, code] of [
+    ["普通身份缺失", { status: "unauthenticated" }, false, 401, "AUTHENTICATION_REQUIRED"],
+    ["维护认证缺失", { status: "authenticated", principal }, false, 401, "MAINTENANCE_LOGIN_REQUIRED"],
+    ["PID越权", { status: "authenticated", principal: { ...principal, pidScope: ["PH"] } }, true, 403, "PID_ACCESS_DENIED"]
+  ] as const) {
+    test(`${name}的拒绝响应不附加诊断且零上游读取`, async () => {
+      const harness = await createHarness({ resolution });
+      const headers = maintenance ? await login(harness) : {};
+      const response = await harness.request("GET", evidenceUrl({ pid: "FBI" }), undefined, headers);
+      assertRejected(response, status, code);
+      expect(response.body).not.toContain("readDiagnostics");
+      expect(response.body).not.toContain("readTrace");
+      expect(harness.observedRequests).toHaveLength(0);
+    });
+  }
+});
+
 function evidenceUrl(parameters: Partial<Record<"pid" | "date" | "view" | "environment", string>> = {}) {
   return `${evidencePath}?${new URLSearchParams({ pid: "PH", date: businessDate, view: "snapshot", environment: "production", ...parameters })}`;
 }

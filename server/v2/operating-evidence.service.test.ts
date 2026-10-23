@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { getEventListeners } from "node:events";
 import { dailyDashboardSuccessSchema, type DailyDashboardQuery, type DailyDashboardSuccess } from "../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS, operatingSnapshotDates } from "../../contracts/operating-detail-projection";
@@ -109,6 +109,50 @@ describe("operating evidence query contract", () => {
 });
 
 describe("operating evidence authoritative service integration", () => {
+  test("diagnostic logger failures preserve the original requests, projection and optional-field boundary", async () => {
+    const source = fixture(input), baseline = fixture(input);
+    const execute = DailyDashboardService.prototype.execute;
+    const mock = spyOn(DailyDashboardService.prototype, "execute").mockImplementation(function (this: DailyDashboardService, query, signal) {
+      const logger = Reflect.get(this, "logger");
+      if (logger) logger.info = () => { throw new Error("synthetic diagnostic collection failure"); };
+      return execute.call(this, query, signal);
+    });
+    try {
+      const evidence = await readOperatingEvidence(source.client, input, options());
+      const expected = await new DailyDashboardService(baseline.client, now, undefined, { sourceReadTimeoutMs: 1_000 }).execute(queryFor(input));
+      expect(normalize(evidence.projection)).toEqual(normalize(expected));
+      expect(evidence).not.toHaveProperty("readDiagnostics");
+      expect(evidence.boundary).toEqual(OPERATING_EVIDENCE_BOUNDARY);
+      expect(source.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
+        .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
+      expect(evidence.calls.every(call => call.httpStatus === null && call.cacheHit === null)).toBe(true);
+    } finally { mock.mockRestore(); }
+  });
+
+  for (const pid of ["PH", "FBI"]) for (const environment of ["production", "test"] as const) {
+    test(`${pid}/${environment} adds snapshot diagnostics while preserving old fields and exact source requests`, async () => {
+      const request = { ...input, pid, environment }, source = fixture(request), baseline = fixture(request);
+      const evidence = await readOperatingEvidence(source.client, request, options());
+      const expected = await new DailyDashboardService(baseline.client, now, undefined, { sourceReadTimeoutMs: 1_000 }).execute(queryFor(request));
+      expect(evidence.readDiagnostics).toMatchObject({ schemaVersion: "operating-evidence-safe-read-trace/v1", boundary: { rawHttp: false, rawBody: false } });
+      expect(normalize(evidence.projection)).toEqual(normalize(expected));
+      expect(evidence.schemaVersion).toBe(OPERATING_EVIDENCE_VERSION);
+      expect(evidence.boundary).toEqual(OPERATING_EVIDENCE_BOUNDARY);
+      expect(source.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
+        .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
+      expect(source.reads).toHaveLength(22);
+      expect(evidence.calls).toHaveLength(14);
+      expect(evidence.projection.data.series).toHaveLength(93);
+      expect(evidence.calls.every(call => call.httpStatus === null && call.cacheHit === null)).toBe(true);
+    });
+  }
+
+  test("day mode keeps optional read diagnostics absent", async () => {
+    const request = { ...input, view: "day" as const };
+    const evidence = await readOperatingEvidence(fixture(request).client, request, options());
+    expect(evidence).not.toHaveProperty("readDiagnostics");
+  });
+
   for (const view of ["snapshot", "day"] as const) for (const mode of ["ready", "processing", "incomplete", "wrong_rule", "missing_scope", "scope_conflict", "legacy", "network_failure"] as const) {
     test(`${view}/${mode} preserves the independent daily-service projection and source requests`, async () => {
       const request = { ...input, view }, observed = fixture(request, mode), baseline = fixture(request, mode), query = queryFor(request);
