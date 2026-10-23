@@ -356,10 +356,13 @@ export function dailyDashboardMetricQueries(query: DailyDashboardQuery): BiV1Met
 function usesLegacyCohortSource(mapping: CandidateMapping) {
   return Boolean(mapping.cohortDays && !mapping.biV1Only);
 }
+function usesLegacyDailySource(mapping: CandidateMapping) {
+  return !mapping.cohortDays && !mapping.channel && !mapping.payment && !mapping.checkin && !mapping.realtime && !mapping.biV1Playback && !mapping.biV1Only;
+}
 function sourceApis(ids: readonly CandidateId[]) {
   ids = sourceMetricIds(ids);
   return [
-    ...(ids.some(id => !mappings[id].cohortDays && !mappings[id].channel && !mappings[id].payment && !mappings[id].checkin && !mappings[id].realtime && !mappings[id].biV1Playback && !mappings[id].biV1Only) ? [P_DAY_SUM_API] : []),
+    ...(ids.some(id => usesLegacyDailySource(mappings[id])) ? [P_DAY_SUM_API] : []),
     ...(ids.some(id => usesLegacyCohortSource(mappings[id])) ? [RETENTION_PLUS_API] : []),
     ...(ids.some(id => mappings[id].channel) ? [CHANNEL_V2_API] : []),
     ...(ids.some(id => mappings[id].payment) ? [PAYMENT_RATE_API] : []),
@@ -598,10 +601,11 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     };
     const sourceIds = sourceMetricIds(ids);
     const byDate = new Map<string, z.infer<typeof rowSchema>>();
+    const dailyController = operatingSnapshot ? new AbortController() : undefined;
     let dailyFailure = false;
     const dailyTask = readSource("daily", async (client) => { if (!sourceApis(ids).includes(P_DAY_SUM_API)) return; try {
     const payload = await client.get(P_DAY_SUM_API, { page: "1", count: "500", pid: query.pid,
-      sumDateStart: query.dateRange[0] + " 00:00:00", sumDateEnd: query.dateRange[1] + " 23:59:59" });
+      sumDateStart: query.dateRange[0] + " 00:00:00", sumDateEnd: query.dateRange[1] + " 23:59:59" }, undefined, dailyController?.signal);
     const parsed = envelopeSchema.safeParse(payload);
     if (!parsed.success) throw badSource();
     const envelope = parsed.data.msg;
@@ -619,11 +623,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     }
     } catch (error) { noteReadBoundaryFailure(error); dailyFailure = true; byDate.clear(); } });
     const cohorts = new Map<string, z.infer<typeof rowSchema>>();
+    const cohortController = operatingSnapshot ? new AbortController() : undefined;
     const needsCohorts = sourceIds.some(id => usesLegacyCohortSource(mappings[id]));
     let cohortFailure = false;
     const cohortTask = readSource("cohort", async (client) => { if (needsCohorts) {
       try {
-        const payload = await client.get(RETENTION_PLUS_API, { pid: query.pid, registerDate: query.dateRange[0] + " 00:00:00", registerEdDate: query.dateRange[1] + " 23:59:59" });
+        const payload = await client.get(RETENTION_PLUS_API, { pid: query.pid, registerDate: query.dateRange[0] + " 00:00:00", registerEdDate: query.dateRange[1] + " 23:59:59" }, undefined, cohortController?.signal);
         const result = z.object({ data: z.array(rowSchema) }).loose().parse(payload);
         for (const row of result.data) {
           const date = toBeijingDate(row.sumDate);
@@ -640,14 +645,17 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const channelControllers = new Map<string, AbortController>();
     const needsChannel = sourceIds.some(id => mappings[id].channel);
     const needsPayment = sourceIds.some(id => mappings[id].payment);
+    const paymentControllers = new Map<string, AbortController>();
     const paymentDays = new Map<string, Record<string, unknown>>(), paymentFailures = new Set<string>();
     const paymentTask = readSource("payment", async (client) => { if (needsPayment) {
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, dates.length) }, async () => {
         while (next < dates.length) {
           const date = dates[next++];
+          const controller = operatingSnapshot ? new AbortController() : undefined;
+          if (controller) paymentControllers.set(date, controller);
           try {
-            const result = z.object({ msg: z.object({ pageData:z.array(z.object({sumDate:z.string()}).loose()) }).loose() }).loose().parse(await client.get(PAYMENT_RATE_API,{pid:query.pid,startTime:date+" 00:00:00",endTime:date+" 23:59:59",page:"1",count:"100"}));
+            const result = z.object({ msg: z.object({ pageData:z.array(z.object({sumDate:z.string()}).loose()) }).loose() }).loose().parse(await client.get(PAYMENT_RATE_API,{pid:query.pid,startTime:date+" 00:00:00",endTime:date+" 23:59:59",page:"1",count:"100"},undefined,controller?.signal));
             assertScopeEcho(result.msg, query.pid, date);
             result.msg.pageData.forEach(row => assertScopeEcho(row, query.pid, date));
             if(result.msg.pageData.some(row=>toBeijingDate(row.sumDate)!==date))throw badSource();
@@ -907,32 +915,36 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         return { date, value: (denominator == null ? numerator : numerator / denominator) / (mapping.resultDivisor ?? 1), state: "available", inputs };
     };
     const nonChannelTask = Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
-    const channelDependencyTask = operatingSnapshot ? (async () => {
-      const channelIds = sourceIds.filter(id => mappings[id].channel);
-      const inputIds = sourceMetricIds(channelIds.flatMap(id => mappings[id].fallbackFrom ?? []));
-      const selectionIds = [...channelIds, ...inputIds];
+    const legacyDependencyTask = operatingSnapshot ? Promise.all([
+      { ids: sourceIds.filter(id => usesLegacyDailySource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) dailyController?.abort(); } },
+      { ids: sourceIds.filter(id => usesLegacyCohortSource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) cohortController?.abort(); } },
+      { ids: sourceIds.filter(id => mappings[id].payment), cancel: (unused: string[]) => { unused.forEach(date => paymentControllers.get(date)?.abort()); } },
+      { ids: sourceIds.filter(id => mappings[id].channel), cancel: (unused: string[]) => { unused.forEach(date => channelControllers.get(date)?.abort()); } }
+    ].map(async dependency => {
+      const inputIds = sourceMetricIds(dependency.ids.flatMap(id => mappings[id].fallbackFrom ?? []));
+      const selectionIds = [...dependency.ids, ...inputIds];
       // A group settles only after its metric isolation and merged inputs are complete.
-      // Channel selection waits for its modern facts; legacy-only inputs cannot supply READY trend facts.
+      // Legacy dependencies wait for their modern facts; legacy-only inputs cannot supply READY trend facts.
       const metricSelectionTasks = new Set<Promise<void>>();
       for (const id of selectionIds) {
         const mapping = mappings[id];
         if (!mapping.biV1Metric) continue;
         const task = mapping.biV1Metric === "M018" ? monthlyTask
           : operatingSources ? biV1MetricTask : metricGroupTasks.get(biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions));
-        if (!task) throw new Error("Channel selection metric group task missing");
+        if (!task) throw new Error("Legacy dependency metric group task missing");
         metricSelectionTasks.add(task);
       }
       await Promise.all(metricSelectionTasks);
-      for (const date of dates) {
-        const needsLegacy = sourceIds.some(id => {
-          if (!mappings[id].channel) return false;
+      const unusedDates = dates.filter(date => {
+        const needsLegacy = dependency.ids.some(id => {
           const selection = pointSourceFor(id, date);
           return selection.kind === "legacy" || selection.kind === "modern" && selection.legacyFallback;
         });
-        if (!needsLegacy) channelControllers.get(date)?.abort();
-      }
-    })() : undefined;
-    const [[acquisitionGroups]] = await Promise.all([nonChannelTask, channelTask, channelDependencyTask]);
+        return !needsLegacy;
+      });
+      dependency.cancel(unusedDates);
+    })) : undefined;
+    const [[acquisitionGroups]] = await Promise.all([nonChannelTask, channelTask, legacyDependencyTask]);
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     const result = dailyDashboardV2SuccessSchema.parse({ success: true, data: {
       schemaVersion: DAILY_DASHBOARD_VERSION, query, queryId: randomUUID(), fetchedAt,

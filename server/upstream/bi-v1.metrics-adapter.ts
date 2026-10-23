@@ -384,7 +384,7 @@ function dimensionMetricKeysByCode(keys: Iterable<string>) {
   return indexed;
 }
 
-export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
+export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery, signal?: AbortSignal) {
   const metricCodes = [...new Set(query.metricCodes)];
   if (!metricCodes.length) throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 指标列表不能为空", 422);
   const scopeDimensions = queryDimensions(query);
@@ -398,7 +398,7 @@ export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, quer
     includeIncomplete: "true",
     ...(query.dimensionFilters !== undefined ? { dimensionFilters: JSON.stringify(scopeDimensions.filters) } : {}),
     ...(scopeDimensions.dimensions.length ? { dimensions: scopeDimensions.dimensions.join(",") } : {})
-  });
+  }, undefined, signal);
   // Scope checks precede value validation so a malformed value cannot turn a
   // cross-PID, date or metric conflict into a recoverable schema error.
   try {
@@ -558,6 +558,8 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
   }
   let next = 0;
   let stopped = false;
+  let fatalFailure: { error: unknown } | undefined;
+  const recoveryController = new AbortController();
   // Recovery shares the existing physical queue and source budget. At most
   // three distinct metrics run together, with one attempt per registered code.
   const worker = async () => {
@@ -566,12 +568,14 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
       if (metricCodes.length === 1) continue;
       try {
         const singleQuery = { ...query, metricCodes: [metricCode] };
-        const message = await queryBiV1Metrics(client, singleQuery);
+        const message = await queryBiV1Metrics(client, singleQuery, recoveryController.signal);
         if (stopped) return;
         const completed = aggregateBiV1MetricDays(message, singleQuery);
         const byDate = new Map(completed.map(day => [day.date, day]));
         for (const day of days) Object.assign(day.metrics, byDate.get(day.date)!.metrics);
       } catch (error) {
+        // Sibling cancellation must not replace the first fatal rejection.
+        if (fatalFailure) throw fatalFailure.error;
         if (error instanceof UpstreamError && error.code === "UPSTREAM_TIMEOUT" && error.statusCode === 504
           && getUpstreamReadFailure(error)?.origin === "source_budget") {
           // Completed single-metric results retain their validated values and
@@ -579,14 +583,18 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
           stopped = true;
           return;
         }
-        if (!canIsolateBiV1Request(error) && !isRecoverableSingleMetricTransportFailure(error)) {
+        if (getUpstreamReadFailure(error)?.origin === "consumer_cancelled"
+          || !canIsolateBiV1Request(error) && !isRecoverableSingleMetricTransportFailure(error)) {
+          fatalFailure = { error };
           stopped = true;
+          recoveryController.abort();
           throw error;
         }
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(3, metricCodes.length) }, worker));
+  try { await Promise.all(Array.from({ length: Math.min(3, metricCodes.length) }, worker)); }
+  finally { recoveryController.abort(); }
   // Split requests have no single upstream envelope, watermark or rule version.
   return { message: null, days };
 }

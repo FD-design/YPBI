@@ -6,6 +6,8 @@ import { loadEnv } from "../config/env";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
 import { BI_V1_METRICS_API, type BiV1MetricDimensionFilters } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamClient, UpstreamError } from "../upstream/client";
+import { P_DAY_SUM_API } from "../upstream/overview.adapter";
+import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { CHANNEL_V2_API, DailyDashboardService, PAYMENT_RATE_API } from "./daily-dashboard.service";
 
 const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2026-10-05", "2026-10-12"], projection: "operating_snapshot" };
@@ -15,6 +17,8 @@ const allDates = Array.from({ length: 8 }, (_, index) => new Date(Date.parse(que
 const ratios = new Set(["M005", "M006", "M007", "M020", "M021", "M022", "M023", "M036", "M061", "M064", "M081", "M090", "M099", "M103", "M111", "M114"]);
 type ModernStatus = "READY" | "PROCESSING" | "FAILED" | "NOT_MATURE" | "SOURCE_INCOMPLETE" | "empty" | "invalid";
 type ChannelRead = { date: string; params: Record<string, string>; signal?: AbortSignal; resolve: (value?: unknown) => void };
+type LegacySource = "daily" | "cohort" | "payment";
+type LegacyRead = { source: LegacySource; date?: string; signal?: AbortSignal; resolve: () => void };
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -40,8 +44,12 @@ function fixture(options: {
   paymentGate?: Promise<void>;
   metricsFailure?: boolean;
   zeroInputs?: boolean;
+  holdLegacy?: LegacySource;
+  legacyCohorts?: boolean;
+  rowVersion?: (code: string, filters: BiV1MetricDimensionFilters) => string;
 } = {}) {
   const channels: ChannelRead[] = [];
+  const legacyReads: LegacyRead[] = [];
   const logs: { sources: Array<{ sourceId: string; readCallCount: number; successfulReadCallCount: number; failedReadCallCount: number; cancelledReadCallCount?: number; budgetExpired: boolean; errorCodeCounts: Record<string, number> }> }[] = [];
   const client = { get: async (path: string, params: Record<string, string>, _token?: string, signal?: AbortSignal): Promise<unknown> => {
     if (path === CHANNEL_V2_API) {
@@ -76,22 +84,32 @@ function fixture(options: {
           ...(path === BI_V1_PLAYBACK_API ? { videoType: "short_video" } : {}) },
           value: ready ? ratio ? 0.5 : scalar : null, numerator, denominator: ratio ? 2 : 0,
           unit: status === "invalid" ? "currency" : code === "M058" ? "currency" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
-          dataStatus: status === "invalid" ? "READY" : status, metricVersion: "bi-v1",
+          dataStatus: status === "invalid" ? "READY" : status, metricVersion: options.rowVersion?.(code, filters) ?? "bi-v1",
           ruleVersion: code === "M058" ? "paid-order-value-rmb-v2" : code === "M102" ? "foreground-watch-duration-v1"
             : ["M034", "M036"].includes(code) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "channel-dependency-fixture-v1" }];
       })));
     }
     if (path.endsWith("pDaySum")) {
+      if (options.holdLegacy === "daily") await new Promise<void>(resolve => legacyReads.push({ source: "daily", signal, resolve }));
       await options.dailyGate;
       return { msg: { totalCount: allDates.length, pageData: allDates.map(sumDate => ({ pid: "PH", sumDate,
         loginUserCount: 100, registerUserCount: 10, watchUserCount: 60 })) } };
     }
-    if (path.includes("reletionsStatPlus")) { await options.cohortGate; return { data: [] }; }
-    if (path === PAYMENT_RATE_API) { await options.paymentGate; return { msg: { pid: "PH", sumDate: params.startTime.slice(0, 10), pageData: [], totalAllCount: 4, totalSurCount: 2 } }; }
+    if (path.includes("reletionsStatPlus")) {
+      if (options.holdLegacy === "cohort") await new Promise<void>(resolve => legacyReads.push({ source: "cohort", signal, resolve }));
+      await options.cohortGate;
+      return { data: options.legacyCohorts ? allDates.map(sumDate => ({ pid: "PH", sumDate, registerCount: 10,
+        afterFirstData1: { loginCnt: 4, date: new Date(Date.parse(sumDate) + 86400000).toISOString().slice(0, 10) } })) : [] };
+    }
+    if (path === PAYMENT_RATE_API) {
+      if (options.holdLegacy === "payment") await new Promise<void>(resolve => legacyReads.push({ source: "payment", date: params.startTime.slice(0, 10), signal, resolve }));
+      await options.paymentGate;
+      return { msg: { pid: "PH", sumDate: params.startTime.slice(0, 10), pageData: [], totalAllCount: 4, totalSurCount: 2 } };
+    }
     return { msg: [] };
   } };
   const logger = { info: (value: (typeof logs)[number]) => { logs.push(value); } };
-  return { client, channels, logs, service: new DailyDashboardService(client, now, logger, { sourceReadTimeoutMs: 1000 }) };
+  return { client, channels, legacyReads, logs, service: new DailyDashboardService(client, now, logger, { sourceReadTimeoutMs: 1000 }) };
 }
 const point = (result: DailyDashboardV2Success, id: string, date = selectedDates.at(-1)!) => result.data.series.find(series => series.metric.id === id)!.points.find(value => value.date === date)!;
 function assertProjection(actual: DailyDashboardV2Success, expected: DailyDashboardV2Success) {
@@ -102,6 +120,61 @@ function assertProjection(actual: DailyDashboardV2Success, expected: DailyDashbo
 }
 
 describe("经营快照按最终投影保留渠道依赖", () => {
+  for (const source of ["daily", "cohort", "payment"] as const) for (const status of ["READY", "PROCESSING", "FAILED", "NOT_MATURE"] as const)
+    test(`${status}现代选择充分时不等待挂起${source}旧源，279点保持`, async () => {
+    const options = { status: () => status };
+    const held = fixture({ ...options, holdLegacy: source }), baseline = fixture(options);
+    let completed = false;
+    const pending = held.service.execute(query).then(result => { completed = true; return result; });
+    for (let index = 0; index < 6; index++) await flush();
+    const completedBeforeRelease = completed, aborted = held.legacyReads.map(read => read.signal?.aborted);
+    held.legacyReads.forEach(read => read.resolve());
+    const result = await pending;
+    expect(aborted).toEqual(source === "payment" ? [true, true, true] : [true]);
+    expect(completedBeforeRelease).toBe(true);
+    expect(result.data.series.reduce((count, series) => count + series.points.length, 0)).toBe(279);
+    assertProjection(result, await baseline.service.execute(query));
+  });
+
+  for (const [source, code, legacyValue] of [["daily", "M008", 10], ["cohort", "M020", 0.4], ["payment", "M112", 4]] as const)
+    test(`${source}逐日混合选择只取消无用途消费者，保留必要回退`, async () => {
+      const status = (metric: string, date: string, filters: BiV1MetricDimensionFilters): ModernStatus =>
+        metric === code && !Object.keys(filters).length && date === selectedDates[1] ? "SOURCE_INCOMPLETE" : "READY";
+      const held = fixture({ holdLegacy: source, legacyCohorts: true, status });
+      let completed = false;
+      const pending = held.service.execute(query).then(result => { completed = true; return result; });
+      for (let index = 0; index < 6; index++) await flush();
+      const aborted = held.legacyReads.map(read => read.signal?.aborted), completedBeforeRelease = completed;
+      held.legacyReads.forEach(read => read.resolve());
+      const result = await pending;
+      expect(aborted).toEqual(source === "payment" ? [true, false, true] : [false]);
+      expect(completedBeforeRelease).toBe(false);
+      expect(point(result, code, selectedDates[1])).toMatchObject({ state: "available", value: legacyValue });
+      assertProjection(result, await fixture({ legacyCohorts: true, status }).service.execute(query));
+    });
+
+  for (const [source, code, legacyValue] of [["daily", "M008", 10], ["cohort", "M020", 0.4], ["payment", "M112", 4]] as const)
+    for (const failure of ["SOURCE_INCOMPLETE", "empty", "invalid", "wrong_version", "transport"] as const)
+      test(`${source}现代${failure}保留必要旧源与合法回退`, async () => {
+        const target = (metric: string, filters: BiV1MetricDimensionFilters) => metric === code && !Object.keys(filters).length;
+        const options = { legacyCohorts: true,
+          status: (metric: string, _date: string, filters: BiV1MetricDimensionFilters): ModernStatus =>
+            target(metric, filters) && ["SOURCE_INCOMPLETE", "empty", "invalid"].includes(failure) ? failure as ModernStatus : "READY",
+          rowVersion: (metric: string, filters: BiV1MetricDimensionFilters) => failure === "wrong_version" && target(metric, filters) ? "unknown-version" : "bi-v1",
+          metricsFailure: failure === "transport" };
+        const held = fixture({ ...options, holdLegacy: source });
+        let completed = false;
+        const pending = held.service.execute(query).then(result => { completed = true; return result; });
+        for (let index = 0; index < 6; index++) await flush();
+        const aborted = held.legacyReads.map(read => read.signal?.aborted), completedBeforeRelease = completed;
+        held.legacyReads.forEach(read => read.resolve());
+        const result = await pending;
+        expect(aborted).toEqual(source === "payment" ? [false, false, false] : [false]);
+        expect(completedBeforeRelease).toBe(false);
+        expect(point(result, code)).toMatchObject({ state: "available", value: legacyValue });
+        assertProjection(result, await fixture(options).service.execute(query));
+      });
+
   for (const status of ["READY", "PROCESSING", "FAILED", "NOT_MATURE"] as const) test(`${status}现代结果不等待无用途渠道，93列三期保持`, async () => {
     const options = { status: () => status };
     const held = fixture({ ...options, holdChannel: true }), baseline = fixture(options);
@@ -209,7 +282,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const result = await pending;
     held.channels.forEach(read => read.resolve());
     expect(cancelledBeforeDaily).toEqual([true, true, true]);
-    expect(completedBeforeDaily).toBe(false);
+    expect(completedBeforeDaily).toBe(true);
     assertProjection(result, await fixture({ status }).service.execute(query));
     for (const id of ["M006", "M007"]) expect(point(result, id)).toMatchObject({
       state: "available", value: derived ? 1 : 0.5, sourceStatus: "READY"
@@ -372,7 +445,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     unrelated.resolve();
     const result = await pending;
     expect(cancelled).toEqual([true, true, true]);
-    expect(completedBeforeRelease).toBe(false);
+    expect(completedBeforeRelease).toBe(gate === "cohortGate" || gate === "paymentGate");
     assertProjection(result, await fixture().service.execute(query));
     held.channels.forEach(read => read.resolve());
   });
@@ -479,4 +552,47 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     expect(await healthy).toEqual(channelPayload(selectedDates[0]));
     expect(healthyController.signal.aborted).toBe(false);
   });
+
+  for (const source of ["daily", "cohort", "payment"] as const) for (const fullFirst of [true, false])
+    test(`${source}共享旧源${fullFirst ? "整板先创建" : "快照先创建"}时只取消快照消费者，121/93投影保持`, async () => {
+      const modern = deferred(), base = fixture({ modernGate: modern.promise });
+      const path = source === "daily" ? P_DAY_SUM_API : source === "cohort" ? RETENTION_PLUS_API : PAYMENT_RATE_API;
+      const physical: Array<{ date?: string; signal?: AbortSignal | null; settled: boolean; resolve: () => void }> = [];
+      const upstream = new UpstreamClient({ ...loadEnv({ NODE_ENV: "test", UPSTREAM_API_BASE_URL: "https://in-memory.invalid",
+        UPSTREAM_USER_NAME: "fixture-user", UPSTREAM_X_TOKEN: "fixture-token",
+        UPSTREAM_CREDENTIALS_FILE: `/private/tmp/ypbi-legacy-dependency-absent-${randomUUID()}.json` }), REQUEST_TIMEOUT_MS: 1000 }, async (input, init) => {
+        const url = new URL(String(input)), params = Object.fromEntries(url.searchParams);
+        return new Promise<Response>((resolve, reject) => {
+          const read = { date: params.startTime?.slice(0, 10), signal: init?.signal, settled: false, resolve: () => {
+            if (read.settled) return;
+            read.settled = true; init?.signal?.removeEventListener("abort", abort);
+            void base.client.get(path, params).then(value => resolve(Response.json(value)), reject);
+          } };
+          const abort = () => { read.settled = true; reject(new DOMException("fixture cancelled", "AbortError")); };
+          init?.signal?.addEventListener("abort", abort, { once: true });
+          physical.push(read);
+        });
+      });
+      const client = { get: (api: string, params: Record<string, string>, token?: string, signal?: AbortSignal) =>
+        api === path ? upstream.get(api, params, token, signal) : base.client.get(api, params, token, signal) };
+      const service = new DailyDashboardService(client, now, undefined, { sourceReadTimeoutMs: 1000 });
+      const { projection: _projection, ...fullQuery } = query;
+      let fullCompleted = false;
+      const readFull = () => service.execute(fullQuery).then(result => { fullCompleted = true; return result; });
+      let full: ReturnType<typeof readFull>, snapshot: ReturnType<DailyDashboardService["execute"]>;
+      if (fullFirst) { full = readFull(); await flush(); snapshot = service.execute(query); }
+      else { snapshot = service.execute(query); await flush(); full = readFull(); }
+      await flush(); modern.resolve();
+      const snapshotResult = await snapshot;
+      expect(fullCompleted).toBe(false);
+      expect(physical.find(read => source !== "payment" || read.date === selectedDates[0])!.signal?.aborted).toBe(false);
+      for (let index = 0; index < 20 && !fullCompleted; index++) {
+        physical.forEach(read => read.resolve()); await flush();
+      }
+      const fullResult = await full;
+      const baseline = fixture();
+      expect(fullResult.data.series).toHaveLength(121);
+      expect(fullResult.data.series).toEqual((await baseline.service.execute(fullQuery)).data.series);
+      assertProjection(snapshotResult, await baseline.service.execute(query));
+    });
 });
