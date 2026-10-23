@@ -391,23 +391,25 @@ export class UpstreamClient {
     let upstreamHttpStatus: number | undefined;
     let upstreamBusinessCode: number | undefined;
     let businessAuthenticationRejected = false;
+    let response: Response | undefined;
     try {
       const headers: Record<string, string> = {};
       if (token) headers["x-token"] = token;
       if (userName) headers.name = userName;
       if (operation?.body !== undefined) headers["content-type"] = "application/json";
-      const response = await this.fetcher(url, {
+      const receivedResponse = await this.fetcher(url, {
         headers,
         signal: controller.signal,
         ...(operation ? { method: operation.body === undefined ? "GET" : "POST", body: operation.body, cache: "no-store" as const, redirect: "error" as const } : {})
       });
+      response = receivedResponse;
       upstreamHttpStatus = response.status;
       physicalRead?.markHeaders(response.status);
       if (response.status === 401 || response.status === 403) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
       if (response.status === 429) throw new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429);
       if (!response.ok && !(operation ? [400, 404, 409, 500] : [400, 422]).includes(response.status)) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
       const payload = await response.json().catch((error: unknown) => {
-        if (!response.ok && error instanceof SyntaxError) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+        if (!receivedResponse.ok && error instanceof SyntaxError) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${receivedResponse.status}`);
         throw error;
       });
       physicalRead?.markBody();
@@ -444,6 +446,10 @@ export class UpstreamClient {
       if (businessCode !== "200") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", message, 422);
       return payload;
     } catch (error) {
+      // A header-level rejection can leave an unread response streaming after
+      // the queue slot is released. Stop its transport without awaiting cleanup.
+      controller.abort();
+      if (response?.body && !response.body.locked) void response.body.cancel().catch(() => undefined);
       if (error instanceof UpstreamError) {
         if (!getUpstreamReadFailure(error)) rememberUpstreamReadFailure(error, {
           origin: error instanceof QueryJobBusinessError || error.code === "UPSTREAM_INVALID_REQUEST" || businessAuthenticationRejected
