@@ -112,12 +112,45 @@ test("取消创建后不投递晚结果、不读同步、不重建任务", async
   release!(); await new Promise(resolve => setTimeout(resolve, 5));
   expect(result.status).toBe("cancelled"); expect(sync).toBe(0); expect(createCount).toBe(2); expect(updates).toBe(finalUpdates);
   expect(result.candidate).toHaveLength(0);
+  expect(result.groups.every(group => group.state === "cancelled" && group.error === undefined)).toBe(true);
 });
 
 test("错误证据白名单丢弃raw文本和不安全字段", () => {
   expect(validationSafeError({ code: "UPSTREAM_REJECTED", requestId: "safe-id", message: "secret", upstreamBusinessCode: 400, upstreamHttpStatus: 503, token: "secret" }))
     .toEqual({ code: "UPSTREAM_REJECTED", requestId: "safe-id", upstreamBusinessCode: 400, upstreamHttpStatus: 503 });
   expect(validationSafeError({ code: "raw body with secret", requestId: "raw\nsecret" })).toEqual({ code: "VALIDATION_REQUEST_FAILED" });
+});
+
+test("同步对照主动停止不计读取失败，未完成基线不判通过", async () => {
+  const controller = new AbortController();
+  let syncStarted = 0;
+  const run = createOperatingValidationRunner({ sleep: async () => {}, fetch: async (url, init) => {
+    if (url.endsWith("/capabilities")) return cap();
+    if (init.method === "POST") {
+      const input = JSON.parse(String(init.body)), index = groups.findIndex(group => group.pids[0] === input.pids[0]);
+      return Response.json({ success: true, data: { ...input, handle: handle(index), reused: false } });
+    }
+    const index = url.includes(handle(0)) ? 0 : 1;
+    return Response.json({ success: true, data: { ...progress(index, url.endsWith("/result") ? "complete" : "query"),
+      ...(url.endsWith("/result") ? { dashboards: groups[index].pids.map(dashboard) } : {}) } });
+  }, fetchDashboard: async (_query, _metricIds, signal) => {
+    syncStarted++;
+    await new Promise<void>((_resolve, reject) => {
+      if (signal?.aborted) reject(signal.reason);
+      else signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+    throw new Error("Unreachable fixture");
+  } });
+  const task = run(date, csrf, { signal: controller.signal });
+  while (!syncStarted) await new Promise(resolve => setTimeout(resolve, 0));
+  controller.abort();
+  const result = await task;
+  expect(result.status).toBe("cancelled");
+  expect(result.candidate).toHaveLength(4);
+  expect(result.baseline).toHaveLength(0);
+  expect(result.comparison).toBeUndefined();
+  expect(result.groups.every(group => group.syncFailed === 0 && group.error === undefined)).toBe(true);
+  expect(result.events.filter(event => event.operation === "sync" && event.error)).toHaveLength(0);
 });
 
 test("空范围或关闭能力不创建任务，也不触发普通异步开关或同步读取", async () => {

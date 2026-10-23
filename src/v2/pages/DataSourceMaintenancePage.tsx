@@ -147,7 +147,9 @@ function SourceConnectionGuide() {
   </section>;
 }
 
-export function DataSourceMaintenancePage() {
+export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose?: "credentials" | "operating-validation" }) {
+  const technical = purpose === "operating-validation";
+  const pageName = technical ? "technical-operating-validation" : "data-source-maintenance";
   const authentication = useAuthentication();
   const dataEnvironment = useDataEnvironment();
   const csrfToken = authentication.state.status === "authenticated"
@@ -500,17 +502,17 @@ export function DataSourceMaintenancePage() {
   };
 
   if (access.status === "checking") {
-    return <div className="v2-page" data-page="data-source-maintenance"><StatePanel kind="loading" title="正在检查维护会话" description="正在读取站点配置状态，不会读取或回显 Token 原文。" /></div>;
+    return <div className="v2-page" data-page={pageName}><StatePanel kind="loading" title="正在检查维护会话" description={technical ? "正在确认受保护技术验收所需的维护会话。" : "正在读取站点配置状态，不会读取或回显 Token 原文。"} /></div>;
   }
 
   if (access.status === "disabled") {
-    return <div className="v2-page" data-page="data-source-maintenance"><StatePanel kind="error" title="数据源维护尚未启用" description="服务器尚未配置独立维护密码。配置后才能进入受保护的维护页面。" code={access.error.code} /></div>;
+    return <div className="v2-page" data-page={pageName}><StatePanel kind="error" title="数据源维护尚未启用" description="服务器尚未配置独立维护密码。配置后才能进入受保护的维护页面。" code={access.error.code} /></div>;
   }
 
   if (access.status === "failure") {
     const insecure = access.error.kind === "insecure";
     const proxyMisconfigured = access.error.kind === "proxy_misconfigured";
-    return <div className="v2-page" data-page="data-source-maintenance"><StatePanel
+    return <div className="v2-page" data-page={pageName}><StatePanel
       kind="error"
       title={insecure ? "需要安全连接" : proxyMisconfigured ? "维护入口配置异常" : "暂时无法打开维护页面"}
       description={insecure
@@ -525,9 +527,9 @@ export function DataSourceMaintenancePage() {
   }
 
   if (access.status === "signed_out") {
-    return <div className="v2-page" data-page="data-source-maintenance">
-      <header className="v2-page-head"><div><span className="v2-eyebrow">管理中心</span><h1>数据源维护</h1><p>使用独立维护会话管理上游 Token，与普通 BI 登录及数据权限相互隔离。</p></div></header>
-      <SourceConnectionGuide />
+    return <div className="v2-page" data-page={pageName}>
+      <header className="v2-page-head"><div><span className="v2-eyebrow">{technical ? "技术工具" : "管理中心"}</span><h1>{technical ? "技术验收" : "数据源维护"}</h1><p>{technical ? "使用既有独立维护会话进行受保护联调，不修改连接凭据，不切换普通正式看板。" : "使用独立维护会话管理上游 Token，与普通 BI 登录及数据权限相互隔离。"}</p></div></header>
+      {!technical && <SourceConnectionGuide />}
       <section className="v2-maintenance-login">
         <div className="v2-maintenance-login__intro"><ShieldCheck aria-hidden="true" /><div><h2>进入受保护配置</h2><p>维护会话有效期 15 天。连续输错 5 次后，当前来源会锁定 15 分钟。</p></div></div>
         <form onSubmit={login}>
@@ -541,6 +543,16 @@ export function DataSourceMaintenancePage() {
 
   const busy = operation.kind !== "idle";
   const displayedVerification = dataEnvironment.state.mode === "test" && dataEnvironment.state.status === "unconfirmed" ? "unknown" : previewVerification;
+  if (technical) return <div className="v2-page" data-page={pageName}>
+    <header className="v2-page-head">
+      <div><span className="v2-eyebrow">技术工具</span><h1>技术验收</h1><p>经营异步与同步的受保护同参数对照，不修改连接凭据，不切换普通正式看板。</p></div>
+      <button type="button" className="ui-button ui-button--secondary ui-button--lg" onClick={logout} disabled={busy}>{operation.kind === "logout" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <LogOut aria-hidden="true" />}退出维护</button>
+    </header>
+    {pageError && <div className="v2-inline-alert v2-inline-alert--danger" role="alert"><AlertTriangle aria-hidden="true" /><span>{pageError.message}<small>退出未确认成功，请重试；在成功前服务端维护会话可能仍然有效。{pageError.code && ` 错误代码：${pageError.code}`}</small></span></div>}
+    <OperatingQueryValidationPane csrfToken={csrfToken} disabled={busy && operation.kind !== "validation"}
+      onBusyChange={running => { if (running) beginOperation({ kind: "validation" }); else if (latest.current.operation.kind === "validation") finishOperation(); }}
+      onMaintenanceError={handleAccessError} />
+  </div>;
   return <div className="v2-page" data-page="data-source-maintenance">
     <header className="v2-page-head">
       <div><span className="v2-eyebrow">管理中心</span><h1>数据源维护</h1><p>所有已登录用户均可在此维护共享凭据；保存后对全站查询生效。日常查询由 BI 后端自动携带凭证。</p></div>
@@ -639,8 +651,5 @@ export function DataSourceMaintenancePage() {
     {confirmingSite && <SaveConfirmationDialog site={confirmingSite} busy={operation.kind === "save"} onCancel={() => closeSaveConfirmation(confirmingSite)} onConfirm={() => runSiteOperation("save", confirmingSite)} />}
 
     <p className="v2-maintenance-footnote">“凭证探针通过”仅说明该站点当前 Token 与用户名可以访问指定探针接口，不代表全部 PID、全部接口或指标已经验数。</p>
-    <OperatingQueryValidationPane csrfToken={csrfToken} disabled={(busy && operation.kind !== "validation") || confirmingSite !== null}
-      onBusyChange={running => { if (running) beginOperation({ kind: "validation" }); else if (latest.current.operation.kind === "validation") finishOperation(); }}
-      onMaintenanceError={handleAccessError} />
   </div>;
 }

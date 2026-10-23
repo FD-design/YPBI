@@ -58,8 +58,11 @@ function routeContent(location: BrowserLocationSnapshot, user: AuthenticatedSess
   if (internalPreviewEnabled && new URLSearchParams(location.search).get("local") === "workspace" && isPersonalPreviewPath(path) && PersonalWorkspacePreview) return <Suspense fallback={<StatePanel kind="loading" title="正在打开工作区" description="正在载入已有分析页面。"/>}><DemoDataProvider><PersonalWorkspacePreview/></DemoDataProvider></Suspense>;
   if (path === "/" || path === "/data/metrics") return <MetricCatalogPage />;
   if (path === "/admin/accounts") return <TeamAccountsPage />;
+  if (path === "/admin/technical/operating-validation") return user.permissions.includes("bi:data-source-maintenance:enter") && user.permissions.includes("bi:read")
+    ? <DataSourceMaintenancePage key="operating-validation" purpose="operating-validation" />
+    : <div className="v2-page"><header className="v2-page-head"><div><span className="v2-eyebrow">访问控制</span><h1>无权访问技术验收</h1><p>技术验收需要有效的 BI 账号、业务读取权限和维护权限。</p></div></header><StatePanel kind="forbidden" title="当前账号没有技术验收权限" description="你仍可使用当前账号已开放的功能。" code="ADMIN_ACCESS_DENIED" /></div>;
   if (path === "/admin/data-sources") return user.permissions.includes("bi:data-source-maintenance:enter")
-    ? <DataSourceMaintenancePage />
+    ? <DataSourceMaintenancePage key="credentials" />
     : <div className="v2-page"><header className="v2-page-head"><div><span className="v2-eyebrow">访问控制</span><h1>无权访问管理中心</h1><p>数据源配置需要有效的 BI 账号和维护权限。</p></div></header><StatePanel kind="forbidden" title="当前账号没有维护权限" description="你仍可使用指标、分析与看板等已开放功能。" code="ADMIN_ACCESS_DENIED" /></div>;
   const metricMatch = path.match(/^\/analysis\/metrics\/([^/]+)$/);
   if (metricMatch) {

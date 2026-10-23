@@ -173,6 +173,16 @@ async function installMaintenanceFixtures(page, options = {}) {
   };
 }
 
+test("日常数据源维护页不挂载或提示技术联调工具", async ({ page }) => {
+  await installMaintenanceFixtures(page, { authorized: true });
+  await page.goto(`${baseUrl}/admin/data-sources`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "数据源维护", exact: true })).toBeVisible();
+  await expect(page.getByTestId("operating-validation")).toHaveCount(0);
+  await expect(page.getByText(/异步联调|技术验收|开始联调|停止等待|下载联调证据/)).toHaveCount(0);
+  await expect(page.locator('a[href="/admin/technical/operating-validation"]')).toHaveCount(0);
+  await expect(page.getByLabel("候选 Token", { exact: true })).toHaveCount(2);
+});
+
 test("当前连接的20秒正常探针保持等待并展示真实成功，不误报维护超时", async ({ page }) => {
   const issuedAt = new Date("2026-10-14T08:00:00.000Z");
   await page.clock.install({ time: new Date(issuedAt.getTime() - 1000) });

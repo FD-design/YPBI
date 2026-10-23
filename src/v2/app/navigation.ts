@@ -134,6 +134,7 @@ export function defaultProductRoute(pathname: string) {
 export function routeTitle(pathname: string) {
   pathname = normalizeProductPath(pathname);
   if (pathname === "/login") return "登录";
+  if (pathname === "/admin/technical/operating-validation") return "技术验收";
   const secondary = secondaryNavigationItemForPath(pathname);
   if (secondary) return secondary.label;
   return navigationItemForPath(pathname)?.label ?? "页面未找到";
@@ -142,6 +143,7 @@ export function routeTitle(pathname: string) {
 export function routeArea(pathname: string) {
   pathname = normalizeProductPath(pathname);
   if (pathname === "/login") return "账号";
+  if (pathname === "/admin/technical/operating-validation") return "技术";
   const item = navigationItemForPath(pathname);
   if (!item) return "工作台";
   return item.id === "sources" ? "管理" : item.label;

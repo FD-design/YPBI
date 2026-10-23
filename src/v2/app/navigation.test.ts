@@ -57,3 +57,14 @@ test("一级语义路径确定性跳转到各模块默认页", () => {
   assert.equal(defaultProductRoute("/analysis/events"), null);
   assert.equal(defaultProductRoute("/dashboards/favorites"), "/dashboards/public");
 });
+
+test("技术验收只解析非菜单深链标题，不加入正常导航或默认跳转", () => {
+  const path = "/admin/technical/operating-validation";
+  assert.equal(routeTitle(path), "技术验收");
+  assert.equal(routeTitle(`${path}/`), "技术验收");
+  assert.equal(routeArea(path), "技术");
+  assert.equal(activeNavigationId(path), null);
+  assert.equal(activeSecondaryNavigationId(path), null);
+  assert.equal(defaultProductRoute(path), null);
+  assert.equal([...productNavigationItems(), ...productSecondaryNavigationItems()].some(item => item.href === path), false);
+});

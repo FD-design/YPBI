@@ -199,8 +199,11 @@ export function createOperatingValidationRunner(runtime: ValidationRuntime = {})
           } catch (error) {
             maintenanceFailure(error);
             group.state = controller.signal.aborted ? "cancelled" : "failed";
-            group.error = validationSafeError(error);
-            if (!controller.signal.aborted) event({ operation: activeOperation, site: group.site, error: group.error });
+            if (!controller.signal.aborted) {
+              group.error = validationSafeError(error);
+              event({ operation: activeOperation, site: group.site, error: group.error });
+            } else if (report.error) group.error = { ...report.error };
+            else delete group.error;
           } finally { group.asyncMs = Math.max(0, now() - began); publish(); }
         }
       }));
@@ -220,8 +223,10 @@ export function createOperatingValidationRunner(runtime: ValidationRuntime = {})
             event({ operation: "sync", site: item.group.site, pid: item.pid, durationMs: Math.max(0, now() - began) });
           } catch (error) {
             maintenanceFailure(error);
-            item.group.syncFailed++;
-            if (!controller.signal.aborted) event({ operation: "sync", site: item.group.site, pid: item.pid, durationMs: Math.max(0, now() - began), error: validationSafeError(error) });
+            if (!controller.signal.aborted) {
+              item.group.syncFailed++;
+              event({ operation: "sync", site: item.group.site, pid: item.pid, durationMs: Math.max(0, now() - began), error: validationSafeError(error) });
+            }
           }
         }
       }));
