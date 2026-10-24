@@ -45,6 +45,20 @@ export class QueryJobBusinessError extends UpstreamError {
   }
 }
 
+interface PhysicalReadDeadline {
+  expiresAt: number;
+  timerExpired?: boolean;
+  upstreamHttpStatus?: number;
+  upstreamBusinessCode?: number;
+}
+function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: AbortSignal) {
+  const origin = signal?.aborted ? "consumer_cancelled"
+    : deadline.timerExpired || performance.now() >= deadline.expiresAt ? "http_deadline" : undefined;
+  return origin ? new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504, {
+    origin, upstreamHttpStatus: deadline.upstreamHttpStatus, upstreamBusinessCode: deadline.upstreamBusinessCode
+  }) : undefined;
+}
+
 export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
   private readonly responseCache = new Map<string, { expiresAt: number; value: unknown }>();
@@ -247,23 +261,33 @@ export class UpstreamClient {
 
     const physicalRead = observer ? new PhysicalReadTrace(++this.nextPhysicalReadId) : undefined;
     if (physicalRead) observer?.physicalCreated(physicalRead);
+    let deadline: PhysicalReadDeadline | undefined;
+    const rejectPhysicalRead = (error: unknown): never => {
+      physicalRead?.markSettled({ code: error instanceof UpstreamError ? error.code : undefined, failure: getUpstreamReadFailure(error) });
+      throw error;
+    };
     const request = this.requestWorkQueue.run(
       remainingMs => {
         physicalRead?.markStarted();
-        return this.fetchJson(url, token, userName, remainingMs, requestController.signal, undefined, physicalRead);
+        deadline = { expiresAt: performance.now() + remainingMs };
+        return this.fetchJson(url, token, userName, remainingMs, requestController.signal, undefined, physicalRead, deadline);
       },
       this.env.REQUEST_TIMEOUT_MS,
       requestController.signal
-    ).then((value) => {
-      physicalRead?.markSettled();
-      if (this.inFlight.get(cacheKey) !== entry || requestController.signal.aborted) return value;
-      this.pruneResponseCache();
-      this.responseCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
-      return value;
-    }, error => {
-      physicalRead?.markSettled({ code: error instanceof UpstreamError ? error.code : undefined, failure: getUpstreamReadFailure(error) });
-      throw error;
-    }).finally(() => {
+    ).then(value => {
+      try {
+        const failure = deadline && physicalReadDeadlineError(deadline, requestController.signal);
+        if (failure) throw failure;
+        if (this.inFlight.get(cacheKey) === entry) {
+          this.pruneResponseCache();
+          const cacheFailure = deadline && physicalReadDeadlineError(deadline, requestController.signal);
+          if (cacheFailure) throw cacheFailure;
+          this.responseCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
+        }
+        physicalRead?.markSettled();
+        return value;
+      } catch (error) { return rejectPhysicalRead(error); }
+    }, rejectPhysicalRead).finally(() => {
       releaseConsumers();
       if (this.inFlight.get(cacheKey) === entry) this.inFlight.delete(cacheKey);
     });
@@ -317,11 +341,19 @@ export class UpstreamClient {
     }
     const profile = this.selectProfile(context.routingPid);
     const url = new URL(path, profile.baseUrl);
+    let deadline: PhysicalReadDeadline | undefined;
     return this.requestWorkQueue.run(
-      remainingMs => this.fetchJson(url, profile.token, profile.userName, remainingMs, signal, { queryJob: true, body }),
+      remainingMs => {
+        deadline = { expiresAt: performance.now() + remainingMs };
+        return this.fetchJson(url, profile.token, profile.userName, remainingMs, signal, { queryJob: true, body }, undefined, deadline);
+      },
       this.env.REQUEST_TIMEOUT_MS,
       signal
-    );
+    ).then(value => {
+      const failure = deadline && physicalReadDeadlineError(deadline, signal);
+      if (failure) throw failure;
+      return value;
+    });
   }
 
   private watchConsumer(signal: AbortSignal, onAbort: () => void) {
@@ -382,17 +414,21 @@ export class UpstreamClient {
   }
 
   private async fetchJson(url: URL, token?: string, userName?: string, timeoutMs = this.env.REQUEST_TIMEOUT_MS, signal?: AbortSignal,
-    operation?: { queryJob: true; body?: string }, physicalRead?: PhysicalReadTrace): Promise<unknown> {
+    operation?: { queryJob: true; body?: string }, physicalRead?: PhysicalReadTrace,
+    deadline: PhysicalReadDeadline = { expiresAt: performance.now() + timeoutMs }): Promise<unknown> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => { deadline.timerExpired = true; controller.abort(); }, timeoutMs);
     const onConsumerAbort = () => controller.abort();
     if (signal?.aborted) controller.abort();
     else signal?.addEventListener("abort", onConsumerAbort, { once: true });
-    let upstreamHttpStatus: number | undefined;
-    let upstreamBusinessCode: number | undefined;
     let businessAuthenticationRejected = false;
     let response: Response | undefined;
+    const checkDeadline = () => {
+      const failure = physicalReadDeadlineError(deadline, signal);
+      if (failure) throw failure;
+    };
     try {
+      checkDeadline();
       const headers: Record<string, string> = {};
       if (token) headers["x-token"] = token;
       if (userName) headers.name = userName;
@@ -403,8 +439,9 @@ export class UpstreamClient {
         ...(operation ? { method: operation.body === undefined ? "GET" : "POST", body: operation.body, cache: "no-store" as const, redirect: "error" as const } : {})
       });
       response = receivedResponse;
-      upstreamHttpStatus = response.status;
+      deadline.upstreamHttpStatus = response.status;
       physicalRead?.markHeaders(response.status);
+      checkDeadline();
       if (response.status === 401 || response.status === 403) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
       if (response.status === 429) throw new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429);
       if (!response.ok && !(operation ? [400, 404, 409, 500] : [400, 422]).includes(response.status)) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
@@ -413,9 +450,12 @@ export class UpstreamClient {
         throw error;
       });
       physicalRead?.markBody();
+      checkDeadline();
       const hasCode = payload !== null && typeof payload === "object" && Object.hasOwn(payload, "code");
       const rawCode = hasCode ? Reflect.get(payload, "code") : undefined;
-      if (typeof rawCode === "number" && Number.isSafeInteger(rawCode) && rawCode >= 0) upstreamBusinessCode = rawCode;
+      if (typeof rawCode === "number" && Number.isSafeInteger(rawCode) && rawCode >= 0) {
+        deadline.upstreamBusinessCode = rawCode;
+      }
       if (hasCode && typeof rawCode !== "number" && typeof rawCode !== "string") {
         throw new UpstreamError("UPSTREAM_FAILED", response.ok ? "后台业务状态格式无效" : `后台接口返回 ${response.status}`);
       }
@@ -433,6 +473,7 @@ export class UpstreamClient {
       if (operation) {
         if (rawCode !== 200) throw new QueryJobBusinessError(rawCode as number, response.status);
         if (!response.ok) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
+        checkDeadline();
         return payload;
       }
       if (!response.ok) {
@@ -441,28 +482,34 @@ export class UpstreamClient {
         if (![400, 422].includes(rawCode) || !validMessage) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
       }
       if (response.ok && businessCode !== "200" && /reletionsStat(?:Plus)?\/getDays/.test(url.pathname) && /没有该平台当日数据/.test(message)) {
+        checkDeadline();
         return { code: 200, data: [] };
       }
       if (businessCode !== "200") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", message, 422);
+      checkDeadline();
       return payload;
     } catch (error) {
+      const deadlineFailure = physicalReadDeadlineError(deadline, signal);
       // A header-level rejection can leave an unread response streaming after
       // the queue slot is released. Stop its transport without awaiting cleanup.
       controller.abort();
       if (response?.body && !response.body.locked) void response.body.cancel().catch(() => undefined);
+      if (deadlineFailure) throw deadlineFailure;
       if (error instanceof UpstreamError) {
         if (!getUpstreamReadFailure(error)) rememberUpstreamReadFailure(error, {
           origin: error instanceof QueryJobBusinessError || error.code === "UPSTREAM_INVALID_REQUEST" || businessAuthenticationRejected
             ? "business" : error.code === "UPSTREAM_INVALID_RESPONSE" ? "validation" : "http",
-          upstreamHttpStatus, upstreamBusinessCode
+          upstreamHttpStatus: deadline.upstreamHttpStatus, upstreamBusinessCode: deadline.upstreamBusinessCode
         });
         throw error;
       }
       if (error instanceof Error && error.name === "AbortError") throw new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504, {
-        origin: signal?.aborted ? "consumer_cancelled" : "http_deadline", upstreamHttpStatus, upstreamBusinessCode
+        origin: signal?.aborted ? "consumer_cancelled" : "http_deadline",
+        upstreamHttpStatus: deadline.upstreamHttpStatus, upstreamBusinessCode: deadline.upstreamBusinessCode
       });
       throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "无法连接后台接口", 502, {
-        origin: error instanceof SyntaxError && upstreamHttpStatus !== undefined ? "validation" : "network", upstreamHttpStatus, upstreamBusinessCode
+        origin: error instanceof SyntaxError && deadline.upstreamHttpStatus !== undefined ? "validation" : "network",
+        upstreamHttpStatus: deadline.upstreamHttpStatus, upstreamBusinessCode: deadline.upstreamBusinessCode
       });
     } finally {
       clearTimeout(timer);

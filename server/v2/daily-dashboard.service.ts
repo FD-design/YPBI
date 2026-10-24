@@ -24,6 +24,7 @@ import { UpstreamReadTrace, runWithUpstreamReadTrace, runWithUpstreamReadContext
 import { toBeijingDate } from "../upstream/date";
 import { sourceReadErrorCode, type SourceReadErrorCodeCounts } from "./source-read-diagnostics";
 import { SourceReadBudget } from "./source-read-budget";
+import { runWithReadDeliveryBoundary } from "../upstream/read-delivery";
 
 // Candidate projections are isolated from formal release-admission registries.
 const AMOUNT_UNIT = "元";
@@ -559,7 +560,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const source: SourceReadDiagnostics = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, abandonedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} };
       if (this.logger) sourceDiagnostics.push(source);
       try {
-        return await runWithUpstreamReadContext({ sourceId }, () => read({ get: async (...args) => {
+        return await runWithReadDeliveryBoundary((start, signal) => budget.read(start, signal),
+          () => runWithUpstreamReadContext({ sourceId }, () => read({ get: async (...args) => {
           let started = false;
           try {
             const result = await budget.read(() => {
@@ -592,7 +594,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             }
             throw error;
           }
-        } }));
+        } })));
       } finally {
         source.budgetExpired = budget.expired;
         budget.dispose();

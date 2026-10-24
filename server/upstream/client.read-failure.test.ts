@@ -68,12 +68,14 @@ describe("private upstream failure metadata", () => {
     let release!: (value: Response) => void;
     let calls = 0;
     const queue = new UpstreamClient(env(15), async () => { calls++; return new Promise<Response>(resolve => { release = resolve; }); }, { maxActiveRequests: 1 });
-    const first = queue.get("/first", query);
+    const first = queue.get("/first", query).catch(error => error);
     const second = queue.get("/second", query).catch(error => error);
     expect(getUpstreamReadFailure(await second)).toEqual({ origin: "queue_deadline" });
     expect(calls).toBe(1);
     release(new Response(JSON.stringify({ code: 200, msg: {} })));
-    await first;
+    const firstError = await first;
+    expect(firstError).toMatchObject({ code: "UPSTREAM_TIMEOUT", statusCode: 504 });
+    expect(getUpstreamReadFailure(firstError)).toMatchObject({ origin: "http_deadline" });
   });
 
   test("invalid JSON and network failure remain existing public codes", async () => {

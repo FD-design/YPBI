@@ -3,6 +3,7 @@ import { biQueryJobUnitResultSchema } from "../../contracts/query-jobs";
 import { getUpstreamReadFailure, UpstreamError, type UpstreamClient } from "./client";
 import { canIsolateBiV1Request } from "./bi-v1.request-isolation";
 import { recordUpstreamReadBoundaryFailure } from "./read-trace";
+import { deliverUpstreamRead } from "./read-delivery";
 
 export const BI_V1_METRICS_API = "/api/admin/bi/v1/metrics";
 
@@ -545,8 +546,10 @@ export function aggregateBiV1MetricDays(
 export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
   const metricCodes = [...new Set(query.metricCodes)];
   try {
-    const message = await queryBiV1Metrics(client, { ...query, metricCodes });
-    return { message, days: aggregateBiV1MetricDays(message, query) };
+    return await deliverUpstreamRead(async () => {
+      const message = await queryBiV1Metrics(client, { ...query, metricCodes });
+      return { message, days: aggregateBiV1MetricDays(message, query) };
+    });
   } catch (error) {
     if (!metricCodes.length || !canIsolateBiV1Request(error)) throw error;
   }
@@ -568,9 +571,15 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
       if (metricCodes.length === 1) continue;
       try {
         const singleQuery = { ...query, metricCodes: [metricCode] };
-        const message = await queryBiV1Metrics(client, singleQuery, recoveryController.signal);
-        if (stopped) return;
-        const completed = aggregateBiV1MetricDays(message, singleQuery);
+        const completed = await deliverUpstreamRead(async () => {
+          const message = await queryBiV1Metrics(client, singleQuery, recoveryController.signal);
+          if (stopped) return null;
+          return aggregateBiV1MetricDays(message, singleQuery);
+        }, recoveryController.signal);
+        if (!completed) return;
+        // Accepted results survive a sibling's budget closure; fatal failures
+        // still terminate the entire recovery through the original first error.
+        if (fatalFailure) throw fatalFailure.error;
         const byDate = new Map(completed.map(day => [day.date, day]));
         for (const day of days) Object.assign(day.metrics, byDate.get(day.date)!.metrics);
       } catch (error) {

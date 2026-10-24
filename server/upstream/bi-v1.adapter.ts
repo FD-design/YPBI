@@ -319,13 +319,17 @@ export function projectBiV1PlaybackGroups(message: BiV1PlaybackSource, query: Pi
     if (key === undefined) {
       if (row.dataStatus === "READY") continue;
       const id = identity(row.metricCode, row.businessDate);
-      scopes.set(id, [...(scopes.get(id) ?? []), row]);
+      const bucket = scopes.get(id) ?? [];
+      bucket.push(row);
+      scopes.set(id, bucket);
       continue;
     }
     if (!key.trim() || row.dataStatus === "READY" && !row.businessDate) return unavailableBiV1PlaybackGroups("invalid_response");
     const rows = grouped.get(key) ?? new Map<string, BiV1MetricRow[]>();
     const id = identity(row.metricCode, row.businessDate);
-    rows.set(id, [...(rows.get(id) ?? []), row]);
+    const bucket = rows.get(id) ?? [];
+    bucket.push(row);
+    rows.set(id, bucket);
     grouped.set(key, rows);
   }
   if (grouped.size > DAILY_PLAYBACK_MAX_GROUPS || grouped.size * DAILY_PLAYBACK_METRIC_IDS.length * (dates.length + 1) > DAILY_PLAYBACK_MAX_POINTS
