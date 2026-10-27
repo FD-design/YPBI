@@ -79,7 +79,7 @@ async function fixtures(page: Page, invalidPrimary = false) {
     if (!path.endsWith("/queries/dashboards/daily-reading")) return route.fulfill({ status: 404, json: { success: false, error: { code: "NOT_FOUND", message: "隔离验收未配置此读取", requestId: "qa-operating-snapshot" } } });
     const query = route.request().postDataJSON() as DailyDashboardQuery;
     calls.push(query);
-    if (gate) await gate;
+    if (gate && query.projection === "operating_snapshot") await gate;
     expect(query.boardId).toBe("5.2");
     const result = response(query);
     if (corrupt && query.pid === "PH" && query.projection === "operating_snapshot") result.data.series[0].points[0].date = "2026-09-02";
@@ -122,7 +122,7 @@ test("经营20平台93列及三个基准详情与真实XLSX同源，整板维持
   await page.goto(url);
   await expect(rows(page)).toHaveCount(20);
   await expect(local(page).locator("thead th[data-column-key]")).toHaveCount(93);
-  await expect.poll(() => calls.filter(query => query.projection).length).toBe(20);
+  await expect.poll(() => calls.filter(query => query.projection).length, { timeout: 20_000 }).toBe(20);
   await expect(rows(page).last().locator('td[data-column-key="M016:overall"] b')).not.toHaveText("读取中");
   expect(boardIds).toHaveLength(121);
   expect(calls.filter(query => !query.projection)).toEqual([{ boardId: "5.2", pid: "PH", dateRange: ["2026-09-02", date] }]);
@@ -192,11 +192,11 @@ test("单PID快照日期不匹配被拒绝，其他平台保持；整页刷新�
   await expect(current(1)).not.toHaveText("读取中");
   await expect(current(1)).not.toHaveText("读取失败");
   await expect(rows(page)).toHaveCount(20);
-  await expect.poll(() => fixture.calls.filter(query => query.projection).length).toBe(20);
+  await expect.poll(() => fixture.calls.filter(query => query.projection).length, { timeout: 20_000 }).toBe(20);
   fixture.restore();
   await page.getByRole("button", { name: "刷新看板", exact: true }).click();
   await expect(current(0)).toHaveText(formatDetailValue(response({ boardId: "5.2", pid: "PH", dateRange: snapshotRange, projection: "operating_snapshot" }).data.series.find(series => series.metric.id === "M016")!.points[2].value, "count", false));
-  await expect.poll(() => fixture.calls.filter(query => query.projection).length).toBe(40);
+  await expect.poll(() => fixture.calls.filter(query => query.projection).length, { timeout: 20_000 }).toBe(40);
 });
 
 test("同末日调整主平台/开始日/对比及展示重置复用20份93列快照，显式刷新完整重读", async ({ page }, info) => {

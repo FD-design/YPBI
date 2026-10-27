@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import plan from "../../contracts/official-dashboards.json";
@@ -25,6 +26,21 @@ import { toBeijingDate } from "../upstream/date";
 import { sourceReadErrorCode, type SourceReadErrorCodeCounts } from "./source-read-diagnostics";
 import { SourceReadBudget } from "./source-read-budget";
 import { runWithReadDeliveryBoundary } from "../upstream/read-delivery";
+import { ReadAdmission } from "../upstream/read-admission";
+
+const sourceAdmissions = new WeakMap<object, ReadAdmission>();
+const activeReadUnit = new AsyncLocalStorage<{ scope: object; budget: SourceReadBudget }>();
+function admissionFor(client: object) {
+  let admission = sourceAdmissions.get(client);
+  if (!admission) {
+    admission = new ReadAdmission({
+      cancelled: () => new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取已取消", 504, { origin: "consumer_cancelled" }),
+      overflow: () => new UpstreamError("UPSTREAM_RATE_LIMITED", "后台来源读取排队已满", 429)
+    });
+    sourceAdmissions.set(client, admission);
+  }
+  return admission;
+}
 
 // Candidate projections are isolated from formal release-admission registries.
 const AMOUNT_UNIT = "元";
@@ -554,19 +570,51 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     if (!ids.length) throw new UpstreamError("DAILY_BOARD_NOT_READY", "该看板尚无可读取的日数据", 422);
     const sourceDiagnostics: SourceReadDiagnostics[] = [];
     const sourceFailureOrigins = new Map<SourceReadDiagnostics["sourceId"], Record<string, number>>();
+    const admission = admissionFor(this.client);
+    let releaseModernReads!: () => void;
+    let rejectModernReads!: (error: unknown) => void;
+    const modernReadsSettled = new Promise<void>((resolve, reject) => { releaseModernReads = resolve; rejectModernReads = reject; });
+    void modernReadsSettled.catch(() => undefined);
     const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: Pick<UpstreamClient, "get">) => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
-      const budget = new SourceReadBudget(this.options.sourceReadTimeoutMs ?? 10_000, consumerSignal);
+      const scope = {};
+      let closed = false;
       const source: SourceReadDiagnostics = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, abandonedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} };
       if (this.logger) sourceDiagnostics.push(source);
+      const cancelled = () => new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取已取消", 504, { origin: "consumer_cancelled" });
+      const runUnit = async <V>(start: () => Promise<V>, signal?: AbortSignal): Promise<V> => {
+        if (closed || consumerSignal?.aborted || signal?.aborted) return Promise.reject(cancelled());
+        const active = activeReadUnit.getStore();
+        if (active?.scope === scope) return active.budget.read(start, signal);
+        const cancellation = consumerSignal && signal ? AbortSignal.any([consumerSignal, signal]) : consumerSignal ?? signal;
+        const modern = ["metrics", "playback", "monthly", "acquisition"].includes(sourceId);
+        if (!modern) await new Promise<void>((resolve, reject) => {
+          const cancel = () => { cancellation?.removeEventListener("abort", cancel); reject(cancelled()); };
+          if (cancellation?.aborted) { cancel(); return; }
+          cancellation?.addEventListener("abort", cancel, { once: true });
+          void modernReadsSettled.then(() => { cancellation?.removeEventListener("abort", cancel); resolve(); },
+            error => { cancellation?.removeEventListener("abort", cancel); reject(error); });
+        });
+        return admission.run(async () => {
+          if (closed || cancellation?.aborted) throw cancelled();
+          const budget = new SourceReadBudget(this.options.sourceReadTimeoutMs ?? 10_000, cancellation);
+          try {
+            return await activeReadUnit.run({ scope, budget }, () => budget.read(start, signal));
+          } finally {
+            source.budgetExpired ||= budget.expired;
+            budget.dispose();
+          }
+        }, modern ? "modern" : "legacy", cancellation);
+      };
       try {
-        return await runWithReadDeliveryBoundary((start, signal) => budget.read(start, signal),
+        return await runWithReadDeliveryBoundary(runUnit,
           () => runWithUpstreamReadContext({ sourceId }, () => read({ get: async (...args) => {
           let started = false;
           try {
-            const result = await budget.read(() => {
+            const result = await runUnit(() => {
               started = true;
               if (this.logger) source.readCallCount++;
+              const budget = activeReadUnit.getStore()!.budget;
               const signal = args[3] ? AbortSignal.any([budget.signal, args[3]]) : budget.signal;
               return this.client.get(args[0], args[1], args[2], signal);
             }, args[3]);
@@ -575,7 +623,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           } catch (error) {
             if (this.logger) {
               if (started) {
-                if (args[3]?.aborted && !budget.signal.aborted) {
+                if (args[3]?.aborted && getUpstreamReadFailure(error)?.origin === "consumer_cancelled") {
                   source.cancelledReadCallCount = (source.cancelledReadCallCount ?? 0) + 1;
                 } else {
                   source.failedReadCallCount++;
@@ -594,10 +642,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             }
             throw error;
           }
-        } })));
+        } })), { expiryScope: "unit" });
       } finally {
-        source.budgetExpired = budget.expired;
-        budget.dispose();
+        closed = true;
         source.durationMs = Math.max(0, performance.now() - startedAt);
       }
     };
@@ -648,12 +695,15 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const needsChannel = sourceIds.some(id => mappings[id].channel);
     const needsPayment = sourceIds.some(id => mappings[id].payment);
     const paymentControllers = new Map<string, AbortController>();
+    const unusedPaymentDates = new Set<string>();
+    const unusedChannelDates = new Set<string>();
     const paymentDays = new Map<string, Record<string, unknown>>(), paymentFailures = new Set<string>();
     const paymentTask = readSource("payment", async (client) => { if (needsPayment) {
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(3, dates.length) }, async () => {
         while (next < dates.length) {
           const date = dates[next++];
+          if (unusedPaymentDates.has(date)) continue;
           const controller = operatingSnapshot ? new AbortController() : undefined;
           if (controller) paymentControllers.set(date, controller);
           try {
@@ -671,6 +721,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const worker = async () => {
         while (next < dates.length) {
           const date = dates[next++];
+          if (unusedChannelDates.has(date)) continue;
           const controller = operatingSnapshot ? new AbortController() : undefined;
           if (controller) channelControllers.set(date, controller);
           try {
@@ -769,8 +820,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         }
       };
       let next = 0;
-      // Operating reads submit independent groups to the shared physical-request
-      // queue; a slow group does not reserve an otherwise idle source slot.
+      // Register every operating group before legacy dependencies inspect its
+      // handle. Admission executes the validated read units one at a time.
       const metricWorkers = operatingSnapshot ? requests.length : Math.min(3, requests.length);
       await Promise.all(Array.from({ length: metricWorkers }, async () => {
         while (next < requests.length) {
@@ -920,8 +971,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     const legacyDependencyTask = operatingSnapshot ? Promise.all([
       { ids: sourceIds.filter(id => usesLegacyDailySource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) dailyController?.abort(); } },
       { ids: sourceIds.filter(id => usesLegacyCohortSource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) cohortController?.abort(); } },
-      { ids: sourceIds.filter(id => mappings[id].payment), cancel: (unused: string[]) => { unused.forEach(date => paymentControllers.get(date)?.abort()); } },
-      { ids: sourceIds.filter(id => mappings[id].channel), cancel: (unused: string[]) => { unused.forEach(date => channelControllers.get(date)?.abort()); } }
+      { ids: sourceIds.filter(id => mappings[id].payment), cancel: (unused: string[]) => { unused.forEach(date => { unusedPaymentDates.add(date); paymentControllers.get(date)?.abort(); }); } },
+      { ids: sourceIds.filter(id => mappings[id].channel), cancel: (unused: string[]) => { unused.forEach(date => { unusedChannelDates.add(date); channelControllers.get(date)?.abort(); }); } }
     ].map(async dependency => {
       const inputIds = sourceMetricIds(dependency.ids.flatMap(id => mappings[id].fallbackFrom ?? []));
       const selectionIds = [...dependency.ids, ...inputIds];
@@ -946,6 +997,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       });
       dependency.cancel(unusedDates);
     })) : undefined;
+    void Promise.all([acquisitionTask, playbackTask, biV1MetricTask, monthlyTask, legacyDependencyTask]).then(releaseModernReads, rejectModernReads);
     const [[acquisitionGroups]] = await Promise.all([nonChannelTask, channelTask, legacyDependencyTask]);
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     const result = dailyDashboardV2SuccessSchema.parse({ success: true, data: {

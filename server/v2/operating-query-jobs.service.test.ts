@@ -55,7 +55,7 @@ function fixture(holdLegacy = false, productionEnabled = false) {
 }
 
 describe("服务器经营任务编排", () => {
-  test("创建仅生成服务器计划，legacy并行启动，任务完成后等投影再交付原93列", async () => {
+  test("创建仅生成服务器计划，现代任务完成后按需读取legacy并交付原93列", async () => {
     const f = fixture(true);
     await inTest(async () => {
       const created = await f.service.create(principal, request);
@@ -63,12 +63,14 @@ describe("服务器经营任务编排", () => {
       expect(created.data).toMatchObject({ kind: "operating-snapshot", pids: ["PH"], date: "2026-10-17" });
       expect(f.request()!.queries.length).toBeGreaterThan(0);
       expect(f.request()!.queries.every(unit => unit.query.pid === "PH" && unit.query.includeIncomplete)).toBe(true);
-      expect(f.legacy.length).toBeGreaterThan(0);
-      expect(f.legacy.every(call => call.profile === profile && !/bi\/v1\/(metrics|playback)/.test(call.path))).toBe(true);
+      expect(f.legacy).toHaveLength(0);
       expect((await f.service.status(principal, created.data.handle)).data).toMatchObject({ status: "RUNNING", phase: "query", completedUnits: 0 });
       f.state("SUCCEEDED");
       expect((await f.service.result(principal, created.data.handle)).data).toMatchObject({ status: "SUCCEEDED", phase: "projection", completedUnits: f.request()!.queries.length });
       expect((await f.service.status(principal, created.data.handle)).data.phase).toBe("projection");
+      await settle();
+      expect(f.legacy.length).toBeGreaterThan(0);
+      expect(f.legacy.every(call => call.profile === profile && !/bi\/v1\/(metrics|playback)/.test(call.path))).toBe(true);
       f.release(); await settle();
       const result = await f.service.result(principal, created.data.handle);
       expect(operatingQueryJobResultSchema.safeParse(result).success).toBe(true);
@@ -96,11 +98,12 @@ describe("服务器经营任务编排", () => {
     const created = await f.service.create(reader, { ...request, pids: [pid] });
     await settle();
     expect(f.request()!.queries.every(unit => unit.query.pid === pid)).toBe(true);
-    expect(f.legacy.length).toBeGreaterThan(0);
-    expect(f.legacy.every(call => call.profile === undefined && !/bi\/v1\/(metrics|playback)/.test(call.path))).toBe(true);
+    expect(f.legacy).toHaveLength(0);
     expect((await f.service.status(reader, created.data.handle)).data.status).toBe("RUNNING");
     f.state("SUCCEEDED");
     await f.service.result(reader, created.data.handle); await settle();
+    expect(f.legacy.length).toBeGreaterThan(0);
+    expect(f.legacy.every(call => call.profile === undefined && !/bi\/v1\/(metrics|playback)/.test(call.path))).toBe(true);
     const result = await f.service.result(reader, created.data.handle);
     expect(result.data.phase).toBe("complete");
     expect(result.data.dashboards?.[0].data.query.pid).toBe(pid);

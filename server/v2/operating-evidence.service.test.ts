@@ -29,6 +29,7 @@ type MetricRow = { metricCode: string; businessDate?: string; dimensions: Record
 
 function fixture(request: OperatingEvidenceQuery, mode: Mode = "ready", held = false) {
   const query = queryFor(request), reads: Read[] = [], payloads: { value: unknown; before: string }[] = [], releases: (() => void)[] = [];
+  let released = false;
   const dates = Array.from({ length: request.view === "snapshot" ? 8 : 1 }, (_, index) => shift(query.dateRange[0], index));
   const build = (path: string, params: Record<string, string>): unknown => {
     const envelope = (rows: unknown[]) => ({ code: 200, msg: { metricVersion: "bi-v1", generatedAt: now().toISOString(), watermark: null, rows } });
@@ -82,14 +83,17 @@ function fixture(request: OperatingEvidenceQuery, mode: Mode = "ready", held = f
     isProtectedDiagnosticText: (_value: string) => false,
     get: async (path: string, params: Record<string, string>, inboundToken?: string, signal?: AbortSignal): Promise<unknown> => {
       reads.push({ path, params, inboundToken, signal });
-      if (held) await new Promise<void>(resolve => releases.push(resolve));
+      if (held && !released) await new Promise<void>(resolve => releases.push(resolve));
       if (mode === "network_failure") throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture source unavailable", 502);
       const value = build(path, params);
       payloads.push({ value, before: JSON.stringify(value) });
       return value;
     }
   };
-  return { client, reads, payloads, release: () => releases.splice(0).forEach(resolve => resolve()) };
+  return { client, reads, payloads, release: () => {
+    released = true;
+    releases.splice(0).forEach(resolve => resolve());
+  } };
 }
 
 describe("operating evidence query contract", () => {
@@ -140,7 +144,8 @@ describe("operating evidence authoritative service integration", () => {
       expect(evidence.boundary).toEqual(OPERATING_EVIDENCE_BOUNDARY);
       expect(source.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
         .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
-      expect(source.reads).toHaveLength(22);
+      expect(source.reads).toHaveLength(14);
+      expect(source.reads.every(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path))).toBe(true);
       expect(evidence.calls).toHaveLength(14);
       expect(evidence.projection.data.series).toHaveLength(93);
       expect(evidence.calls.every(call => call.httpStatus === null && call.cacheHit === null)).toBe(true);
@@ -168,7 +173,8 @@ describe("operating evidence authoritative service integration", () => {
       expect(observed.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
         .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
       if (view === "snapshot") {
-        expect(observed.reads).toHaveLength(22);
+        expect(observed.reads).toHaveLength({ ready: 14, processing: 14, incomplete: 19, wrong_rule: 14,
+          missing_scope: 15, scope_conflict: 14, legacy: 22, network_failure: 22 }[mode]);
         expect(evidence.projection.data.series.map(item => item.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
         expect(evidence.projection.data.series.every(item => item.points.map(point => point.date).join() === operatingSnapshotDates(query.dateRange).join())).toBe(true);
       } else {
@@ -274,13 +280,13 @@ describe("operating evidence authoritative service integration", () => {
     const rejected = readOperatingEvidence(source.client, input, options(cancelled.signal)).catch(error => error);
     const successful = readOperatingEvidence(source.client, input, options(healthy.signal));
     await new Promise<void>(resolve => setImmediate(resolve));
-    expect(source.reads).toHaveLength(44);
-    const cancelledReads = source.reads.slice(0, 22), healthyReads = source.reads.slice(22);
+    expect(source.reads).toHaveLength(2);
+    const [cancelledRead, healthyRead] = source.reads;
     expect(source.reads.every(read => read.signal instanceof AbortSignal && !read.signal.aborted && read.inboundToken === undefined)).toBe(true);
     cancelled.abort();
     expect(await rejected).toMatchObject({ code: "UPSTREAM_TIMEOUT", statusCode: 504 });
-    expect(cancelledReads.every(read => read.signal!.aborted)).toBe(true);
-    expect(healthyReads.every(read => !read.signal!.aborted)).toBe(true);
+    expect(cancelledRead.signal!.aborted).toBe(true);
+    expect(healthyRead.signal!.aborted).toBe(false);
     expect(getEventListeners(cancelled.signal, "abort")).toHaveLength(0);
     source.release();
     const evidence = await successful;

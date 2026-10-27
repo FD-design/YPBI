@@ -112,16 +112,18 @@ describe("operating snapshot service", () => {
       expect(asyncLegacy.reads.some(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path))).toBe(false);
     });
 
-  test("legacy reads begin while modern job is pending, and job failure rejects without synchronous fallback", async () => {
+  test("legacy reads wait for modern job selection, and job failure rejects without synchronous fallback", async () => {
     const base = fixture("ready");
     let rejectSource!: (reason: unknown) => void;
     const pending = new Promise<never>((_, reject) => { rejectSource = reject; });
     const result = new DailyDashboardService(base.client, now).executeOperating(snapshotQuery, pending);
     await Promise.resolve();
-    expect(base.reads.some(read => read.path.endsWith("pDaySum"))).toBe(true);
+    expect(base.reads.some(read => read.path.endsWith("pDaySum"))).toBe(false);
     expect(base.reads.some(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path))).toBe(false);
     rejectSource(new UpstreamError("QUERY_JOB_FAILED", "任务失败", 502));
     await expect(result).rejects.toMatchObject({ code: "QUERY_JOB_FAILED" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(base.reads).toHaveLength(0);
   });
 
   test("pending modern source can be cancelled without waiting for job completion", async () => {
@@ -150,12 +152,14 @@ describe("operating snapshot service", () => {
       const snapshot = await new DailyDashboardService(sparse.client, now).execute(snapshotQuery);
       assertProjection(defaultResult, snapshot);
       expect(full.reads).toHaveLength(44);
-      expect(sparse.reads).toHaveLength(22);
+      expect(sparse.reads).toHaveLength({ ready: 14, legacy: 22, processing: 14, incomplete: 19,
+        missing_scope: 15, scope_conflict: 14, wrong_rule: 14, network_failure: 22 }[mode]);
       expect(sparse.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(12);
       expect(sparse.reads.some(read => read.path.endsWith("pRealDayLine"))).toBe(false);
       for (const path of [PAYMENT_RATE_API, CHANNEL_V2_API]) {
         const selected = sparse.reads.filter(read => read.path === path).map(read => (read.params.startTime ?? read.params.sumDateBegin).slice(0, 10));
-        expect(selected).toEqual(operatingSnapshotDates(query.dateRange));
+        const needed = ["legacy", "network_failure"].includes(mode) || path === CHANNEL_V2_API && mode === "incomplete";
+        expect(selected).toEqual(needed ? operatingSnapshotDates(query.dateRange) : []);
       }
       expect(sparse.reads.filter(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path) && read.params.granularity === "day")
         .every(read => read.params.startDate === dates[0] && read.params.endDate === shift(dates.at(-1)!, 1))).toBe(true);

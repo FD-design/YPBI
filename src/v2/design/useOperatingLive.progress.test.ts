@@ -55,9 +55,9 @@ function hookHarness() {
 interface PendingRead {
   query: DailyDashboardQuery;
   signal: AbortSignal | null | undefined;
-  finish: (status?: number, sourceStatus?: "READY" | "PROCESSING", fetchedAt?: string) => void;
+  finish: (status?: number, sourceStatus?: "READY" | "PROCESSING" | "SOURCE_INCOMPLETE", fetchedAt?: string) => void;
 }
-function success(query: DailyDashboardQuery, sourceStatus: "READY" | "PROCESSING", fetchedAt: string) {
+function success(query: DailyDashboardQuery, sourceStatus: "READY" | "PROCESSING" | "SOURCE_INCOMPLETE", fetchedAt: string) {
   return { success: true, data: { schemaVersion: "day-dashboard/v2", query, queryId: query.pid + fetchedAt, fetchedAt,
     timezone: "Asia/Shanghai", validationStatus: "pending_validation", completeness: "unknown", watermark: null, sourceApiIds: ["synthetic-metrics"],
     series: OPERATING_METRIC_IDS.map(id => ({ metric: { id, name: id, unit: "人", definition: "test", authorityVersion: "test", formula: null, referenceMetricId: id, sourceNote: null, inputs: [{ key: "n", name: "人数", unit: "人" }] },
@@ -87,17 +87,18 @@ async function withReads(run: (harness: ReturnType<typeof hookHarness>, pending:
   }
 }
 
-test("真实请求结算驱动平台进度，PROCESSING响应与请求失败都结束一个平台查询", async () => {
+for (const sourceStatus of ["PROCESSING", "SOURCE_INCOMPLETE"] as const) test(`串行请求结算驱动平台进度，${sourceStatus}响应后继续下一平台，读取失败也正常结算`, async () => {
   await withReads(async (harness, pending) => {
     const live = reading();
     harness.render(live); harness.flushEffects();
-    await until(() => pending.length === 2);
+    await until(() => pending.length === 1);
     expect(harness.render(live).notice.progress).toEqual({ completed: 0, total: 2 });
-    pending[0].finish(200, "PROCESSING");
+    pending[0].finish(200, sourceStatus);
     await until(() => harness.render(live).notice.progress?.completed === 1);
+    await until(() => pending.length === 2);
     const first = harness.render(live).resources.PH;
     expect(first.status).toBe("success");
-    if (first.status === "success") expect(first.data.data.series[0].points[0].sourceStatus).toBe("PROCESSING");
+    if (first.status === "success") expect(first.data.data.series[0].points[0].sourceStatus).toBe(sourceStatus);
     pending[1].finish(504);
     await until(() => harness.render(live).notice.progress === null);
     expect(harness.render(live).resources.TT.status).toBe("failure");
@@ -137,8 +138,11 @@ test("日期切换取消旧轮，迟到响应不计入新进度或覆盖新结�
     const current: LiveDashboardReading = { ...old, query: { ...old.query, dateRange: ["2020-01-02", "2020-01-02"] } };
     expect(harness.render(current).notice.progress).toBeNull();
     harness.flushEffects();
-    await until(() => pending.length === 2);
     expect(pending[0].signal?.aborted).toBe(true);
+    await turn(); expect(pending).toHaveLength(1);
+    // This fixture ignores AbortSignal: hold the sole slot until the old HTTP settles.
+    pending[0].finish(200, "PROCESSING");
+    await until(() => pending.length === 2);
     expect(harness.render(current).notice.progress).toEqual({ completed: 0, total: 1 });
     pending[1].finish();
     await until(() => harness.render(current).notice.progress === null);
@@ -457,10 +461,13 @@ for (const environment of ["test", "production"] as const) test(`${environment}�
   await withJobReads(async (harness, pending) => {
     const live = { ...reading(), dataEnvironment: environment };
     harness.render(live); harness.flushEffects();
-    await until(() => pending.length === 2);
-    expect(pending.every(read => read.path === "/api/bi/v2/queries/dashboards/daily-reading")).toBe(true);
-    expect(pending.every(read => read.headers.get("x-ypbi-data-environment") === environment)).toBe(true);
-    for (const read of pending) read.finish(success(read.body as unknown as DailyDashboardQuery, "PROCESSING", "2026-10-21T03:00:00Z"));
+    for (let index = 0; index < 2; index++) {
+      await until(() => pending.length === index + 1);
+      const read = pending[index];
+      expect(read.path).toBe("/api/bi/v2/queries/dashboards/daily-reading");
+      expect(read.headers.get("x-ypbi-data-environment")).toBe(environment);
+      read.finish(success(read.body as unknown as DailyDashboardQuery, "PROCESSING", "2026-10-21T03:00:00Z"));
+    }
     await until(() => harness.render(live).notice.progress === null);
     const result = harness.render(live);
     expect(result.rows).toHaveLength(2);

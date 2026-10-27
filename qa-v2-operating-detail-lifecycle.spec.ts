@@ -77,7 +77,7 @@ async function fixtures(page: Page, readablePlatforms = platforms, readyNumerato
     if (!path.endsWith("/queries/dashboards/daily-reading")) return route.fulfill({ status: 404, json: { success: false, error: { code: "NOT_FOUND", message: "隔离验收未配置此读取", requestId: "qa-operating-lifecycle" } } });
     const request = route.request().postDataJSON() as DailyDashboardQuery;
     control.calls.push(request);
-    if (request.pid === failurePid) {
+    if (request.projection === "operating_snapshot" && request.pid === failurePid) {
       if (outcome === "hold") await gate;
       if (outcome === "failure") return route.fulfill({ status: failure.status, json: { success: false, error: { code: failure.code, message: rawFailureMessage, requestId: failure.requestId,
         ...(failure.upstreamBusinessCode !== undefined ? { upstreamBusinessCode: failure.upstreamBusinessCode } : {}),
@@ -108,7 +108,8 @@ async function expectPartialInput(page: Page, denominator = 6) {
 
 for (const width of [1280, 1024, 390]) test(`经营查询进度与指标状态分离并保留93列（${width}）`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 950 });
-  const control = await fixtures(page);
+  // Complete PH first, then hold TT to inspect progress between serial snapshots.
+  const control = await fixtures(page, platforms, undefined, "TT");
   try {
     await page.goto(url);
     const notice = local(page).locator(".core-review__operating-progress");
@@ -149,7 +150,7 @@ test("刷新失败收起查询计数，但保留上次结果原读取时间", as
 
 for (const width of [1280, 1024, 390]) test(`PH读取中打开M087详情，响应后不关闭即更新来源状态和分母（${width}）`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 950 });
-  // One readable PID makes the first real response supply the column metadata too.
+  // Keep the snapshot pending after the main board supplies its metadata.
   const control = await fixtures(page, platforms.slice(0, 1));
   try {
     await page.goto(url);

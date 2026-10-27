@@ -18,9 +18,9 @@ const formalRows = dates.flatMap(date => [
 ]);
 const now = () => new Date("2026-10-14T00:00:00Z");
 
-function fixtures(channel: (date: string) => Promise<unknown>) {
-  return { get: async (path: string, params: Record<string, string>) => {
-    if (path === CHANNEL_V2_API) return channel(params.sumDateBegin.slice(0, 10));
+function fixtures(channel: (date: string, signal?: AbortSignal) => Promise<unknown>) {
+  return { get: async (path: string, params: Record<string, string>, _token?: string, signal?: AbortSignal) => {
+    if (path === CHANNEL_V2_API) return channel(params.sumDateBegin.slice(0, 10), signal);
     if (path === "/api/admin/bi/v1/metrics") {
       const filters: Record<string, string> = JSON.parse(params.dimensionFilters ?? "{}");
       const codes = new Set(params.metricCodes.split(","));
@@ -35,13 +35,17 @@ function fixtures(channel: (date: string) => Promise<unknown>) {
 const series = (result: Awaited<ReturnType<DailyDashboardService["execute"]>>, id: string) => result.data.series.find(row => row.metric.id === id)!;
 
 describe("daily dashboard bounded independent sources", () => {
-  test("a stalled legacy channel cannot block healthy formal values or overwrite formal statuses", async () => {
+  test("each stalled legacy day expires independently without overwriting healthy formal values", async () => {
     const attempted: string[] = [];
-    const result = await new DailyDashboardService(fixtures(async date => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const result = await new DailyDashboardService(fixtures(async (date, signal) => {
       attempted.push(date);
+      signals.push(signal);
       return new Promise(() => {});
     }), now, undefined, { sourceReadTimeoutMs: 100 }).execute(query);
-    expect(attempted).toEqual(dates.slice(0, 3));
+    expect(attempted).toEqual(dates);
+    expect(signals).toHaveLength(dates.length);
+    expect(signals.every(signal => signal?.aborted)).toBe(true);
     expect(series(result, "M016").points.every(point => point.value === 6 && point.sourceStatus === "READY")).toBe(true);
     expect(series(result, "M026").points.every(point => point.state === "no_value" && point.value === null && point.sourceStatus === "PROCESSING")).toBe(true);
     expect(series(result, "M081.new").points.every(point => point.value === null && point.sourceStatus === "SOURCE_INCOMPLETE")).toBe(true);
@@ -67,14 +71,14 @@ describe("daily dashboard bounded independent sources", () => {
         vipChargeAmt: date === dates[0] ? 0 : 12.34, goldChargeAmt: 0, newUserVipChargeAmt: 0, newUserGoldChargeAmt: 0 }] } };
       return new Promise(() => {});
     }), now, undefined, { sourceReadTimeoutMs: 100 }).execute(query);
-    expect(attempted).toHaveLength(5);
+    expect(attempted).toEqual(dates);
     expect(series(result, "M065").points[0]).toMatchObject({ state: "available", value: 0, inputs: [{ value: 0 }] });
     expect(series(result, "M065").points[1]).toMatchObject({ state: "available", value: 12.34, inputs: [{ value: 12.34 }] });
     expect(series(result, "M065").points.slice(2).every(point => point.state === "source_failure" && point.value === null && point.inputs.every(input => input.value === null))).toBe(true);
     expect(series(result, "M065").metric.unit).toBe("元");
   });
 
-  test("late raw responses do not mutate the delivered source values or restart abandoned dates", async () => {
+  test("late raw responses do not mutate values or restart completed sequential date units", async () => {
     const completions: (() => void)[] = [];
     const attempted: string[] = [];
     const result = await new DailyDashboardService(fixtures(async date => {
@@ -85,7 +89,7 @@ describe("daily dashboard bounded independent sources", () => {
     completions.forEach(resolve => resolve());
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(JSON.stringify(result)).toBe(before);
-    expect(attempted).toEqual(dates.slice(0, 3));
+    expect(attempted).toEqual(dates);
   });
 
   test("all completed source results are identical with and without diagnostic logging", async () => {

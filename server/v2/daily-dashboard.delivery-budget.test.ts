@@ -43,6 +43,7 @@ test("真实看板：get按时交付后微任务阻塞越期的主批次不能�
   } };
   const service = new DailyDashboardService(client, now, { info: value => { logs.push(value); } }, { sourceReadTimeoutMs: 100 });
   const read = service.execute({ boardId: "5.10", pid: "PH", dateRange: [date, date] });
+  await new Promise<void>(resolve => setImmediate(resolve));
   expect(rawStarted).toBe(true);
   raw.resolve(payload("M059"));
   queueMicrotask(() => block(130));
@@ -81,6 +82,7 @@ test("真实看板：早完成的独立readGroup保留，晚组失败且日志�
     const read = new DailyDashboardService(client, now, logger, {
       sourceReadTimeoutMs: 1000, readTraceEnabled: mode.tracing
     }).execute(query);
+    await new Promise<void>(resolve => setImmediate(resolve));
     expect(rawStarted).toBe(true);
     // The ordinary event-loop turn lets the healthy group's complete validation
     // and merge finish before the other group's held response is released.

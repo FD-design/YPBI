@@ -20,6 +20,29 @@ type ChannelRead = { date: string; params: Record<string, string>; signal?: Abor
 type LegacySource = "daily" | "cohort" | "payment";
 type LegacyRead = { source: LegacySource; date?: string; signal?: AbortSignal; resolve: () => void };
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+async function until(condition: () => boolean) {
+  for (let index = 0; index < 100 && !condition(); index++) await flush();
+  expect(condition()).toBe(true);
+}
+async function releaseSerialReads<T, R extends { resolve: () => void; signal?: AbortSignal }>(pending: Promise<T>, reads: R[]) {
+  const released = new Set<R>();
+  let completed = false;
+  const result = pending.then(value => { completed = true; return value; });
+  for (let index = 0; index < 100 && !completed; index++) {
+    const started = reads.filter(read => !released.has(read));
+    expect(started.length).toBeLessThanOrEqual(1);
+    for (const read of started) {
+      // The unit budget is disposed after settlement, so its signal is only
+      // meaningful for cancellation while the read is still active.
+      expect(read.signal?.aborted).toBe(false);
+      released.add(read);
+      read.resolve();
+    }
+    await flush();
+  }
+  expect(completed).toBe(true);
+  return result;
+}
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(accept => { resolve = accept; });
@@ -127,17 +150,16 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     let completed = false;
     const pending = held.service.execute(query).then(result => { completed = true; return result; });
     for (let index = 0; index < 6; index++) await flush();
-    const completedBeforeRelease = completed, aborted = held.legacyReads.map(read => read.signal?.aborted);
-    held.legacyReads.forEach(read => read.resolve());
+    const completedBeforeRelease = completed;
     const result = await pending;
-    expect(aborted).toEqual(source === "payment" ? [true, true, true] : [true]);
+    expect(held.legacyReads).toEqual([]);
     expect(completedBeforeRelease).toBe(true);
     expect(result.data.series.reduce((count, series) => count + series.points.length, 0)).toBe(279);
     assertProjection(result, await baseline.service.execute(query));
   });
 
   for (const [source, code, legacyValue] of [["daily", "M008", 10], ["cohort", "M020", 0.4], ["payment", "M112", 4]] as const)
-    test(`${source}逐日混合选择只取消无用途消费者，保留必要回退`, async () => {
+    test(`${source}逐日混合选择不启动无用途读取，保留必要回退`, async () => {
       const status = (metric: string, date: string, filters: BiV1MetricDimensionFilters): ModernStatus =>
         metric === code && !Object.keys(filters).length && date === selectedDates[1] ? "SOURCE_INCOMPLETE" : "READY";
       const held = fixture({ holdLegacy: source, legacyCohorts: true, status });
@@ -145,9 +167,10 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       const pending = held.service.execute(query).then(result => { completed = true; return result; });
       for (let index = 0; index < 6; index++) await flush();
       const aborted = held.legacyReads.map(read => read.signal?.aborted), completedBeforeRelease = completed;
-      held.legacyReads.forEach(read => read.resolve());
-      const result = await pending;
-      expect(aborted).toEqual(source === "payment" ? [true, false, true] : [false]);
+      const result = await releaseSerialReads(pending, held.legacyReads);
+      expect(aborted).toEqual([false]);
+      expect(held.legacyReads).toHaveLength(1);
+      if (source === "payment") expect(held.legacyReads.map(read => read.date)).toEqual([selectedDates[1]]);
       expect(completedBeforeRelease).toBe(false);
       expect(point(result, code, selectedDates[1])).toMatchObject({ state: "available", value: legacyValue });
       assertProjection(result, await fixture({ legacyCohorts: true, status }).service.execute(query));
@@ -167,9 +190,10 @@ describe("经营快照按最终投影保留渠道依赖", () => {
         const pending = held.service.execute(query).then(result => { completed = true; return result; });
         for (let index = 0; index < 6; index++) await flush();
         const aborted = held.legacyReads.map(read => read.signal?.aborted), completedBeforeRelease = completed;
-        held.legacyReads.forEach(read => read.resolve());
-        const result = await pending;
-        expect(aborted).toEqual(source === "payment" ? [false, false, false] : [false]);
+        const result = await releaseSerialReads(pending, held.legacyReads);
+        expect(aborted).toEqual([false]);
+        expect(held.legacyReads).toHaveLength(source === "payment" ? selectedDates.length : 1);
+        if (source === "payment") expect(held.legacyReads.map(read => read.date)).toEqual(selectedDates);
         expect(completedBeforeRelease).toBe(false);
         expect(point(result, code)).toMatchObject({ state: "available", value: legacyValue });
         assertProjection(result, await fixture(options).service.execute(query));
@@ -180,10 +204,10 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const held = fixture({ ...options, holdChannel: true }), baseline = fixture(options);
     const result = await held.service.execute(query);
     assertProjection(result, await baseline.service.execute(query));
-    expect(held.channels).toHaveLength(3);
-    expect(held.channels.every(read => read.signal?.aborted)).toBe(true);
+    expect(held.channels).toEqual([]);
     const source = held.logs[0].sources.find(source => source.sourceId === "channel")!;
-    expect(source).toMatchObject({ readCallCount: 3, successfulReadCallCount: 0, failedReadCallCount: 0, cancelledReadCallCount: 3, budgetExpired: false, errorCodeCounts: {} });
+    expect(source).toMatchObject({ readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} });
+    expect(source.cancelledReadCallCount).toBeUndefined();
     const before = JSON.stringify(result);
     held.channels.forEach(read => read.resolve()); await flush();
     expect(JSON.stringify(result)).toBe(before);
@@ -193,10 +217,10 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const held = fixture({ status: () => status, holdChannel: true });
     const pending = held.service.execute(query);
     await flush();
-    expect(held.channels).toHaveLength(3);
+    expect(held.channels).toHaveLength(1);
     expect(held.channels.every(read => !read.signal?.aborted)).toBe(true);
-    held.channels.forEach(read => read.resolve());
-    const result = await pending;
+    const result = await releaseSerialReads(pending, held.channels);
+    expect(held.channels.map(read => read.date)).toEqual(selectedDates);
     expect(point(result, "M003")).toMatchObject({ state: "available", value: 6 });
     expect(point(result, "M005")).toMatchObject({ state: "available", value: 0.75 });
     expect(held.logs[0].sources.find(source => source.sourceId === "channel")!.cancelledReadCallCount).toBeUndefined();
@@ -206,8 +230,9 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const held = fixture({ metricsFailure: true, holdChannel: true });
     const pending = held.service.execute(query); await flush();
     expect(held.channels.every(read => !read.signal?.aborted)).toBe(true);
-    held.channels.forEach(read => read.resolve());
-    const result = await pending;
+    expect(held.channels).toHaveLength(1);
+    const result = await releaseSerialReads(pending, held.channels);
+    expect(held.channels.map(read => read.date)).toEqual(selectedDates);
     expect(point(result, "M003")).toMatchObject({ state: "available", value: 6 });
     expect(point(result, "M006")).toMatchObject({ state: "available", value: 1.5 });
   });
@@ -219,7 +244,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       expect(point(result, id)).toMatchObject({ state: zeroInputs ? "zero_denominator" : "available", value: zeroInputs ? null : 1, sourceStatus: "READY" });
       expect(point(result, id).inputs.map(input => input.value)).toEqual([2, zeroInputs ? 0 : 2]);
     }
-    expect(held.channels.every(read => read.signal?.aborted)).toBe(true);
+    expect(held.channels).toEqual([]);
     held.channels.forEach(read => read.resolve());
   });
 
@@ -228,48 +253,51 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const result = await held.service.execute(query);
     expect(point(result, "M006")).toMatchObject({ state: "available", value: 0.5, sourceStatus: "READY" });
     expect(point(result, "M006").inputs.map(input => input.value)).toEqual([1, 2]);
+    expect(held.channels).toEqual([]);
     held.channels.forEach(read => read.resolve());
   });
 
-  test("只取消无用途日期，需要旧源的日期保持原请求并等待", async () => {
+  test("只发需要旧源的日期，保留原请求并等待", async () => {
     const status = (_code: string, date: string): ModernStatus => date === selectedDates[1] ? "SOURCE_INCOMPLETE" : "READY";
     const held = fixture({ holdChannel: true, status }), baseline = fixture({ status });
     const pending = held.service.execute(query); let completed = false;
     void pending.then(() => { completed = true; });
     await flush();
-    expect(held.channels.map(read => read.signal?.aborted)).toEqual([true, false, true]);
+    expect(held.channels.map(read => [read.date, read.signal?.aborted])).toEqual([[selectedDates[1], false]]);
     expect(completed).toBe(false);
-    held.channels[1].resolve();
+    held.channels[0].resolve();
     const result = await pending;
     assertProjection(result, await baseline.service.execute(query));
     expect(point(result, "M005", selectedDates[1])).toMatchObject({ value: 0.75, state: "available" });
-    expect(held.logs[0].sources.find(source => source.sourceId === "channel")).toMatchObject({ readCallCount: 3, successfulReadCallCount: 1, failedReadCallCount: 0, cancelledReadCallCount: 2, budgetExpired: false });
+    expect(held.logs[0].sources.find(source => source.sourceId === "channel")).toMatchObject({ readCallCount: 1, successfulReadCallCount: 1, failedReadCallCount: 0, budgetExpired: false });
+    expect(held.logs[0].sources.find(source => source.sourceId === "channel")!.cancelledReadCallCount).toBeUndefined();
     held.channels.forEach(read => read.resolve());
   });
 
-  test("晚到现代不完整时保留已先成功的旧渠道，渠道仍在原时点启动", async () => {
+  test("晚到现代不完整后读取必要旧渠道，原渠道参数与合法回退保持", async () => {
     const modern = deferred();
     const held = fixture({ modernGate: modern.promise, status: () => "SOURCE_INCOMPLETE" });
     const pending = held.service.execute(query); await flush();
+    expect(held.channels).toEqual([]);
+    modern.resolve();
+    const result = await pending;
     expect(held.channels).toHaveLength(3);
     expect(held.channels.map(read => read.date)).toEqual(selectedDates);
     expect(held.channels.every(read => read.params.page === "1" && read.params.count === "1")).toBe(true);
-    modern.resolve();
-    const result = await pending;
     expect(point(result, "M005")).toMatchObject({ value: 0.75, state: "available" });
     expect(point(result, "M006")).toMatchObject({ value: 1.5, state: "available" });
   });
 
-  test("现代依赖完成前保留渠道，使用完整输入判定回退", async () => {
+  test("现代依赖完成前不预发渠道，使用完整输入判定无需回退", async () => {
     const dependency = deferred(), held = fixture({ modernGate: dependency.promise, holdChannel: true });
     const pending = held.service.execute(query); await flush();
-    expect(held.channels.every(read => !read.signal?.aborted)).toBe(true);
+    expect(held.channels).toEqual([]);
     dependency.resolve(); await pending;
-    expect(held.channels.every(read => read.signal?.aborted)).toBe(true);
+    expect(held.channels).toEqual([]);
     held.channels.forEach(read => read.resolve());
   });
 
-  for (const derived of [false, true]) test(`慢日汇总不保留现代已足够的渠道，READY基础派生=${derived}且93列三期保持`, async () => {
+  for (const derived of [false, true]) test(`现代已足够时不启动日汇总或渠道，READY基础派生=${derived}且93列三期保持`, async () => {
     const daily = deferred();
     const status = (code: string): ModernStatus => derived && ["M006", "M007"].includes(code) ? "PROCESSING" : "READY";
     const held = fixture({ dailyGate: daily.promise, holdChannel: true, status });
@@ -281,7 +309,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     daily.resolve();
     const result = await pending;
     held.channels.forEach(read => read.resolve());
-    expect(cancelledBeforeDaily).toEqual([true, true, true]);
+    expect(cancelledBeforeDaily).toEqual([]);
     expect(completedBeforeDaily).toBe(true);
     assertProjection(result, await fixture({ status }).service.execute(query));
     for (const id of ["M006", "M007"]) expect(point(result, id)).toMatchObject({
@@ -299,11 +327,13 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       const pending = held.service.execute(query); let completed = false;
       void pending.then(() => { completed = true; });
       await flush();
-      expect(held.channels.map(read => read.signal?.aborted)).toEqual([false, false, false]);
-      held.channels.forEach(read => read.resolve()); await flush();
+      // Necessary legacy reads retain FIFO order: the daily read holds the
+      // permit before any channel date is allowed to start.
+      expect(held.channels).toEqual([]);
       const completedBeforeDaily = completed;
       daily.resolve();
-      const result = await pending;
+      const result = await releaseSerialReads(pending, held.channels);
+      expect(held.channels.map(read => read.date)).toEqual(selectedDates);
       expect(completedBeforeDaily).toBe(false);
       assertProjection(result, await fixture({ status }).service.execute(query));
       expect(point(result, "M008")).toMatchObject({ state: "available", value: 10 });
@@ -321,7 +351,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     { sourceType: "natural" },
     { sourceType: "internal_channel" },
     { clientPlatform: "android" }
-  ] as const) test(`无关现代分组${JSON.stringify(filters)}挂起时释放渠道，93列三期保持`, async () => {
+  ] as const) test(`无关现代分组${JSON.stringify(filters)}挂起时不预发无用渠道，93列三期保持`, async () => {
     const unrelated = deferred();
     const held = fixture({ metricGroupGate: { filters, promise: unrelated.promise }, holdChannel: true });
     const pending = held.service.execute(query); let completed = false;
@@ -333,12 +363,13 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const result = await pending;
     held.channels.forEach(read => read.resolve());
     assertProjection(result, await fixture().service.execute(query));
-    expect(cancelledBeforeRelease).toEqual([true, true, true]);
+    expect(cancelledBeforeRelease).toEqual([]);
     expect(completedBeforeRelease).toBe(false);
+    expect(held.channels).toEqual([]);
   });
 
   for (const filters of [{}, { userCohort: "old" }] as const)
-    test(`渠道实际依赖分组${JSON.stringify(filters)}挂起时不得提前取消，93列三期保持`, async () => {
+    test(`渠道实际依赖分组${JSON.stringify(filters)}挂起时不得提前读取，93列三期保持`, async () => {
       const dependency = deferred();
       const held = fixture({ metricGroupGate: { filters, promise: dependency.promise }, holdChannel: true });
       const pending = held.service.execute(query); let completed = false;
@@ -350,9 +381,9 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       const result = await pending;
       held.channels.forEach(read => read.resolve());
       assertProjection(result, await fixture().service.execute(query));
-      expect(cancelledBeforeRelease).toEqual([false, false, false]);
+      expect(cancelledBeforeRelease).toEqual([]);
       expect(completedBeforeRelease).toBe(false);
-      expect(held.channels.map(read => read.signal?.aborted)).toEqual([true, true, true]);
+      expect(held.channels).toEqual([]);
     });
 
   test("总体组晚到传输失败仍等待合法旧渠道，93列三期保持", async () => {
@@ -370,12 +401,12 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     dependency.resolve(); await flush();
     const cancelledAfterFailure = held.channels.map(read => read.signal?.aborted);
     const completedBeforeLegacy = completed;
-    held.channels.forEach(read => read.resolve());
-    const result = await pending;
+    const result = await releaseSerialReads(pending, held.channels);
     assertProjection(result, await fixture({ beforeMetricRead }).service.execute(query));
-    expect(cancelledBeforeFailure).toEqual([false, false, false]);
-    expect(cancelledAfterFailure).toEqual([false, false, false]);
+    expect(cancelledBeforeFailure).toEqual([]);
+    expect(cancelledAfterFailure).toEqual([false]);
     expect(completedBeforeLegacy).toBe(false);
+    expect(held.channels.map(read => read.date)).toEqual(selectedDates);
     expect(point(result, "M003")).toMatchObject({ state: "available", value: 6 });
     expect(point(result, "M006")).toMatchObject({ state: "available", value: 1.5 });
   });
@@ -392,17 +423,17 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     dependency.resolve(); await flush();
     const cancelledAfterIncomplete = held.channels.map(read => read.signal?.aborted);
     const completedBeforeLegacy = completed;
-    held.channels.forEach(read => read.resolve());
-    const result = await pending;
+    const result = await releaseSerialReads(pending, held.channels);
     assertProjection(result, await fixture({ status }).service.execute(query));
-    expect(cancelledBeforeIncomplete).toEqual([false, false, false]);
-    expect(cancelledAfterIncomplete).toEqual([false, false, false]);
+    expect(cancelledBeforeIncomplete).toEqual([]);
+    expect(cancelledAfterIncomplete).toEqual([false]);
     expect(completedBeforeLegacy).toBe(false);
+    expect(held.channels.map(read => read.date)).toEqual(selectedDates);
     expect(point(result, "M026.old")).toMatchObject({ state: "available", value: 6 });
     expect(point(result, "M081.old")).toMatchObject({ state: "available", value: 0.6 });
   });
 
-  test("总体批量拒绝后单指标隔离未完成不得提前取消渠道，93列三期保持", async () => {
+  test("总体批量拒绝后单指标隔离按原顺序逐项完成，不预发渠道且93列三期保持", async () => {
     const recovery = deferred();
     const requests: string[] = [];
     const rejectOverallBatch = (params: Record<string, string>) => {
@@ -425,17 +456,19 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const result = await pending;
     held.channels.forEach(read => read.resolve());
     assertProjection(result, await fixture({ beforeMetricRead: rejectOverallBatch }).service.execute(query));
-    // The held M003 keeps the group incomplete while independent metrics use
-    // the other recovery slots, each exactly once and in registered order.
-    expect(requestedBeforeRecovery.slice(1)).toEqual(requestedBeforeRecovery[0].split(","));
-    expect(new Set(requestedBeforeRecovery.slice(1)).size).toBe(requestedBeforeRecovery.length - 1);
-    expect(cancelledBeforeRecovery).toEqual([false, false, false]);
+    const registeredCodes = requestedBeforeRecovery[0].split(",");
+    // A held validation unit prevents later recovery work from starting, while
+    // the final trace still proves one attempt per metric in registered order.
+    expect(requestedBeforeRecovery.slice(1)).toEqual(registeredCodes.slice(0, registeredCodes.indexOf("M003") + 1));
+    expect(requests.slice(1)).toEqual(registeredCodes);
+    expect(new Set(requests.slice(1)).size).toBe(requests.length - 1);
+    expect(cancelledBeforeRecovery).toEqual([]);
     expect(completedBeforeRecovery).toBe(false);
-    expect(held.channels.map(read => read.signal?.aborted)).toEqual([true, true, true]);
+    expect(held.channels).toEqual([]);
     expect(point(result, "M003")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
   });
 
-  for (const gate of ["playbackGate", "monthlyGate", "cohortGate", "paymentGate"] as const) test(`${gate}未完成时已无用途渠道立即释放，完整投影保持`, async () => {
+  for (const gate of ["playbackGate", "monthlyGate", "cohortGate", "paymentGate"] as const) test(`${gate}不引起无用渠道预读取，完整投影保持`, async () => {
     const unrelated = deferred(), held = fixture({ [gate]: unrelated.promise, holdChannel: true });
     const pending = held.service.execute(query); let completed = false;
     void pending.then(() => { completed = true; });
@@ -444,28 +477,29 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const completedBeforeRelease = completed;
     unrelated.resolve();
     const result = await pending;
-    expect(cancelled).toEqual([true, true, true]);
+    expect(cancelled).toEqual([]);
     expect(completedBeforeRelease).toBe(gate === "cohortGate" || gate === "paymentGate");
     assertProjection(result, await fixture().service.execute(query));
+    expect(held.channels).toEqual([]);
     held.channels.forEach(read => read.resolve());
   });
 
-  test("无关慢来源保持读取时按日期释放渠道，保留仍需旧源的日期", async () => {
+  test("无关慢现代来源完成后只读取必要渠道日期，完整投影保持", async () => {
     const playback = deferred();
     const status = (_code: string, date: string): ModernStatus => date === selectedDates[1] ? "SOURCE_INCOMPLETE" : "READY";
     const held = fixture({ status, playbackGate: playback.promise, holdChannel: true });
     const pending = held.service.execute(query);
     await flush();
     const cancelled = held.channels.map(read => read.signal?.aborted);
-    held.channels[1].resolve();
     playback.resolve();
-    const result = await pending;
-    expect(cancelled).toEqual([true, false, true]);
+    const result = await releaseSerialReads(pending, held.channels);
+    expect(cancelled).toEqual([]);
+    expect(held.channels.map(read => read.date)).toEqual([selectedDates[1]]);
     assertProjection(result, await fixture({ status }).service.execute(query));
     held.channels.forEach(read => read.resolve());
   });
 
-  for (const gate of ["playback", "daily"] as const) test(`慢${gate}仍在途时释放三个物理槽供后续读取使用，默认40容量保持`, async () => {
+  for (const gate of ["playback", "daily"] as const) test(`${gate === "playback" ? "慢现代播放" : "无用旧日汇总"}不预发渠道，后续读取与默认40容量保持`, async () => {
     const base = fixture();
     const dependency = deferred(), background = deferred();
     const physicalChannels: AbortSignal[] = [];
@@ -491,7 +525,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     });
     const pending = new DailyDashboardService(upstream, now, undefined, { sourceReadTimeoutMs: 1000 }).execute(query);
     await flush();
-    const blockers = Array.from({ length: 36 }, (_, index) => upstream.get("/api/fixture/background", { pid: "PH", index: String(index) }));
+    const blockers = Array.from({ length: gate === "playback" ? 36 : 37 }, (_, index) => upstream.get("/api/fixture/background", { pid: "PH", index: String(index) }));
     const later = Array.from({ length: 3 }, (_, index) => upstream.get("/api/fixture/later", { pid: "PH", index: String(index) }));
     await flush();
     const dispatchedBeforeDependency = dispatched.filter(path => path === "/api/fixture/later").length;
@@ -499,7 +533,9 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     dependency.resolve(); background.resolve();
     const [result] = await Promise.all([pending, ...blockers, ...later]);
     expect(dispatchedBeforeDependency).toBe(3);
-    expect(cancelledBeforeDependency).toEqual([true, true, true]);
+    expect(cancelledBeforeDependency).toEqual([]);
+    expect(dispatched.filter(path => path === CHANNEL_V2_API)).toEqual([]);
+    if (gate === "daily") expect(dispatched.filter(path => path === P_DAY_SUM_API)).toEqual([]);
     expect(peak).toBe(40);
     expect(active).toBe(0);
     assertProjection(result, await fixture().service.execute(query));
@@ -509,19 +545,16 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     const held = fixture({ holdChannel: true });
     const { projection: _projection, ...fullQuery } = query;
     const pending = held.service.execute(fullQuery); await flush();
-    expect(held.channels).toHaveLength(3);
+    expect(held.channels).toHaveLength(1);
     expect(held.channels.every(read => !read.signal?.aborted)).toBe(true);
-    for (let index = 0; index < allDates.length; index++) {
-      held.channels[index].resolve(); await flush();
-    }
-    const result = await pending;
+    const result = await releaseSerialReads(pending, held.channels);
     expect(result.data.series).toHaveLength(121);
     expect(held.channels.map(read => read.date)).toEqual(allDates);
     expect(point(result, "M065")).toMatchObject({ state: "available", value: 12.34 });
     expect(held.logs[0].sources.find(source => source.sourceId === "channel")!.cancelledReadCallCount).toBeUndefined();
   });
 
-  test("局部逻辑取消保留同一渠道请求的健康共享消费者", async () => {
+  test("无用快照不订阅渠道，必要旧源消费者取消仍保留同请求的健康共享消费者", async () => {
     const physical: Array<{ date: string; signal?: AbortSignal | null; resolve: () => void }> = [];
     const upstream = new UpstreamClient({ ...loadEnv({ NODE_ENV: "test", UPSTREAM_API_BASE_URL: "https://in-memory.invalid",
       UPSTREAM_USER_NAME: "fixture-user", UPSTREAM_X_TOKEN: "fixture-token",
@@ -545,16 +578,32 @@ describe("经营快照按最终投影保留渠道依赖", () => {
     playback.resolve();
     const result = await pending;
     expect(result.data.series).toHaveLength(93);
-    expect(physical).toHaveLength(3);
-    expect(physical.map(read => read.signal?.aborted)).toEqual([false, true, true]);
-    expect(cancelledBeforePlayback).toEqual([false, true, true]);
+    expect(physical).toHaveLength(1);
+    expect(physical.map(read => read.signal?.aborted)).toEqual([false]);
+    expect(cancelledBeforePlayback).toEqual([false]);
+
+    const fallback = fixture({ status: (_code, date) => date === selectedDates[0] ? "SOURCE_INCOMPLETE" : "READY" });
+    const consumer = new AbortController();
+    let sharedChannelReads = 0;
+    const sharedClient = { get: (path: string, values: Record<string, string>, token?: string, signal?: AbortSignal) => {
+      if (path !== CHANNEL_V2_API) return fallback.client.get(path, values, token, signal);
+      sharedChannelReads++;
+      return upstream.get(path, values, token, signal);
+    } };
+    const cancelled = new DailyDashboardService(sharedClient, now, undefined, { sourceReadTimeoutMs: 1000 })
+      .execute(query, consumer.signal).catch(error => error);
+    await until(() => sharedChannelReads === 1);
+    expect(physical).toHaveLength(1);
+    consumer.abort();
+    expect(await cancelled).toMatchObject({ code: "UPSTREAM_TIMEOUT", statusCode: 504 });
+    expect(physical[0].signal?.aborted).toBe(false);
     physical[0].resolve();
     expect(await healthy).toEqual(channelPayload(selectedDates[0]));
     expect(healthyController.signal.aborted).toBe(false);
   });
 
   for (const source of ["daily", "cohort", "payment"] as const) for (const fullFirst of [true, false])
-    test(`${source}共享旧源${fullFirst ? "整板先创建" : "快照先创建"}时只取消快照消费者，121/93投影保持`, async () => {
+    test(`${source}共享客户端${fullFirst ? "整板先创建" : "快照先创建"}时仅整板读取必要旧源，121/93投影保持`, async () => {
       const modern = deferred(), base = fixture({ modernGate: modern.promise });
       const path = source === "daily" ? P_DAY_SUM_API : source === "cohort" ? RETENTION_PLUS_API : PAYMENT_RATE_API;
       const physical: Array<{ date?: string; signal?: AbortSignal | null; settled: boolean; resolve: () => void }> = [];
@@ -585,6 +634,7 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       await flush(); modern.resolve();
       const snapshotResult = await snapshot;
       expect(fullCompleted).toBe(false);
+      await until(() => physical.length > 0);
       expect(physical.find(read => source !== "payment" || read.date === selectedDates[0])!.signal?.aborted).toBe(false);
       for (let index = 0; index < 20 && !fullCompleted; index++) {
         physical.forEach(read => read.resolve()); await flush();
@@ -592,6 +642,8 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       const fullResult = await full;
       const baseline = fixture();
       expect(fullResult.data.series).toHaveLength(121);
+      expect(physical).toHaveLength(source === "payment" ? allDates.length : 1);
+      expect(physical.every(read => !read.signal?.aborted)).toBe(true);
       expect(fullResult.data.series).toEqual((await baseline.service.execute(fullQuery)).data.series);
       assertProjection(snapshotResult, await baseline.service.execute(query));
     });

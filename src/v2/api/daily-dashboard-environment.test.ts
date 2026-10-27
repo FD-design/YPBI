@@ -67,7 +67,7 @@ describe("日看板请求环境快照", () => {
     expect(dataEnvironmentLabel(dailyDashboardEnvironment(result))).toBe("正式数据");
   });
 
-  test("不同环境的并发请求各自绑定发出时的环境，响应顺序不影响来源", async () => {
+  test("不同环境的排队请求绑定各自入队时的环境，后续偏好不改写来源", async () => {
     const pending: Array<{ environment: string | null; resolve: (response: Response) => void }> = [];
     globalThis.fetch = (async (_input, init) => new Promise<Response>(resolve => {
       pending.push({ environment: new Headers(init?.headers).get("x-ypbi-data-environment"), resolve });
@@ -77,11 +77,14 @@ describe("日看板请求环境快照", () => {
     setDataEnvironmentPreference("production");
     const productionRequest = fetchDailyDashboard(query, ["M001"]);
     await Promise.resolve();
+    expect(pending.map(request => request.environment)).toEqual(["test"]);
+    setDataEnvironmentPreference("test");
+    pending[0].resolve(jsonResponse());
+    const testResult = await testRequest;
+    await Promise.resolve();
     expect(pending.map(request => request.environment)).toEqual(["test", "production"]);
     pending[1].resolve(jsonResponse());
     const production = await productionRequest;
-    pending[0].resolve(jsonResponse());
-    const testResult = await testRequest;
     expect(dailyDashboardEnvironment(production)).toBe("production");
     expect(dailyDashboardEnvironment(testResult)).toBe("test");
     expect(production).not.toBe(testResult);

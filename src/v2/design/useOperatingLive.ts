@@ -9,7 +9,7 @@ import { runOperatingQueryJob } from "../api/operating-query-jobs";
 import { currentDataEnvironmentPreference } from "../api/dataEnvironmentPreference";
 import { BiQueryJobTerminalError, BiQueryJobWaitError } from "../api/query-jobs";
 
-const MAX_OPERATING_REQUESTS = 6;
+const MAX_OPERATING_REQUESTS = 1;
 
 export type OperatingRequestScope = Pick<LiveDashboardReading, "query" | "state" | "dataEnvironment" | "platforms" | "operatingAsyncPidGroups" | "refreshRevision">;
 

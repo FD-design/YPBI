@@ -3,7 +3,7 @@ import { biQueryJobUnitResultSchema } from "../../contracts/query-jobs";
 import { getUpstreamReadFailure, UpstreamError, type UpstreamClient } from "./client";
 import { canIsolateBiV1Request } from "./bi-v1.request-isolation";
 import { recordUpstreamReadBoundaryFailure } from "./read-trace";
-import { deliverUpstreamRead } from "./read-delivery";
+import { currentReadDeliveryExpiryScope, deliverUpstreamRead } from "./read-delivery";
 
 export const BI_V1_METRICS_API = "/api/admin/bi/v1/metrics";
 
@@ -563,8 +563,9 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
   let stopped = false;
   let fatalFailure: { error: unknown } | undefined;
   const recoveryController = new AbortController();
-  // Recovery shares the existing physical queue and source budget. At most
-  // three distinct metrics run together, with one attempt per registered code.
+  // Independent units classify each outcome before starting the next metric.
+  // Source-wide budgets retain three workers and one attempt per metric.
+  const recoveryConcurrency = currentReadDeliveryExpiryScope() === "unit" ? 1 : 3;
   const worker = async () => {
     while (!stopped && next < metricCodes.length) {
       const metricCode = metricCodes[next++];
@@ -587,10 +588,13 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
         if (fatalFailure) throw fatalFailure.error;
         if (error instanceof UpstreamError && error.code === "UPSTREAM_TIMEOUT" && error.statusCode === 504
           && getUpstreamReadFailure(error)?.origin === "source_budget") {
-          // Completed single-metric results retain their validated values and
-          // states; expiry closes only the unfinished part of this bounded read.
-          stopped = true;
-          return;
+          if (currentReadDeliveryExpiryScope() === "source") {
+            // Source-wide expiry closes the unfinished part of this read.
+            stopped = true;
+            return;
+          }
+          // Independent execution budgets close only their own failed unit.
+          continue;
         }
         if (getUpstreamReadFailure(error)?.origin === "consumer_cancelled"
           || !canIsolateBiV1Request(error) && !isRecoverableSingleMetricTransportFailure(error)) {
@@ -602,7 +606,7 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
       }
     }
   };
-  try { await Promise.all(Array.from({ length: Math.min(3, metricCodes.length) }, worker)); }
+  try { await Promise.all(Array.from({ length: Math.min(recoveryConcurrency, metricCodes.length) }, worker)); }
   finally { recoveryController.abort(); }
   // Split requests have no single upstream envelope, watermark or rule version.
   return { message: null, days };

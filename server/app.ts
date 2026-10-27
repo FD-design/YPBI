@@ -182,7 +182,9 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       });
     }
   });
-  const upstream = new UpstreamClient(env);
+  // Data requests share one physical slot, including work that outlives a
+  // cancelled consumer. BI identity and credential probes keep their own paths.
+  const upstream = new UpstreamClient(env, fetch, { maxActiveRequests: 1 });
   const sources = new SourceService(upstream);
   const details = new DetailAdapter(upstream);
   const channels = new ChannelAdapter(upstream);

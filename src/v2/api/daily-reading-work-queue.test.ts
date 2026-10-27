@@ -33,7 +33,7 @@ describe("日看板共享读取调度", () => {
     expect(started).toEqual(["foreground-1", "foreground-2", "snapshot-1", "snapshot-2"]);
   });
 
-  test("默认六槽全部供快照使用，没有永久预留空槽", async () => {
+  test("默认串行读取快照，上一项完成后才启动下一项", async () => {
     const queue = new DailyReadingWorkQueue();
     const gates = Array.from({ length: 8 }, () => deferred<number>());
     const started: number[] = [];
@@ -42,11 +42,12 @@ describe("日看板共享读取调度", () => {
       return gate.promise;
     }, { priority: "snapshot" }));
     await pump();
-    expect(started).toEqual([0, 1, 2, 3, 4, 5]);
-    gates[0].resolve(0);
-    await pending[0];
-    expect(started).toEqual([0, 1, 2, 3, 4, 5, 6]);
-    gates.slice(1).forEach((gate, index) => gate.resolve(index + 1));
+    expect(started).toEqual([0]);
+    for (let index = 0; index < gates.length; index++) {
+      expect(started).toEqual(Array.from({ length: index + 1 }, (_, i) => i));
+      gates[index].resolve(index);
+      await pending[index];
+    }
     await expect(Promise.all(pending)).resolves.toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });

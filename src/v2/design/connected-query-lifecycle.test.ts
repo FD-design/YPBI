@@ -139,6 +139,16 @@ function requests({ ignoreAbort = false }: { ignoreAbort?: boolean } = {}) {
   }) as typeof fetch;
   return pending;
 }
+async function completeReads(pending: ReturnType<typeof requests>, start: number, values: readonly (number | "failure")[]) {
+  for (const [offset, value] of values.entries()) {
+    await flush();
+    const index = start + offset;
+    expect(pending.length).toBeGreaterThan(index);
+    if (value === "failure") pending[index].fail();
+    else pending[index].succeed(value);
+    await flush();
+  }
+}
 const success = (query: DailyDashboardQuery, value = 8) => ({ status: "success" as const, data: payload(query, value), refreshing: false, refreshError: null });
 const range = { start: "2020-01-01", end: "2020-01-01" };
 
@@ -219,11 +229,11 @@ for (const scope of ["environment", "account"] as const) test(`稳定数据容�
   let live = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: OPERATING_METRIC_IDS };
   const pending = requests({ ignoreAbort: true });
   let container = hook(() => stableBoard(live, false));
-  await flush(); pending.forEach(item => item.succeed()); await flush();
+  await completeReads(pending, 0, [8, 8, 8]);
   let presentation = hook(() => useOperatingLive(container.value.reading, "all", container.value.operating));
   expect(presentation.value.rows!.some(row => row.values.some(value => value.current !== null))).toBe(true);
   live = { ...live, refreshRevision: 1 }; container.value.daily.current.retry(); container.render(); await flush();
-  expect(pending).toHaveLength(6);
+  expect(pending).toHaveLength(4);
   container.dispose(); presentation.dispose();
   if (scope === "environment") setDataEnvironmentPreference("test");
   live = { ...live, refreshRevision: 0 };
@@ -232,12 +242,13 @@ for (const scope of ["environment", "account"] as const) test(`稳定数据容�
   expect(container.value.daily.current.state.status).toBe("loading");
   expect(presentation.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);
   await flush();
-  expect(pending.slice(3, 6).every(item => item.signal.aborted)).toBe(true);
-  pending.slice(3, 6).forEach(item => item.succeed(9)); await flush();
+  expect(pending[3].signal.aborted).toBe(true);
+  expect(pending).toHaveLength(4); // queued old snapshots were cancelled without HTTP
+  pending[3].succeed(9); await flush();
   expect(container.value.daily.current.state.status).toBe("loading");
   presentation.render();
   expect(presentation.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);
-  pending.slice(6).forEach(item => item.succeed(4)); await flush(); presentation.render();
+  await completeReads(pending, 4, [4, 4, 4]); presentation.render();
   expect(container.value.daily.current.state.status).toBe("success");
   expect(presentation.value.rows!.some(row => row.values.some(value => value.current === .4))).toBe(true);
 });
@@ -267,13 +278,14 @@ test("独立注册两期初次查询及整页重试不等待主查询成功", as
   let live = reading();
   const pending = requests(), rendered = hook(() => useCohortReading(live, range)!);
   await Promise.resolve();
+  expect(pending).toHaveLength(1);
+  await completeReads(pending, 0, ["failure", "failure"]);
   expect(pending.map(item => item.query.dateRange)).toEqual([["2020-01-01", "2020-01-01"], ["2019-12-31", "2019-12-31"]]);
-  pending.forEach(item => item.fail()); await flush();
   expect(rendered.value.state.status).toBe("failure");
   live = { ...live, state: { status: "failure", kind: "error", code: "TIMEOUT", message: "主查询失败" }, refreshRevision: 1 };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(4);
-  pending[2].succeed(7); pending[3].succeed(6); await flush();
+  expect(pending).toHaveLength(3);
+  await completeReads(pending, 2, [7, 6]);
   expect(rendered.value.state).toMatchObject({ status: "success", data: { data: { series: [{ points: [{ value: .7 }] }] } } });
   expect(rendered.value.comparison!.state).toMatchObject({ status: "success", data: { data: { series: [{ points: [{ value: .6 }] }] } } });
 });
@@ -282,16 +294,18 @@ test("同范围刷新失败保留两期旧值，主查询新结果不触发额�
   let live = reading();
   const pending = requests(), rendered = hook(() => useCohortReading(live, range)!);
   await Promise.resolve();
-  pending.forEach(item => item.succeed()); await flush();
+  await completeReads(pending, 0, [8, 8]);
   live = { ...live, refreshRevision: 1, state: success(live.query, 9) }; rendered.render(); await flush();
-  expect(pending).toHaveLength(4);
+  expect(pending).toHaveLength(3);
   expect(rendered.value.state).toMatchObject({ status: "success", refreshing: true });
-  pending[2].fail(); pending[3].fail(); await flush();
+  await completeReads(pending, 2, ["failure", "failure"]);
   expect(rendered.value.state).toMatchObject({ status: "success", refreshing: false, refreshError: { code: "NETWORK_ERROR" }, data: { data: { series: [{ points: [{ value: .8 }] }] } } });
   expect(rendered.value.comparison!.state).toMatchObject({ status: "success", refreshError: { code: "NETWORK_ERROR" } });
   live = { ...live, state: success(live.query, 3) }; rendered.render(); await flush();
   expect(pending).toHaveLength(4);
   rendered.value.retry(); await flush();
+  expect(pending).toHaveLength(5);
+  await completeReads(pending, 4, [8, 8]);
   expect(pending).toHaveLength(6);
 });
 
@@ -301,13 +315,13 @@ test("主查询刷新失败保留相同queryId时，独立两期仍按整页刷�
   live = { ...live, state: main };
   const pending = requests(), rendered = hook(() => useCohortReading(live, range)!);
   await Promise.resolve();
-  pending.forEach(item => item.fail()); await flush();
+  await completeReads(pending, 0, ["failure", "failure"]);
   live = { ...live, refreshRevision: 1, state: { ...main, refreshing: true } };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(4);
+  expect(pending).toHaveLength(3);
   live = { ...live, state: { ...main, refreshError: { code: "TIMEOUT", message: "主查询刷新失败" } } };
   rendered.render(); await flush();
-  pending[2].succeed(9); pending[3].succeed(7); await flush();
+  await completeReads(pending, 2, [9, 7]);
   expect(pending).toHaveLength(4);
   expect(rendered.value.state).toMatchObject({ status: "success", data: { data: { series: [{ points: [{ value: .9 }] }] } } });
   expect(rendered.value.comparison!.state).toMatchObject({ status: "success", data: { data: { series: [{ points: [{ value: .7 }] }] } } });
@@ -323,26 +337,28 @@ test("注册期等于主范围时复用主请求，转为独立范围时只请�
   // must now load even though its own PID and date did not change.
   live = { ...live, query: { ...live.query, dateRange: ["2020-01-11", "2020-01-11"] } };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(2);
+  expect(pending).toHaveLength(1);
   selected = { start: "2020-01-11", end: "2020-01-11" }; rendered.render(); await flush();
   expect(rendered.value).toBe(live);
   expect(pending.every(item => item.signal.aborted)).toBe(true);
-  expect(pending).toHaveLength(2);
+  expect(pending).toHaveLength(1); // comparison cancelled while queued, without HTTP
 });
 
 test("PID/注册日期切换立即屏蔽旧值并隔离迟到响应", async () => {
   let live = reading(), selected = range;
   const pending = requests({ ignoreAbort: true }), rendered = hook(() => useCohortReading(live, selected)!);
   await Promise.resolve();
-  pending.forEach(item => item.succeed(8)); await flush();
+  await completeReads(pending, 0, [8, 8]);
   rendered.value.retry(); await flush();
   live = { ...live, query: { ...live.query, pid: "TT" }, refreshRevision: 1 };
   selected = { start: "2020-01-02", end: "2020-01-02" };
   expect(rendered.render().state.status).toBe("loading"); await flush();
-  expect(pending).toHaveLength(6); // Key change and page refresh cannot duplicate requests.
-  expect(pending[2].signal.aborted).toBe(true); expect(pending[3].signal.aborted).toBe(true);
-  pending[4].succeed(4); pending[5].succeed(3); await flush();
-  pending[2].succeed(9); pending[3].succeed(9); await flush();
+  expect(pending).toHaveLength(3); // Old queued comparison never starts after scope cancellation.
+  expect(pending[2].signal.aborted).toBe(true);
+  pending[2].succeed(9); await flush();
+  await completeReads(pending, 3, [4, 3]);
+  expect(pending).toHaveLength(5); // Key change plus page refresh does not duplicate the new pair.
+  pending[2].succeed(9); await flush();
   expect(rendered.value.state).toMatchObject({ status: "success", data: { data: { query: { pid: "TT", dateRange: ["2020-01-02", "2020-01-02"] }, series: [{ points: [{ value: .4 }] }] } } });
 });
 
@@ -362,10 +378,11 @@ test("经营分PID独立读取与刷新，主查询失败不阻止恢复且单�
   let live = { ...reading(), query: { ...reading().query, boardId: "5.2" } };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
   await Promise.resolve();
+  expect(pending.map(item => item.query.pid)).toEqual(["PH"]);
+  await completeReads(pending, 0, [8, 8]);
   expect(pending.map(item => item.query.pid)).toEqual(["PH", "TT"]);
   expect(pending.every(item => item.query.projection === "operating_snapshot")).toBe(true);
   expect(pending.map(item => item.query.dateRange)).toEqual([["2020-01-03", "2020-01-10"], ["2020-01-03", "2020-01-10"]]);
-  pending.forEach(item => item.succeed(8)); await flush();
   const initial = rendered.value.resources.PH;
   expect(initial.status).toBe("success");
   if (initial.status === "success") {
@@ -373,8 +390,8 @@ test("经营分PID独立读取与刷新，主查询失败不阻止恢复且单�
     expect(initial.data.data.series[0].points.map(point => point.date)).toEqual(["2020-01-03", "2020-01-09", "2020-01-10"]);
   }
   live = { ...live, refreshRevision: 1, state: { status: "failure", kind: "error", code: "TIMEOUT", message: "主查询失败" } };
-  rendered.render(); await flush(); expect(pending).toHaveLength(4);
-  pending[2].fail(); pending[3].succeed(4); await flush();
+  rendered.render(); await flush(); expect(pending).toHaveLength(3);
+  await completeReads(pending, 2, ["failure", 4]);
   expect(rendered.value.resources.PH).toMatchObject({ status: "success", refreshError: { code: "OPERATING_READ_FAILED" } });
   expect(rendered.value.resources.TT).toMatchObject({ status: "success", refreshError: null });
   const tt = rendered.value.resources.TT;
@@ -387,35 +404,37 @@ test("经营日期切换不显示旧日值，旧请求迟到不能覆盖新日�
   let live = { ...reading(), query: { ...reading().query, boardId: "5.2" } };
   const pending = requests({ ignoreAbort: true }), rendered = hook(() => useOperatingLive(live));
   await Promise.resolve();
-  pending.forEach(item => item.succeed(8)); await flush();
+  await completeReads(pending, 0, [8, 8]);
   live = { ...live, refreshRevision: 1 }; rendered.render(); await flush();
   live = { ...live, query: { ...live.query, dateRange: ["2020-01-11", "2020-01-11"] } };
   expect(rendered.render().rows!.every(row => row.values.every(value => value.current === null))).toBe(true); await flush();
-  expect(pending).toHaveLength(6); expect(pending[2].signal.aborted).toBe(true);
-  pending[4].succeed(4); pending[5].succeed(3); await flush();
-  pending[2].succeed(9); pending[3].succeed(9); await flush();
+  expect(pending).toHaveLength(3); expect(pending[2].signal.aborted).toBe(true);
+  pending[2].succeed(9); await flush();
+  await completeReads(pending, 3, [4, 3]);
+  expect(pending).toHaveLength(5);
+  pending[2].succeed(9); await flush();
   expect(rendered.value.resources.PH).toMatchObject({ status: "success", data: { data: { query: { dateRange: ["2020-01-04", "2020-01-11"] } } } });
   const ph = rendered.value.resources.PH;
   expect(ph.status === "success" && ph.data.data.series[0].points.every(point => point.value === .4)).toBe(true);
 });
 
-test("经营20PID快照保持六路有界调度，退出时取消在途且不继续启动后续平台", async () => {
+test("经营20PID快照逐平台串行，退出时取消在途且不继续启动后续平台", async () => {
   const live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: [...OPERATING_METRIC_IDS],
     platforms: Array.from({ length: 20 }, (_, index) => ({ pid: `QA${index + 1}`, name: `隔离平台${index + 1}` })) };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
   await Promise.resolve();
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1"]);
   pending[0].succeed(); await flush();
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6", "QA7"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2"]);
   pending[1].fail(); await flush();
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6", "QA7", "QA8"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3"]);
   expect(pending.every(item => item.query.projection === "operating_snapshot")).toBe(true);
   expect(rendered.value.resources.QA1.status).toBe("success");
   expect(rendered.value.resources.QA2.status).toBe("failure");
   rendered.dispose();
   expect(pending.every(item => item.signal.aborted)).toBe(true);
   pending.slice(2).forEach(item => item.succeed(4)); await flush();
-  expect(pending).toHaveLength(8);
+  expect(pending).toHaveLength(3);
 });
 
 test("经营快照展示名称和主指标列表变化保留在途队列，20PID各读取一次", async () => {
@@ -424,20 +443,20 @@ test("经营快照展示名称和主指标列表变化保留在途队列，20PID
   let selected = "all";
   const pending = requests(), rendered = hook(() => useOperatingLive(live, selected));
   await Promise.resolve();
-  expect(pending).toHaveLength(6);
+  expect(pending).toHaveLength(1);
   live = { ...live, platforms: live.platforms!.map(platform => ({ ...platform, name: platform.name + "更新" })) };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(6);
+  expect(pending).toHaveLength(1);
   expect(pending.every(item => !item.signal.aborted)).toBe(true);
   expect(rendered.value.rows!.map(row => row.name)).toEqual(live.platforms!.map(platform => platform.name));
   live = { ...live, metricIds: [...live.metricIds, "M098"] };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(6);
+  expect(pending).toHaveLength(1);
   selected = "QA1";
   rendered.render(); await flush();
-  expect(pending).toHaveLength(6);
+  expect(pending).toHaveLength(1);
   for (let completed = 0; completed < 20; completed++) {
-    expect(pending.length - completed).toBeLessThanOrEqual(6);
+    expect(pending.length - completed).toBe(1);
     pending[completed].succeed(); await flush();
   }
   expect(pending.map(item => item.query.pid)).toEqual(live.platforms!.map(platform => platform.pid));
@@ -459,23 +478,25 @@ test("经营有序PID范围切换取消旧队列，退出真实读取停止并�
   let live: LiveDashboardReading | null = initial;
   const pending = requests({ ignoreAbort: true }), rendered = hook(() => useOperatingLive(live));
   await Promise.resolve();
-  expect(pending.map(item => item.query.pid)).toEqual(["QA1", "QA2", "QA3", "QA4", "QA5", "QA6"]);
+  expect(pending.map(item => item.query.pid)).toEqual(["QA1"]);
   live = { ...initial, platforms: [...initial.platforms!].reverse() };
   rendered.render(); await flush();
-  expect(pending.slice(0, 6).every(item => item.signal.aborted)).toBe(true);
-  pending.slice(0, 6).forEach(item => item.succeed(4)); await flush();
-  expect(pending.slice(6).map(item => item.query.pid)).toEqual(["QA20", "QA19", "QA18", "QA17", "QA16", "QA15"]);
+  expect(pending[0].signal.aborted).toBe(true);
+  expect(pending).toHaveLength(1);
+  pending[0].succeed(4); await flush();
+  expect(pending.slice(1).map(item => item.query.pid)).toEqual(["QA20"]);
   live = { ...live, platforms: live.platforms!.slice(1) };
   rendered.render(); await flush();
-  expect(pending.slice(6, 12).every(item => item.signal.aborted)).toBe(true);
-  pending.slice(6, 12).forEach(item => item.succeed(4)); await flush();
-  expect(pending.slice(12).map(item => item.query.pid)).toEqual(["QA19", "QA18", "QA17", "QA16", "QA15", "QA14"]);
+  expect(pending[1].signal.aborted).toBe(true);
+  expect(pending).toHaveLength(2);
+  pending[1].succeed(4); await flush();
+  expect(pending.slice(2).map(item => item.query.pid)).toEqual(["QA19"]);
   live = null;
   expect(rendered.render().rows).toBeNull(); await flush();
   expect(pending.every(item => item.signal.aborted)).toBe(true);
   pending.forEach(item => item.succeed(4)); await flush();
   expect(rendered.value.rows).toBeNull();
-  expect(pending).toHaveLength(18);
+  expect(pending).toHaveLength(3);
 });
 
 for (const status of ["loading", "failure"] as const) test(`页头${status}明确正式环境时，经营刷新失败不保留测试环境旧结果`, async () => {
@@ -483,16 +504,16 @@ for (const status of ["loading", "failure"] as const) test(`页头${status}明�
   let live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, dataEnvironment: "test" };
   const pending = requests(), rendered = hook(() => useOperatingLive(live));
   await Promise.resolve();
-  pending.forEach(item => item.succeed(8)); await flush();
+  await completeReads(pending, 0, [8, 8]);
   expect(rendered.value.resources.PH.status).toBe("success");
   setDataEnvironmentPreference("production");
   live = { ...live, dataEnvironment: "production", refreshRevision: 1, state: status === "loading" ? { status }
     : { status, kind: "error", code: "TIMEOUT", message: "正式主查询失败" } };
   rendered.render(); await flush();
-  expect(pending).toHaveLength(4);
+  expect(pending).toHaveLength(3);
   expect(rendered.value.resources.PH.status).toBe("loading");
   expect(rendered.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);
-  pending.slice(2).forEach(item => item.fail()); await flush();
+  await completeReads(pending, 2, ["failure", "failure"]);
   expect(rendered.value.resources.PH).toMatchObject({ status: "failure", code: "OPERATING_READ_FAILED" });
   expect(rendered.value.resources.TT.status).toBe("failure");
   expect(rendered.value.rows!.every(row => row.values.every(value => value.current === null))).toBe(true);

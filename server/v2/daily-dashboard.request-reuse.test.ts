@@ -21,6 +21,7 @@ function fixture(invalidRetention = false, holdReads = false, options: {
 } = {}) {
   const reads: { path: string; params: Record<string, string> }[] = [];
   const heldReads: (() => void)[] = [];
+  let holding = holdReads;
   let activeReads = 0, peakReads = 0;
   const client = new UpstreamClient(loadEnv({ NODE_ENV: "test", UPSTREAM_API_BASE_URL: "https://in-memory.invalid",
     UPSTREAM_USER_NAME: "in-memory-user", UPSTREAM_X_TOKEN: "in-memory-token",
@@ -30,7 +31,7 @@ function fixture(invalidRetention = false, holdReads = false, options: {
     reads.push({ path: url.pathname, params });
     peakReads = Math.max(peakReads, ++activeReads);
     try {
-      if (holdReads) await new Promise<void>(resolve => heldReads.push(resolve));
+      if (holding) await new Promise<void>(resolve => heldReads.push(resolve));
       await options.beforeRead?.({ path: url.pathname, params }, init?.signal);
       let payload: unknown;
       if ([BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(url.pathname)) {
@@ -65,8 +66,10 @@ function fixture(invalidRetention = false, holdReads = false, options: {
     } finally { activeReads--; }
   });
   return { client, reads, service: new DailyDashboardService(client, now), releaseHeld() { heldReads.splice(0).forEach(resolve => resolve()); },
+    releaseAll() { holding = false; heldReads.splice(0).forEach(resolve => resolve()); },
     peakReads: () => peakReads, activeReads: () => activeReads };
 }
+const readKey = (read: { path: string; params: Record<string, string> }) => JSON.stringify([read.path, Object.entries(read.params).sort(([left], [right]) => left.localeCompare(right))]);
 
 describe("经营快照与整板同源查询复用", () => {
   test("已取消经营查询不读取HTTP，中途取消不投影迟到结果且共享健康查询继续", async () => {
@@ -78,31 +81,44 @@ describe("经营快照与整板同源查询复用", () => {
     const cancelledResult = delayed.service.execute(snapshotQuery, cancelling.signal).catch(error => error);
     const healthy = delayed.service.execute(snapshotQuery, second.signal);
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(delayed.reads).toHaveLength(22);
+    expect(delayed.reads).toHaveLength(1);
+    // The other complete query waits for admission. A real healthy consumer of
+    // this exact physical key protects the in-flight read during cancellation.
+    const firstRead = delayed.reads[0];
+    const shared = delayed.client.get(firstRead.path, firstRead.params, undefined, second.signal);
     cancelling.abort();
     expect(await cancelledResult).toMatchObject({ code: "UPSTREAM_TIMEOUT" });
     expect(getEventListeners(cancelling.signal, "abort")).toHaveLength(0);
-    delayed.releaseHeld();
+    delayed.releaseAll();
     const healthyResult = await healthy;
+    expect(await shared).toMatchObject({ code: 200 });
     expect(healthyResult.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
     expect(healthyResult.data.series.find(series => series.metric.id === "M016")!.points.at(-1)).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
     expect(getEventListeners(second.signal, "abort")).toHaveLength(0);
-    expect(delayed.reads).toHaveLength(22);
+    const baseline = fixture();
+    await baseline.service.execute(snapshotQuery);
+    expect(delayed.reads.map(readKey).sort()).toEqual(baseline.reads.map(readKey).sort());
+    expect(new Set(delayed.reads.map(readKey)).size).toBe(delayed.reads.length);
+    expect(delayed.peakReads()).toBe(1);
   });
 
-  test("单平台经营12个独立指标组可及时使用空闲物理槽，93组三期结果不变", async () => {
+  test("单平台经营独立指标组逐单执行，排队不提前读取且93组三期结果不变", async () => {
     const delayed = fixture(false, true), baseline = fixture();
     const result = delayed.service.execute(snapshotQuery);
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(delayed.reads).toHaveLength(22);
-    expect(delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(12);
-    delayed.releaseHeld();
+    expect(delayed.reads).toHaveLength(1);
+    expect(delayed.activeReads()).toBe(1);
+    delayed.releaseAll();
     const [actual, expected] = await Promise.all([result, baseline.service.execute(snapshotQuery)]);
     expect(actual.data.series).toEqual(expected.data.series);
     expect(actual.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
+    expect(delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(12);
+    expect(delayed.reads.map(readKey).sort()).toEqual(baseline.reads.map(readKey).sort());
+    expect(delayed.reads).toHaveLength(14); // 12 formal metric groups, playback and natural-month summary
+    expect(delayed.peakReads()).toBe(1);
   });
 
-  test("20平台经营冷读共享40个物理槽，全部440次来源读取与93组三期结果完整", async () => {
+  test("20平台经营冷读共享逐单许可，全部必要来源读取与93组三期结果完整", async () => {
     const delayed = fixture(false, true);
     const platforms = platformRegistry.filter(platform => platform.enabled);
     expect(platforms).toHaveLength(20);
@@ -110,17 +126,21 @@ describe("经营快照与整板同源查询复用", () => {
     const results = Promise.all(platforms.map(platform => delayed.service.execute({ ...snapshotQuery, pid: platform.pid })));
     void results.then(() => { finished = true; });
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(delayed.reads).toHaveLength(40);
-    for (let batch = 0; batch < 30 && !finished; batch++) {
+    expect(delayed.reads).toHaveLength(1);
+    for (let batch = 0; batch < 1000 && !finished; batch++) {
       delayed.releaseHeld();
       await new Promise(resolve => setTimeout(resolve, 0));
-      expect(delayed.peakReads()).toBeLessThanOrEqual(40);
+      expect(delayed.peakReads()).toBe(1);
     }
     expect(finished).toBe(true);
     const actual = await results;
-    expect(delayed.reads).toHaveLength(440);
+    expect(delayed.reads).toHaveLength(20 * 14);
+    const baseline = fixture();
+    const expected = await Promise.all(platforms.map(platform => baseline.service.execute({ ...snapshotQuery, pid: platform.pid })));
+    expect(delayed.reads.map(readKey).sort()).toEqual(baseline.reads.map(readKey).sort());
     for (const [index, result] of actual.entries()) {
       expect(result.data.query.pid).toBe(platforms[index].pid);
+      expect(result.data.series).toEqual(expected[index].data.series);
       expect(result.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
       expect(result.data.series.every(series => series.points.map(point => point.date).join() === operatingSnapshotDates(query.dateRange).join())).toBe(true);
       expect(result.data.series.find(series => series.metric.id === "M016")!.points.every(point => point.state === "available" && point.sourceStatus === "READY" && point.value === 2)).toBe(true);
@@ -128,7 +148,7 @@ describe("经营快照与整板同源查询复用", () => {
     }
   });
 
-  test("20平台无关分组挂起时释放无用途渠道并恢复队尾，健康共享消费者和93列三期保持", async () => {
+  test("20平台逐单执行时不启动无用途渠道，独立健康消费者和93列三期保持", async () => {
     const platforms = platformRegistry.filter(platform => platform.enabled);
     expect(platforms).toHaveLength(20);
     const selectedDates = operatingSnapshotDates(query.dateRange);
@@ -158,7 +178,8 @@ describe("经营快照与整板同源查询复用", () => {
     const snapshots = Promise.all(platforms.map(platform => delayed.service.execute({ ...snapshotQuery, pid: platform.pid })));
     void snapshots.then(() => { snapshotsCompleted = true; });
     const later = delayed.client.get("/api/fixture/healthy-later", { pid: "PH" });
-    for (let turn = 0; turn < 30 && !laterStarted; turn++) await new Promise<void>(resolve => setImmediate(resolve));
+    for (let turn = 0; turn < 1000 && !delayed.reads.some(read => read.path === BI_V1_METRICS_API && read.params.dimensionFilters === '{"paymentMethod":"ali_pay"}'); turn++)
+      await new Promise<void>(resolve => setImmediate(resolve));
     const checkpoint = {
       laterStarted, sharedCompleted, snapshotsCompleted,
       unrelatedCount: delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.dimensionFilters === '{"paymentMethod":"ali_pay"}').length,
@@ -172,14 +193,17 @@ describe("经营快照与整板同源查询复用", () => {
     expect(checkpoint.laterStarted).toBe(true);
     expect(checkpoint.sharedCompleted).toBe(false);
     expect(checkpoint.snapshotsCompleted).toBe(false);
-    expect(checkpoint.unrelatedCount).toBe(20);
+    expect(checkpoint.unrelatedCount).toBe(1);
     expect(checkpoint.sharedChannels).toEqual([false]);
-    expect(checkpoint.otherChannels).toHaveLength(59);
-    expect(checkpoint.otherChannels.every(aborted => aborted)).toBe(true);
+    expect(checkpoint.otherChannels).toEqual([]);
     expect(sharedResult).toEqual({ code: 200, msg: { pageData: [], totalData: [] } });
     expect(sharedController.signal.aborted).toBe(false);
-    expect(delayed.peakReads()).toBe(40);
+    // Two independent raw fixture consumers do not enter daily-board admission.
+    expect(delayed.peakReads()).toBeLessThanOrEqual(3);
+    expect(delayed.peakReads()).toBeGreaterThanOrEqual(2);
     expect(delayed.activeReads()).toBe(0);
+    expect(delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.dimensionFilters === '{"paymentMethod":"ali_pay"}')).toHaveLength(20);
+    expect(delayed.reads.filter(read => read.path === CHANNEL_V2_API)).toHaveLength(1);
     for (const [index, result] of actual.entries()) {
       expect(result.data.query.pid).toBe(platforms[index].pid);
       expect(result.data.series).toEqual(expected[index].data.series);

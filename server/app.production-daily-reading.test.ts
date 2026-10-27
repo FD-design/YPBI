@@ -40,7 +40,8 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-async function createHarness(options: { env?: Partial<AppEnv>; identityProvider?: IdentityProvider | null } = {}) {
+async function createHarness(options: { env?: Partial<AppEnv>; identityProvider?: IdentityProvider | null;
+  physicalReadStats?: { active: number; peak: number } } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "ypbi-production-daily-reading-"));
   temporaryDirectories.push(directory);
   const observedRequests: ObservedRequest[] = [];
@@ -49,6 +50,13 @@ async function createHarness(options: { env?: Partial<AppEnv>; identityProvider?
     const url = new URL(input instanceof Request ? input.url : input.toString());
     const headers = new Headers(init?.headers);
     observedRequests.push({ url, token: headers.get("x-token"), userName: headers.get("name"), method: init?.method ?? "GET", ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+    if (options.physicalReadStats) {
+      const stats = options.physicalReadStats;
+      stats.active++;
+      stats.peak = Math.max(stats.peak, stats.active);
+      try { await new Promise(resolve => setTimeout(resolve, 5)); }
+      finally { stats.active--; }
+    }
     if (!["primary.example.test", "secondary.example.test", "preview.example.test"].includes(url.hostname)) {
       throw new Error("Unexpected fake upstream origin");
     }
@@ -127,6 +135,31 @@ function assertValue(response: LightMyRequestResponse, value: number) {
 }
 
 describe("buildApp 正式日看板读取装配", () => {
+  test("运行装配的普通上游数据读取全局单槽，跨站及同站不同参数不并发", async () => {
+    const stats = { active: 0, peak: 0 };
+    const harness = await createHarness({ physicalReadStats: stats, identityProvider: identity(maintainer) });
+    const requests = ["PH", "FBI", "PH", "FBI"].map((pid, index) => ({
+      pid, page: String(index + 1), count: "10", sumDateStart: "2020-01-01 00:00:00", sumDateEnd: "2020-01-02 00:00:00"
+    }));
+    const responses = await Promise.all(requests.map(payload => harness.request("POST", "/api/bi/sources/overview.daySum/query", payload)));
+    expect(responses.map(response => response.statusCode)).toEqual([200, 200, 200, 200]);
+    expect(stats).toEqual({ active: 0, peak: 1 });
+    expect(harness.observedRequests).toHaveLength(4);
+    expect(harness.observedRequests.map(item => [item.url.hostname, item.url.searchParams.get("pid"), item.url.searchParams.get("page"), item.token, item.userName])).toEqual([
+      ["primary.example.test", "PH", "1", primaryToken, "fake-primary-user"],
+      ["secondary.example.test", "FBI", "2", secondaryToken, "fake-secondary-user"],
+      ["primary.example.test", "PH", "3", primaryToken, "fake-primary-user"],
+      ["secondary.example.test", "FBI", "4", secondaryToken, "fake-secondary-user"]
+    ]);
+    for (const response of responses) {
+      expect(response.body).not.toContain(primaryToken);
+      expect(response.body).not.toContain(secondaryToken);
+    }
+    const cached = await Promise.all(requests.map(payload => harness.request("POST", "/api/bi/sources/overview.daySum/query", payload)));
+    expect(cached.every(response => response.statusCode === 200)).toBe(true);
+    expect(harness.observedRequests).toHaveLength(4);
+  });
+
   for (const previewEnabled of [false, true]) {
     test(`正式 flag=false、测试预览 ${previewEnabled} 时目录关闭且查询零上游`, async () => {
       const harness = await createHarness({ env: {

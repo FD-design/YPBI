@@ -480,12 +480,16 @@ describe("经营原始业务取证下载的路由边界", () => {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     let primaryStarted!: () => void, secondaryStarted!: () => void;
+    let secondaryHasStarted = false;
     const primaryRead = new Promise<void>(resolve => { primaryStarted = resolve; });
     const secondaryRead = new Promise<void>(resolve => { secondaryStarted = resolve; });
     const harness = await createHarness({ response: async ({ url }) => {
       if (url.pathname === "/api/admin/bi/v1/metrics") {
         if (url.searchParams.get("pid") === "PH") primaryStarted();
-        if (url.searchParams.get("pid") === "FBI") secondaryStarted();
+        if (url.searchParams.get("pid") === "FBI") {
+          secondaryHasStarted = true;
+          secondaryStarted();
+        }
         await held;
       }
       return new Response(JSON.stringify(rawBusinessPayload(url)), { headers: { "content-type": "application/json" } });
@@ -497,7 +501,8 @@ describe("经营原始业务取证下载的路由边界", () => {
       harness.setResolution({ status: "authenticated", principal: { ...principal, subjectId: "fake-second-concurrent-subject" } });
       const secondHeaders = await login(harness);
       const second = harness.request("GET", evidenceUrl({ pid: "FBI" }), undefined, secondHeaders);
-      await secondaryRead;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(secondaryHasStarted).toBe(false);
       harness.setResolution({ status: "authenticated", principal: { ...principal, subjectId: "fake-third-concurrent-subject" } });
       const thirdHeaders = await login(harness);
       const activeCalls = harness.observedRequests.length;
@@ -506,6 +511,7 @@ describe("经营原始业务取证下载的路由边界", () => {
       expect(denied.headers["retry-after"]).toBe("60");
       expect(harness.observedRequests).toHaveLength(activeCalls);
       release();
+      await secondaryRead;
       expect((await first).statusCode).toBe(200);
       expect((await second).statusCode).toBe(200);
       const restored = await harness.request("GET", evidenceUrl(), undefined, thirdHeaders);

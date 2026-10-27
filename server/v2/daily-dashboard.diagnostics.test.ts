@@ -111,24 +111,27 @@ describe("daily dashboard private source diagnostics", () => {
     expect(JSON.stringify(entries)).not.toContain("raw-user-detail");
   });
 
-  test("来源期限只统计已启动读取的超时，未启动读取及迟到成功分别处理", async () => {
+  test("独立日期只统计实际启动单元的超时，排队不消耗预算且迟到成功不改日志", async () => {
     const { entries, logger } = capture();
     const finish: (() => void)[] = [];
-    const client: Pick<UpstreamClient, "get"> = { get: async (_path, params) => new Promise(resolve => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const client: Pick<UpstreamClient, "get"> = { get: async (_path, params, _token, signal) => new Promise(resolve => {
+      signals.push(signal);
       finish.push(() => resolve({ msg: { date: params.date, checkinUserCount: 2 } }));
     }) };
     const result = await new DailyDashboardService(client, now, logger, { sourceReadTimeoutMs: 30 }).execute({
       ...query, boardId: "5.14", dateRange: ["2020-01-01", "2020-01-06"]
     });
-    expect(finish).toHaveLength(3);
+    expect(finish).toHaveLength(6);
+    expect(signals.every(signal => signal?.aborted)).toBe(true);
     expect(entries[0].sources).toHaveLength(1);
     const source = entries[0].sources[0];
-    expect(source.readCallCount).toBe(3);
+    expect(source.readCallCount).toBe(6);
     expect(source.successfulReadCallCount).toBe(0);
-    expect(source.failedReadCallCount).toBe(3);
-    expect(source.abandonedReadCallCount).toBe(3);
+    expect(source.failedReadCallCount).toBe(6);
+    expect(source.abandonedReadCallCount).toBe(0);
     expect(source.budgetExpired).toBe(true);
-    expect(source.errorCodeCounts).toEqual({ UPSTREAM_TIMEOUT: 3 });
+    expect(source.errorCodeCounts).toEqual({ UPSTREAM_TIMEOUT: 6 });
     expect(result.data.series.find(series => series.metric.id === "M075")!.points.every(point => point.state === "source_failure")).toBe(true);
     const completedEntry = JSON.stringify(entries);
     finish.forEach(resolve => resolve());
@@ -190,7 +193,7 @@ describe("daily dashboard private source diagnostics", () => {
     expect(JSON.stringify(entries)).not.toContain("不支持的指标编码");
   });
 
-  test("诊断保留原分域三工作者上限以及域间并行", async () => {
+  test("诊断保留单请求顺序读取，域内和跨域实际读取峰值均为一", async () => {
     const { entries, logger } = capture();
     let paymentActive = 0, metricsActive = 0, paymentPeak = 0, metricsPeak = 0, totalPeak = 0;
     const client: Pick<UpstreamClient, "get"> = { get: async (path, params) => {
@@ -204,9 +207,9 @@ describe("daily dashboard private source diagnostics", () => {
       return emptyMetrics;
     } };
     await new DailyDashboardService(client, now, logger).execute(query);
-    expect(paymentPeak).toBe(3);
-    expect(metricsPeak).toBe(3);
-    expect(totalPeak).toBe(6);
+    expect(paymentPeak).toBe(1);
+    expect(metricsPeak).toBe(1);
+    expect(totalPeak).toBe(1);
     expect(entries).toHaveLength(1);
   });
 });

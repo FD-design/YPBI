@@ -20,7 +20,7 @@ export class DailyReadingWorkQueue {
   private pumpScheduled = false;
 
   constructor(options: DailyReadingWorkQueueOptions = {}) {
-    const maxActive = options.maxActive ?? 6;
+    const maxActive = options.maxActive ?? 1;
     if (!Number.isSafeInteger(maxActive) || maxActive < 1) {
       throw new RangeError("maxActive must be a positive safe integer");
     }
