@@ -36,7 +36,7 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-async function harness(options: { env?: Partial<AppEnv>; principal?: Principal; status?: "RUNNING" | "SUCCEEDED" | "FAILED" | "EXPIRED"; failure?: () => Response } = {}) {
+async function harness(options: { env?: Partial<AppEnv>; principal?: Principal; status?: "RUNNING" | "SUCCEEDED" | "FAILED" | "EXPIRED"; errorCode?: string; failure?: () => Response } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "ypbi-admin-operating-jobs-")); directories.push(directory);
   const observed: Observed[] = [];
   const jobs = new Map<string, { request: QueryJobCreateRequest; hostname: string }>();
@@ -61,7 +61,7 @@ async function harness(options: { env?: Partial<AppEnv>; principal?: Principal; 
       const status = options.status ?? "SUCCEEDED";
       return Response.json({ code: 200, msg: { taskId, status, totalUnits: job.request.queries.length,
         completedUnits: status === "SUCCEEDED" ? job.request.queries.length : 0,
-        ...(["FAILED", "EXPIRED"].includes(status) ? { errorCode: "EXECUTION_FAILED" } : {}),
+        ...(["FAILED", "EXPIRED"].includes(status) ? { errorCode: options.errorCode ?? "EXECUTION_FAILED" } : {}),
         ...(status === "SUCCEEDED" && url.pathname.endsWith("/result") ? { results: job.request.queries.map(() => ({ generatedAt: new Date().toISOString(), rows: [] })) } : {}) } });
     }
     return Response.json({ code: 200, msg: { pageData: [], totalCount: 0 } });
@@ -292,6 +292,16 @@ describe("维护保护的正式经营异步验收", () => {
     }
     expect(h.observed.filter(item => item.method === "POST")).toHaveLength(1);
     expect(h.observed.every(item => !/bi\/v1\/(metrics|playback)/.test(item.url.pathname))).toBe(true);
+  });
+
+  test("后端撤销reader策略的终态通过正式经营路由保留", async () => {
+    const h = await harness({ status: "FAILED", errorCode: "POLICY_REVOKED" }); const cookie = await h.login();
+    const created = await h.request("POST", path, query, { cookie }); expect(created.statusCode).toBe(200);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const response = await h.request("GET", `${path}/${created.json().data.handle}`, undefined, { cookie });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({ status: "FAILED", errorCode: "POLICY_REVOKED", phase: "query" });
+    expect(h.observed.filter(item => item.method === "POST")).toHaveLength(1);
   });
 
   test("凭据A-B-A后旧句柄失效而另一站继续有效", async () => {

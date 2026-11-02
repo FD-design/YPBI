@@ -221,7 +221,7 @@ export class BiQueryJobService {
     if (message.taskId !== binding.taskId || message.totalUnits !== undefined && message.totalUnits !== binding.request.queries.length
       || message.completedUnits !== undefined && message.completedUnits > binding.request.queries.length) return invalid();
     const data = biQueryJobProgressSchema.safeParse({ ...message, handle: binding.handle,
-      ...(message.errorCode ? { errorCode: ["QUEUE_TIMEOUT", "DEADLINE_EXCEEDED", "LEASE_EXHAUSTED", "RESULT_TOO_LARGE", "RESULT_CAPACITY", "EXECUTION_FAILED"].includes(message.errorCode) ? message.errorCode : "UNKNOWN" } : {}) });
+      ...(message.errorCode ? { errorCode: ["QUEUE_TIMEOUT", "DEADLINE_EXCEEDED", "LEASE_EXHAUSTED", "RESULT_TOO_LARGE", "RESULT_CAPACITY", "EXECUTION_FAILED", "POLICY_REVOKED"].includes(message.errorCode) ? message.errorCode : "UNKNOWN" } : {}) });
     if (!data.success) return invalid();
     if (["SUCCEEDED", "FAILED", "EXPIRED"].includes(data.data.status)) {
       for (const other of this.bindings.values()) if (other.source.accountRef === binding.source.accountRef && other.taskId === binding.taskId) other.terminal = true;

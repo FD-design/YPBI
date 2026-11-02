@@ -61,6 +61,7 @@ describe("查询任务专用传输与来源绑定", () => {
       expect(headers.get("name")).toBe(`fixture-${site}-user`);
       expect(headers.get("x-token")).toBe(`fixture-${site}-token`);
       expect(request.url.search).toBe("");
+      expect(String(request.init?.body ?? "")).not.toContain("candidates");
       expect(request.init?.cache).toBe("no-store");
       expect(request.init?.redirect).toBe("error");
       if (index % 3 === 0) {

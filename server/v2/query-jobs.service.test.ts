@@ -518,6 +518,16 @@ describe("任务结果不改指标状态或取值", () => {
     expect(result.data.status).toBe("EXPIRED"); expect(result.data.errorCode).toBe("UNKNOWN"); expect(result.data).not.toHaveProperty("results");
     expect(JSON.stringify(result)).not.toContain("sensitive");
   });
+  test("后端撤销读取策略时保留安全终态，重新查询不沿用旧句柄", async () => {
+    const f = fixture(), created = await f.service.create(principal(), body());
+    f.state("FAILED"); f.extra({ errorCode: "POLICY_REVOKED" });
+    const revoked = await f.service.status(principal(), created.data.handle);
+    expect(revoked.data).toMatchObject({ status: "FAILED", errorCode: "POLICY_REVOKED" });
+    f.extra({}); f.state("RUNNING"); f.task("fresh-policy-task");
+    const retried = await f.service.create(principal(), body());
+    expect(retried.data.handle).not.toBe(created.data.handle);
+    expect(f.counts().created).toBe(2);
+  });
   test("额外原始payload不输出，未提供生成元信息不编造", async () => {
     const f = fixture(), created = await f.service.create(principal(), body());
     f.rows([row({ token: "not-for-browser", payload: { authorization: "not-for-browser" } })]);

@@ -38,7 +38,9 @@ export class BiQueryJobTerminalError extends Error {
   readonly code: "QUERY_JOB_FAILED" | "QUERY_JOB_EXPIRED";
   readonly queryJobErrorCode?: BiQueryJobProgress["errorCode"];
   constructor(readonly progress: Readonly<BiQueryJobProgress>) {
-    super(progress.status === "EXPIRED" ? "查询结果已过期，请重新查询" : "查询任务执行失败");
+    super(progress.status === "EXPIRED" ? "查询结果已过期，请重新查询"
+      : progress.errorCode === "POLICY_REVOKED" ? "后台读取策略已更新，请重新查询"
+        : "查询任务执行失败");
     this.name = "BiQueryJobTerminalError";
     this.code = progress.status === "EXPIRED" ? "QUERY_JOB_EXPIRED" : "QUERY_JOB_FAILED";
     this.queryJobErrorCode = readV2RequestDiagnostics({ queryJobErrorCode: progress.errorCode }).queryJobErrorCode;

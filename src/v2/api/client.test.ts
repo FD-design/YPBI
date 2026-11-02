@@ -158,7 +158,7 @@ describe("V2安全请求诊断", () => {
   });
 
   test("任务错误码沿用协议白名单，与BI主码独立且不读取原始错误", () => {
-    for (const queryJobErrorCode of ["QUEUE_TIMEOUT", "DEADLINE_EXCEEDED", "LEASE_EXHAUSTED", "RESULT_TOO_LARGE", "RESULT_CAPACITY", "EXECUTION_FAILED", "UNKNOWN"] as const) {
+    for (const queryJobErrorCode of ["QUEUE_TIMEOUT", "DEADLINE_EXCEEDED", "LEASE_EXHAUSTED", "RESULT_TOO_LARGE", "RESULT_CAPACITY", "EXECUTION_FAILED", "POLICY_REVOKED", "UNKNOWN"] as const) {
       const source = Object.freeze({ code: "QUERY_JOB_FAILED", queryJobErrorCode, message: "fake-secret-message", token: "fake-secret-token" });
       const failure = new V2RequestError("查询任务执行失败", { ...source, kind: "error", status: 0 });
       expect(v2Client.readV2RequestDiagnostics(source)).toEqual({ code: "QUERY_JOB_FAILED", queryJobErrorCode });

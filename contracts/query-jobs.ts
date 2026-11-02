@@ -76,7 +76,7 @@ export const biQueryJobProgressSchema = z.object({
   handle: biQueryJobHandleSchema, status: biQueryJobStateSchema,
   completedUnits: count.optional(), totalUnits: count.optional(), attempts: count.optional(),
   createdAtMs: count.optional(), startedAtMs: count.nullable().optional(), finishedAtMs: count.nullable().optional(), expiresAtMs: count.optional(),
-  errorCode: z.enum(["QUEUE_TIMEOUT", "DEADLINE_EXCEEDED", "LEASE_EXHAUSTED", "RESULT_TOO_LARGE", "RESULT_CAPACITY", "EXECUTION_FAILED", "UNKNOWN"]).optional()
+  errorCode: z.enum(["QUEUE_TIMEOUT", "DEADLINE_EXCEEDED", "LEASE_EXHAUSTED", "RESULT_TOO_LARGE", "RESULT_CAPACITY", "EXECUTION_FAILED", "POLICY_REVOKED", "UNKNOWN"]).optional()
 });
 export const biQueryJobCreatedSchema = z.object({ success: z.literal(true), data: z.object({ handle: biQueryJobHandleSchema, reused: z.boolean() }) });
 export const biQueryJobStatusSchema = z.object({ success: z.literal(true), data: biQueryJobProgressSchema });

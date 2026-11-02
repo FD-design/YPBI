@@ -141,6 +141,15 @@ describe("BI 查询任务独立协议客户端", () => {
     expect(f.calls.map(call => call.init.method)).toEqual(["POST", "GET"]);
   });
 
+  test("读取策略撤销保留专用原因并提示重新查询，不自动重建或改走同步", async () => {
+    const f = fixture((_path, _init, index) => index === 0 ? created() : state("FAILED", { errorCode: "POLICY_REVOKED" }));
+    const error = await f.run(request()).catch(error => error);
+    expect(error).toBeInstanceOf(BiQueryJobTerminalError);
+    expect(error).toMatchObject({ code: "QUERY_JOB_FAILED", queryJobErrorCode: "POLICY_REVOKED",
+      message: "后台读取策略已更新，请重新查询", progress: { status: "FAILED", errorCode: "POLICY_REVOKED" } });
+    expect(f.calls.map(call => call.init.method)).toEqual(["POST", "GET"]);
+  });
+
   test("非法任务错误码在协议入口失败关闭，终态错误类不投影原始字符串", async () => {
     console.warn = () => undefined;
     for (const errorCode of ["<script>secret</script>", "x-token=fixture", "EXECUTION_FAILED ", 400]) {

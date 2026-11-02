@@ -35,11 +35,11 @@ test("诊断展示拒绝非法数值且不读取额外原始错误字段", () =>
 });
 
 test("失败详情并列显示BI主码和安全任务错误码，沿用现有错误区域", () => {
-  for (const code of ["QUERY_JOB_FAILED", "QUERY_JOB_EXPIRED"]) {
+  for (const [code, queryJobErrorCode] of [["QUERY_JOB_FAILED", "DEADLINE_EXCEEDED"], ["QUERY_JOB_EXPIRED", "DEADLINE_EXCEEDED"], ["QUERY_JOB_FAILED", "POLICY_REVOKED"]]) {
     const html = renderToStaticMarkup(<ResourceFailurePanel state={{ status: "failure", kind: "error", code,
-      message: "查询任务已结束", queryJobErrorCode: "DEADLINE_EXCEEDED" }} onRetry={() => {}} />);
+      message: "查询任务已结束", queryJobErrorCode }} onRetry={() => {}} />);
     expect(html).toContain(`错误代码：${code}`);
-    expect(html).toContain("任务错误码：DEADLINE_EXCEEDED");
+    expect(html).toContain(`任务错误码：${queryJobErrorCode}`);
     expect(html).not.toContain("请求编号：");
     expect(html).not.toContain("上游 HTTP：");
   }

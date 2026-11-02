@@ -254,8 +254,8 @@ test("任务FAILED与EXPIRED各自保留安全原因及93列三期详情，不�
   await withJobReads(async (harness, pending) => {
     const live = asyncReading(["PH", "TT"], "production");
     const cases = [
-      { pid: "PH", handle: jobHandle, status: "FAILED", code: "QUERY_JOB_FAILED", errorCode: "DEADLINE_EXCEEDED" },
-      { pid: "TT", handle: "22222222-2222-4222-8222-222222222222", status: "EXPIRED", code: "QUERY_JOB_EXPIRED", errorCode: "RESULT_CAPACITY" }
+      { pid: "PH", handle: jobHandle, status: "FAILED", code: "QUERY_JOB_FAILED", errorCode: "POLICY_REVOKED", message: "后台读取策略已更新，请重新查询" },
+      { pid: "TT", handle: "22222222-2222-4222-8222-222222222222", status: "EXPIRED", code: "QUERY_JOB_EXPIRED", errorCode: "RESULT_CAPACITY", message: "查询结果已过期，请重新查询" }
     ];
     harness.render(live); harness.flushEffects();
     await until(() => pending.length === 2);
@@ -271,7 +271,7 @@ test("任务FAILED与EXPIRED各自保留安全原因及93列三期详情，不�
     const result = harness.render(live);
     for (const item of cases) {
       const diagnostics = { code: item.code, queryJobErrorCode: item.errorCode };
-      expect(result.resources[item.pid]).toMatchObject({ status: "failure", ...diagnostics });
+      expect(result.resources[item.pid]).toMatchObject({ status: "failure", message: item.message, ...diagnostics });
       const row = result.rows!.find(row => row.pid === item.pid)!;
       expect(row.values).toHaveLength(93);
       for (const value of row.values) for (const period of ["current", "previousDay", "previousWeek"] as const) {
