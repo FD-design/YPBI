@@ -220,7 +220,8 @@ describe("经营快照与整板同源查询复用", () => {
     const newCohortReads = reads.filter(read => read.path === BI_V1_METRICS_API
       && read.params.dimensionFilters === '{"userCohort":"new"}');
     expect(newCohortReads).toHaveLength(1);
-    expect(reads).toHaveLength(45);
+    expect(reads.filter(read => read.path.endsWith("pRealDayLine"))).toHaveLength(0);
+    expect(reads).toHaveLength(37);
     expect(full.data.series).toHaveLength(121);
     expect(snapshot.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
     for (const series of snapshot.data.series) {

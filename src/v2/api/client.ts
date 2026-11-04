@@ -121,6 +121,13 @@ export async function parseResponse<T>(response: Response, successSchema: z.ZodT
     payload = await response.json();
   } catch {
     signal?.throwIfAborted();
+    if (response.status === 504) {
+      throw new V2RequestError("网关等待查询响应超时（HTTP 504）", {
+        kind: "error",
+        code: "GATEWAY_TIMEOUT",
+        status: response.status
+      });
+    }
     reportInvalidResponse(response.status, "json_parse");
     throw invalidResponse(response.status);
   }

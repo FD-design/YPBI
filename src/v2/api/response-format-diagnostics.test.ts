@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { z } from "zod";
 import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
 import { V2_AUTHENTICATION_REQUIRED_EVENT } from "./authEvents";
-import { fetchDailyDashboard, fetchDataEnvironment } from "./client";
+import { fetchDailyDashboard, fetchDataEnvironment, readV2RequestDiagnostics } from "./client";
 import { reportInvalidResponse, type InvalidResponsePhase } from "./response-format-diagnostics";
 
 const originalFetch = globalThis.fetch;
@@ -88,13 +88,23 @@ describe("响应格式诊断安全边界", () => {
 });
 
 describe("实际客户端拒绝阶段", () => {
-  for (const status of [200, 502, 504]) test(`非JSON HTTP${status}记录解析阶段且保持原失败`, async () => {
+  for (const status of [200, 502]) test(`非JSON HTTP${status}记录解析阶段且保持原失败`, async () => {
     mockResponse(() => new Response("<html>" + secret + "</html>", { status }));
     await expect(fetchDataEnvironment()).rejects.toMatchObject({
       code: "INVALID_V2_RESPONSE", status, kind: "error", message: "数据服务返回了无法识别的内容"
     });
     expect(diagnostic()).toEqual({ status, phase: "json_parse" });
     expect(JSON.stringify(warnings)).not.toContain(secret);
+  });
+
+  test("经营快照的非JSON HTTP504保留网关超时，不输出代理正文或契约错误诊断", async () => {
+    mockResponse(() => new Response("<html>" + secret + "</html>", { status: 504 }));
+    const request = fetchDailyDashboard({ ...query, projection: "operating_snapshot" }, ["M001"]);
+    await expect(request).rejects.toMatchObject({
+      code: "GATEWAY_TIMEOUT", status: 504, kind: "error", message: "网关等待查询响应超时（HTTP 504）"
+    });
+    expect(readV2RequestDiagnostics(await request.catch(error => error))).toEqual({ code: "GATEWAY_TIMEOUT" });
+    expect(warnings).toHaveLength(0);
   });
 
   test("成功响应Schema拒绝只记录安全位置", async () => {

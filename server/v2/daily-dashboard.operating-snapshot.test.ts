@@ -151,7 +151,9 @@ describe("operating snapshot service", () => {
       const defaultResult = await new DailyDashboardService(full.client, now).execute(query);
       const snapshot = await new DailyDashboardService(sparse.client, now).execute(snapshotQuery);
       assertProjection(defaultResult, snapshot);
-      expect(full.reads).toHaveLength(44);
+      const watchFallbackDays = mode === "legacy" || mode === "network_failure" ? dates.length : 0;
+      expect(full.reads.filter(read => read.path.endsWith("pRealDayLine"))).toHaveLength(watchFallbackDays);
+      expect(full.reads).toHaveLength(36 + watchFallbackDays);
       expect(sparse.reads).toHaveLength({ ready: 14, legacy: 22, processing: 14, incomplete: 19,
         missing_scope: 15, scope_conflict: 14, wrong_rule: 14, network_failure: 22 }[mode]);
       expect(sparse.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(12);

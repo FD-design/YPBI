@@ -757,18 +757,6 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }));
     });
     const watchDays = new Map<string, WatchAttemptDay>(), watchFailures = new Set<string>();
-    const watchTask = readSource("watch", async (client) => {
-      if (!sourceIds.some(id => mappings[id].realtime)) return;
-      let next = 0;
-      await Promise.all(Array.from({ length: Math.min(3, dates.length) }, async () => {
-        while (next < dates.length) {
-          const date = dates[next++];
-          if (date >= today) { watchDays.set(date, { state: "no_value", value: null }); continue; }
-          try { watchDays.set(date, await readWatchAttemptDay(client, query.pid, date)); }
-          catch (error) { noteReadBoundaryFailure(error); watchFailures.add(date); }
-        }
-      }));
-    });
     const playbackDays = new Map<string, BiV1PlaybackDay>();
     let playbackFailure = false;
     let playbackGroups: DailyPlaybackGroups | undefined;
@@ -967,6 +955,24 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         if (mapping.unit === "%" && !mapping.allowAboveOne && denominator !== undefined && denominator !== null && numerator > denominator) return { date, value: null, state: "invalid_value", inputs };
         return { date, value: (denominator == null ? numerator : numerator / denominator) / (mapping.resultDivisor ?? 1), state: "available", inputs };
     };
+    const watchTask = readSource("watch", async (client) => {
+      const realtimeIds = sourceIds.filter(id => mappings[id].realtime);
+      if (!realtimeIds.length) return;
+      await biV1MetricTask;
+      const legacyDates = dates.filter(date => realtimeIds.some(id => {
+        const selection = pointSourceFor(id, date);
+        return selection.kind === "legacy" || selection.kind === "modern" && selection.legacyFallback;
+      }));
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(3, legacyDates.length) }, async () => {
+        while (next < legacyDates.length) {
+          const date = legacyDates[next++];
+          if (date >= today) { watchDays.set(date, { state: "no_value", value: null }); continue; }
+          try { watchDays.set(date, await readWatchAttemptDay(client, query.pid, date)); }
+          catch (error) { noteReadBoundaryFailure(error); watchFailures.add(date); }
+        }
+      }));
+    });
     const nonChannelTask = Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
     const legacyDependencyTask = operatingSnapshot ? Promise.all([
       { ids: sourceIds.filter(id => usesLegacyDailySource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) dailyController?.abort(); } },

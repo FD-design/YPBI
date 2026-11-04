@@ -163,7 +163,7 @@ describe("日看板按实际请求范围读取模拟上游", () => {
     expectReady(result, "M059.new", 3);
     expectReady(result, "M094.ads", 4);
     expectReady(result, "M094.new", 2);
-    expect(calls.filter(call => call.path.endsWith("pRealDayLine"))).toHaveLength(1);
+    expect(calls.filter(call => call.path.endsWith("pRealDayLine"))).toHaveLength(0);
     expectReady(result, "M110.new", 2 / 3);
     expect(point(result, "M110.new").inputs.map(input => input.value)).toEqual([2, 3]);
     expect(result.data.series.find(item => item.metric.id === "M110.new")?.metric.unit).toBe("次/人");
@@ -206,6 +206,40 @@ describe("日看板按实际请求范围读取模拟上游", () => {
       expect(cross!.params.metricCodes.split(",").sort()).toEqual(["M016", "M026", "M081"]);
       expect(cross!.params.dimensions.split(",").sort()).toEqual(["clientPlatform", "userCohort"]);
     }
+  });
+
+  test("观影次数只在允许回退的业务日读取五分钟明细", async () => {
+    const dates = [businessDate, "2020-01-02", "2020-01-03"] as const;
+    const legacyDates: string[] = [];
+    const rows = [
+      makeRow("M101", {}, 0),
+      { ...makeRow("M101", {}, 0), businessDate: dates[1], dataStatus: "SOURCE_INCOMPLETE", value: null },
+      { ...makeRow("M101", {}, 0), businessDate: dates[2], dataStatus: "PROCESSING", value: null }
+    ] satisfies Row[];
+    const service = new DailyDashboardService({ get: async (path, params) => {
+      if (path === BI_V1_METRICS_API) return envelope(params.metricCodes.split(",").includes("M101") ? rows : []);
+      if (path.endsWith("/bi/v1/playback")) return envelope([]);
+      if (path.endsWith("pRealDayLine")) {
+        const date = params.startDate.slice(0, 10);
+        legacyDates.push(date);
+        const midnight = Date.parse(`${date}T00:00:00+08:00`);
+        return { msg: Array.from({ length: 288 }, (_, index) => ({
+          pid: range.pid,
+          sumDate: new Date(midnight + index * 300_000).toISOString(),
+          graphDate: `${String(Math.floor(index / 12)).padStart(2, "0")}:${String(index % 12 * 5).padStart(2, "0")}`,
+          watchCount: 1
+        })) };
+      }
+      throw new Error(`Unexpected upstream endpoint: ${path}`);
+    } }, () => new Date(generatedAt));
+
+    const result = await service.execute({ ...range, boardId: "5.12", dateRange: [dates[0], dates[2]] });
+    expect(legacyDates).toEqual([dates[1]]);
+    expect(result.data.series.find(series => series.metric.id === "M101")?.points).toMatchObject([
+      { date: dates[0], state: "available", sourceStatus: "READY", value: 0 },
+      { date: dates[1], state: "available", value: 288 },
+      { date: dates[2], state: "no_value", sourceStatus: "PROCESSING", value: null }
+    ]);
   });
 
   test("一个交叉分组失败仅影响该分组，非READY丢弃脏值且不补零", async () => {
