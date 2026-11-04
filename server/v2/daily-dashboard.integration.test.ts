@@ -27,9 +27,21 @@ const scopeKey = (filters: Filters) => JSON.stringify(Object.entries(filters).so
 const makeRow = (metricCode: string, filters: Filters, numerator: number, denominator = 0, unit: BiV1MetricUnit = "count"): Row => ({
   metricCode, businessDate, dimensions: { pid: "PH", ...filters },
   value: unit === "count" ? numerator : numerator / denominator,
-  numerator, denominator, unit, dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "integration-fixture-v1"
+  numerator, denominator, unit, dataStatus: "READY", metricVersion: "bi-v1",
+  ruleVersion: metricCode === "M101" ? "legacy-content-view-count-v1"
+    : metricCode === "M055" ? "ad-raw-click-v2" : "integration-fixture-v1"
 });
 const envelope = (rows: Row[]) => ({ code: 200, msg: { metricVersion: "bi-v1", generatedAt, watermark: null, rows } });
+
+function watchAttemptDay(date: string) {
+  const midnight = Date.parse(`${date}T00:00:00+08:00`);
+  return { msg: Array.from({ length: 288 }, (_, index) => ({
+    pid: range.pid,
+    sumDate: new Date(midnight + index * 300_000).toISOString(),
+    graphDate: `${String(Math.floor(index / 12)).padStart(2, "0")}:${String(index % 12 * 5).padStart(2, "0")}`,
+    watchCount: 1
+  })) };
+}
 
 const activityGroups: { id: string; filters: Filters; active: number; watch: number }[] = [
   { id: "android", filters: { clientPlatform: "android" }, active: 4, watch: 3 },
@@ -58,6 +70,7 @@ function requestDrivenUpstream(failure: "none" | "cross" | "legacy_fallback" = "
     makeRow("M016", {}, 6), makeRow("M026", {}, 4), makeRow("M081", {}, 4, 6, "ratio"),
     makeRow("M008", {}, 10), makeRow("M101", {}, 3),
     makeRow("M059", {}, 5), makeRow("M059", { userCohort: "new" }, 3),
+    makeRow("M055", {}, 7), makeRow("M055", { userCohort: "new" }, 4),
     makeRow("M094", {}, 4), makeRow("M094", { userCohort: "new" }, 2),
     makeRow("M020", {}, 8, 10, "ratio"), makeRow("M021", {}, 7, 10, "ratio"),
     makeRow("M022", {}, 6, 10, "ratio"), makeRow("M023", {}, 5, 10, "ratio"),
@@ -163,6 +176,8 @@ describe("日看板按实际请求范围读取模拟上游", () => {
     expectReady(result, "M059.new", 3);
     expectReady(result, "M094.ads", 4);
     expectReady(result, "M094.new", 2);
+    expectReady(result, "M055.ads", 7);
+    expectReady(result, "M055.new", 4);
     expect(calls.filter(call => call.path.endsWith("pRealDayLine"))).toHaveLength(0);
     expectReady(result, "M110.new", 2 / 3);
     expect(point(result, "M110.new").inputs.map(input => input.value)).toEqual([2, 3]);
@@ -209,12 +224,14 @@ describe("日看板按实际请求范围读取模拟上游", () => {
   });
 
   test("观影次数只在允许回退的业务日读取五分钟明细", async () => {
-    const dates = [businessDate, "2020-01-02", "2020-01-03"] as const;
+    const dates = [businessDate, "2020-01-02", "2020-01-03", "2020-01-04", "2020-01-05", "2020-01-06"] as const;
     const legacyDates: string[] = [];
     const rows = [
       makeRow("M101", {}, 0),
       { ...makeRow("M101", {}, 0), businessDate: dates[1], dataStatus: "SOURCE_INCOMPLETE", value: null },
-      { ...makeRow("M101", {}, 0), businessDate: dates[2], dataStatus: "PROCESSING", value: null }
+      { ...makeRow("M101", {}, 0), businessDate: dates[2], dataStatus: "PROCESSING", value: null },
+      { ...makeRow("M101", {}, 0), businessDate: dates[4], dataStatus: "FAILED", value: null },
+      { ...makeRow("M101", {}, 0), businessDate: dates[5], dataStatus: "NOT_MATURE", value: null }
     ] satisfies Row[];
     const service = new DailyDashboardService({ get: async (path, params) => {
       if (path === BI_V1_METRICS_API) return envelope(params.metricCodes.split(",").includes("M101") ? rows : []);
@@ -222,24 +239,89 @@ describe("日看板按实际请求范围读取模拟上游", () => {
       if (path.endsWith("pRealDayLine")) {
         const date = params.startDate.slice(0, 10);
         legacyDates.push(date);
-        const midnight = Date.parse(`${date}T00:00:00+08:00`);
-        return { msg: Array.from({ length: 288 }, (_, index) => ({
-          pid: range.pid,
-          sumDate: new Date(midnight + index * 300_000).toISOString(),
-          graphDate: `${String(Math.floor(index / 12)).padStart(2, "0")}:${String(index % 12 * 5).padStart(2, "0")}`,
-          watchCount: 1
-        })) };
+        return watchAttemptDay(date);
       }
       throw new Error(`Unexpected upstream endpoint: ${path}`);
     } }, () => new Date(generatedAt));
 
-    const result = await service.execute({ ...range, boardId: "5.12", dateRange: [dates[0], dates[2]] });
-    expect(legacyDates).toEqual([dates[1]]);
+    const result = await service.execute({ ...range, boardId: "5.12", dateRange: [dates[0], dates[5]] });
+    expect(legacyDates).toEqual([dates[1], dates[3]]);
     expect(result.data.series.find(series => series.metric.id === "M101")?.points).toMatchObject([
       { date: dates[0], state: "available", sourceStatus: "READY", value: 0 },
       { date: dates[1], state: "available", value: 288 },
-      { date: dates[2], state: "no_value", sourceStatus: "PROCESSING", value: null }
+      { date: dates[2], state: "no_value", sourceStatus: "PROCESSING", value: null },
+      { date: dates[3], state: "available", value: 288 },
+      { date: dates[4], state: "source_failure", sourceStatus: "FAILED", value: null },
+      { date: dates[5], state: "immature", sourceStatus: "NOT_MATURE", value: null }
     ]);
+  });
+
+  const watchRow = makeRow("M101", {}, 3);
+  const incompleteWatchRow: Row = { ...watchRow, dataStatus: "SOURCE_INCOMPLETE", value: null };
+  test.each([
+    ["认证拒绝", () => { throw new UpstreamError("UPSTREAM_AUTH_FAILED", "fixture auth failure", 401); }, "source_failure"],
+    ["权限拒绝", () => { throw new UpstreamError("UPSTREAM_AUTH_FAILED", "fixture access denied", 403); }, "source_failure"],
+    ["返回其他 PID", () => envelope([{ ...watchRow, dimensions: { pid: "FBI" } }]), "source_failure"],
+    ["返回范围外日期", () => envelope([{ ...watchRow, businessDate: "2020-01-02" }]), "source_failure"],
+    ["无日期的来源不完整行伴随当日维度冲突", () => envelope([
+      { ...incompleteWatchRow, businessDate: undefined }, { ...watchRow, dimensions: { pid: "PH", userCohort: "new" } }
+    ]), "source_failure"],
+    ["响应结构无效", () => ({ code: 200, msg: { rows: null } }), "source_failure"],
+    ["HTTP 200 响应无法解析为 JSON", () => { throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture invalid JSON", 502, { origin: "validation", upstreamHttpStatus: 200 }); }, "source_failure"],
+    ["HTTP 200 业务状态格式异常", () => { throw new UpstreamError("UPSTREAM_FAILED", "fixture invalid business status", 502, { origin: "http", upstreamHttpStatus: 200 }); }, "source_failure"],
+    ["READY 规则不匹配", () => envelope([{ ...watchRow, ruleVersion: "unexpected-rule" }]), "invalid_value"],
+    ["READY 单位不匹配", () => envelope([{ ...watchRow, unit: "ratio" }]), "invalid_value"],
+    ["来源不完整且规则不匹配", () => envelope([{ ...incompleteWatchRow, ruleVersion: "unexpected-rule" }]), "invalid_value"],
+    ["无日期的来源不完整行且单位不匹配", () => envelope([{ ...incompleteWatchRow, businessDate: undefined, unit: "ratio" }]), "invalid_value"]
+  ] as const)("观影次数遇到%s时保留异常且不读取旧值", async (_name, respond, state) => {
+    const legacyDates: string[] = [];
+    const service = new DailyDashboardService({ get: async (path, params) => {
+      if (path === BI_V1_METRICS_API) return params.metricCodes.split(",").includes("M101") ? respond() : envelope([]);
+      if (path.endsWith("/bi/v1/playback")) return envelope([]);
+      if (path.endsWith("pRealDayLine")) {
+        const date = params.startDate.slice(0, 10);
+        legacyDates.push(date);
+        return watchAttemptDay(date);
+      }
+      throw new Error(`Unexpected upstream endpoint: ${path}`);
+    } }, () => new Date(generatedAt));
+
+    const result = await service.execute({ ...range, boardId: "5.12" });
+    expect(point(result, "M101")).toMatchObject({ state, value: null, inputs: [{ key: "watchCount", value: null }] });
+    expect(legacyDates).toEqual([]);
+  });
+
+  test.each([
+    ["连接失败", new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture network failure", 502, { origin: "network" }), true],
+    ["网关不可用", new UpstreamError("UPSTREAM_FAILED", "fixture unavailable", 502, { origin: "http", upstreamHttpStatus: 503 }), true],
+    ["读取超时", new UpstreamError("UPSTREAM_TIMEOUT", "后台接口请求超时", 504, { origin: "http_deadline" }), true],
+    ["响应无法解析为 JSON", new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture invalid JSON", 502, { origin: "validation", upstreamHttpStatus: 200 }), false]
+  ] as const)("观影次数拆单读取遇到%s时仍按原条件回退", async (_name, failure, shouldFallback) => {
+    let singleReads = 0;
+    let legacyReads = 0;
+    const service = new DailyDashboardService({ get: async (path, params) => {
+      if (path === BI_V1_METRICS_API) {
+        const metrics = params.metricCodes.split(",");
+        if (!metrics.includes("M101")) return envelope([]);
+        if (metrics.length > 1) return { code: 200, msg: { rows: null } };
+        singleReads++;
+        throw failure;
+      }
+      if (path.endsWith("pRealDayLine")) {
+        legacyReads++;
+        return watchAttemptDay(businessDate);
+      }
+      if (path.endsWith("/bi/v1/playback")) return envelope([]);
+      if (path.endsWith("pDaySum")) return { msg: { pageData: [], totalCount: 0 } };
+      throw new Error(`Unexpected upstream endpoint: ${path}`);
+    } }, () => new Date(generatedAt));
+
+    const result = await service.execute({ ...range, boardId: "5.9" });
+    expect(singleReads).toBe(1);
+    expect(legacyReads).toBe(shouldFallback ? 1 : 0);
+    expect(point(result, "M101")).toMatchObject(shouldFallback
+      ? { state: "available", value: 288 }
+      : { state: "source_failure", value: null });
   });
 
   test("一个交叉分组失败仅影响该分组，非READY丢弃脏值且不补零", async () => {

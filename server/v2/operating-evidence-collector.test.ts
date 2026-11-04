@@ -297,6 +297,19 @@ describe("operating evidence private collector", () => {
     expect(JSON.stringify(snapshot)).not.toContain("private");
   });
 
+  test("广告取证保留正式导航维度及交叉人群，未知广告值仍被过滤", async () => {
+    const request = { ...params(), metricCodes: "M055", dimensions: "adType,userCohort",
+      dimensionFilters: '{"adType":"navigation","userCohort":"new"}' };
+    const rows = ["navigation", "private-ad-value"].map(adType => row({ metricCode: "M055",
+      dimensions: { pid: "PH", adType, userCohort: "new" } }));
+    const { snapshot, response } = await capture(envelope(rows), request);
+    expect(snapshot.calls[0].params).toMatchObject({ dimensions: "adType,userCohort",
+      dimensionFilters: { adType: "navigation", userCohort: "new" } });
+    expect(business(response.rows[0]).dimensions).toMatchObject({ adType: "navigation", userCohort: "new" });
+    expect(business(response.rows[1]).dimensions).not.toHaveProperty("adType");
+    expect(JSON.stringify(snapshot)).not.toContain("private-ad-value");
+  });
+
   test("protected guard覆盖规则版本、合法枚举、已知版本和参数内筛选值", async () => {
     const { snapshot, response } = await capture(envelope([row({ ruleVersion: "secret-token-v1", dimensions: { pid: "PH", userCohort: "new" } })]),
       { ...params(), dimensionFilters: '{"userCohort":"new"}' }, { isProtectedText: value => ["secret-token-v1", "new", "bi-v1"].includes(value) });

@@ -627,8 +627,12 @@ describe("bi-v1 付费人数与广告点击人数", () => {
     const { result, requests, point } = await execute();
     for (const [id, value] of [["M059", 5], ["M059.new", 3], ["M094.ads", 4], ["M094.new", 2]] as const)
       expect(point(id)).toMatchObject({ state: "available", value, sourceStatus: "READY" });
-    for (const code of ["M059", "M094"]) expect(requests.filter(request => request.metricCodes.split(",").includes(code))
-      .map(request => JSON.parse(request.dimensionFilters ?? "{}"))).toEqual([{}, { userCohort: "new" }]);
+    const scopesFor = (code: string) => requests.filter(request => request.metricCodes.split(",").includes(code))
+      .map(request => JSON.parse(request.dimensionFilters ?? "{}"));
+    expect(scopesFor("M059")).toEqual([{}, { userCohort: "new" }]);
+    expect(scopesFor("M094")).toHaveLength(4);
+    expect(scopesFor("M094")).toEqual(expect.arrayContaining([{}, { userCohort: "new" },
+      { adType: "navigation" }, { adType: "navigation", userCohort: "new" }]));
     expect(result.data.series.find(series => series.metric.id === "M059")!.periodStatistics)
       .toMatchObject({ state: "available", values: [{ kind: "daily_average", value: 5 }] });
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
@@ -1170,13 +1174,13 @@ describe("来源不完整的诊断输入与正式值隔离", () => {
       if (path === "/api/admin/bi/v1/metrics") {
         const filters = JSON.parse(params.dimensionFilters ?? "{}");
         const denominator = filters.clientPlatform === "ios" || filters.sourceType === "internal_channel" ? 1 : 2;
-        const rows = params.metricCodes.split(",").filter(code => ["M020", "M103", "M110"].includes(code)).map(code => {
+        const rows = params.metricCodes.split(",").filter(code => ["M020", "M103", "M055"].includes(code)).map(code => {
           const numerator = ready || code !== "M020" ? 2 : Object.keys(filters).length ? 1 : 8;
-          const base = ready || code !== "M020" ? 3 : Object.keys(filters).length ? denominator : 10;
+          const base = code === "M055" ? 0 : ready || code !== "M020" ? 3 : Object.keys(filters).length ? denominator : 10;
           return { metricCode: code, businessDate: date, dimensions: { pid: "PH", ...filters },
-            value: ready ? numerator / base : null, numerator, denominator: base,
-            unit: code === "M110" ? "count_per_user" : "ratio", dataStatus: ready ? "READY" : "SOURCE_INCOMPLETE",
-            metricVersion: "bi-v1", ruleVersion: "retention-d0-D1-v1" };
+            value: ready ? (base ? numerator / base : numerator) : null, numerator, denominator: base,
+            unit: code === "M055" ? "count" : "ratio", dataStatus: ready ? "READY" : "SOURCE_INCOMPLETE",
+            metricVersion: "bi-v1", ruleVersion: code === "M055" ? "ad-raw-click-v2" : "retention-d0-D1-v1" };
         });
         return { ...emptyMetrics, msg: { ...emptyMetrics.msg, rows } };
       }
@@ -1204,7 +1208,7 @@ describe("来源不完整的诊断输入与正式值隔离", () => {
     }
   });
 
-  test("私有诊断不进入起播人数或广告点击次数的分子派生与汇总", async () => {
+  test("私有诊断不进入起播人数、广告点击次数或周期汇总", async () => {
     const playback = await execute("5.12");
     expect(series(playback, "M030").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
       inputs: [{ value: null }] });
@@ -1364,93 +1368,127 @@ describe("bi-v1 注册留存四周期与五范围", () => {
   });
 });
 
-describe("bi-v1 广告次数分子与新用户交叉投影", () => {
+describe("bi-v1 广告直读与新用户交叉投影", () => {
   const date = "2026-09-05";
+  const nextDate = "2026-09-06";
   type Scope = Record<string, string>;
   type MetricRow = Record<string, unknown>;
   const metricRow = (metricCode: string, dimensions: Scope, numerator: number, denominator = 0, overrides: MetricRow = {}) => ({
     metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, numerator, denominator,
     value: denominator ? numerator / denominator : numerator,
     unit: metricCode === "M110" ? "count_per_user" : metricCode === "M081" || metricCode === "M111" ? "ratio" : "count",
-    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1", ...overrides
+    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M055" ? "ad-raw-click-v2" : "rule-v1", ...overrides
   });
-  const execute = async (boardId: string, rowsForScope: (scope: Scope) => MetricRow[], legacyRows: MetricRow[] = []) => {
-    const requests: { codes: string[]; scope: Scope; dimensions: string[] }[] = [];
+  const execute = async (boardId: string, rowsForScope: (scope: Scope) => MetricRow[], legacyRows: MetricRow[] = [],
+    dateRange: [string, string] = [date, date]) => {
+    const requests: { codes: string[]; scope: Scope; dimensions: string[]; granularity: string }[] = [];
     const result = await new DailyDashboardService({ get: async (path, params) => {
       if (path === "/api/admin/bi/v1/metrics") {
         const scope = JSON.parse(params.dimensionFilters ?? "{}") as Scope;
         const codes = params.metricCodes.split(",");
-        requests.push({ codes, scope, dimensions: params.dimensions?.split(",") ?? [] });
+        requests.push({ codes, scope, dimensions: params.dimensions?.split(",") ?? [], granularity: params.granularity });
         expect(params).toMatchObject({ pid: "PH", startDate: params.granularity === "summary" ? "2026-09-01" : date });
-        return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null,
-          rows: rowsForScope(scope).filter(row => codes.includes(String(row.metricCode))) } };
+        return { code: 200, msg: { ...emptyMetrics.msg, rows: rowsForScope(scope).filter(row => codes.includes(String(row.metricCode))) } };
       }
       if (path.endsWith("pDaySum")) return { msg: { pageData: legacyRows, totalCount: legacyRows.length } };
       return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
-    } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange: [date, date] });
-    return { result, requests, point: (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0] };
+    } }, () => new Date("2026-10-10T00:00:00Z")).execute({ boardId, pid: "PH", dateRange });
+    const series = (id: string) => result.data.series.find(series => series.metric.id === id)!;
+    return { result, requests, series, point: (id: string) => series(id).points[0] };
   };
-  const adRows = (scope: Scope, overrides: MetricRow = {}) => Object.keys(scope).some(key => key !== "userCohort") || scope.userCohort === "old"
-    ? [] : [metricRow("M110", scope, scope.userCohort === "new" ? 2 : 5, scope.userCohort === "new" ? 3 : 6, overrides),
-      metricRow("M111", scope, scope.userCohort === "new" ? 2 : 4, scope.userCohort === "new" ? 3 : 6)];
+  const adRows = (scope: Scope) => {
+    if (Object.keys(scope).some(key => key !== "userCohort" && key !== "adType")
+      || scope.userCohort === "old" || scope.adType && scope.adType !== "navigation") return [];
+    const isNew = scope.userCohort === "new";
+    const [clicks, users] = scope.adType === "navigation" ? isNew ? [13, 7] : [32, 20] : isNew ? [45, 22] : [100, 63];
+    return [metricRow("M055", scope, clicks), metricRow("M094", scope, users),
+      ...(scope.adType ? [] : [metricRow("M110", scope, isNew ? 2 : 5, isNew ? 3 : 6), metricRow("M111", scope, isNew ? 2 : 4, isNew ? 3 : 6)])];
+  };
+  const legacyAdRows = [row({ sumDate: date, adsCount: 99, adsClickedNewCount: 88, adsClickedPerson: 11, adsClickedNewPerson: 7,
+    navClickedNewCount: 101, navClickedNewPerson: 102, newUserTotalClickedCount: 103, newUserTotalClickedPerson: 104 })];
 
-  test("广告次数直接读取同范围M110分子，总体5、新用户2，点击人数不复用M111", async () => {
-    const { result, requests, point } = await execute("5.2", scope => adRows(scope), [row({ sumDate: date, adsCount: 99, adsClickedNewCount: 88, adsClickedPerson: 11, adsClickedNewPerson: 7 })]);
-    expect(point("M055.ads")).toMatchObject({ state: "available", sourceStatus: "READY", value: 5, inputs: [{ key: "adsCount", value: 5 }] });
-    expect(point("M055.new")).toMatchObject({ state: "available", sourceStatus: "READY", value: 2, inputs: [{ key: "adsClickedNewCount", value: 2 }] });
+  test("点击次数和人数按四个相同范围各读一次，旧源和广告比例不能替代", async () => {
+    const { result, requests, point } = await execute("5.2", adRows, legacyAdRows);
+    for (const [suffix, clicks, users] of [
+      ["ads", 100, 63], ["total", 100, 63], ["new", 45, 22], ["total.new", 45, 22],
+      ["navigation", 32, 20], ["navigation.new", 13, 7]
+    ] as const) {
+      expect(point(`M055.${suffix}`)).toMatchObject({ state: "available", sourceStatus: "READY", value: clicks, inputs: [{ value: clicks }] });
+      expect(point(`M094.${suffix}`)).toMatchObject({ state: "available", sourceStatus: "READY", value: users, inputs: [{ value: users }] });
+    }
     expect(point("M110").value).toBe(5 / 6);
     expect(point("M110.new").value).toBe(2 / 3);
-    expect(point("M094.ads")).toMatchObject({ state: "no_record", value: null });
-    expect(point("M094.new")).toMatchObject({ state: "no_record", value: null });
-    expect(point("M094.ads")).not.toHaveProperty("sourceStatus");
-    expect(requests.filter(request => request.codes.includes("M110")).map(({ scope, dimensions }) => ({ scope, dimensions })))
-      .toEqual([{ scope: {}, dimensions: [] }, { scope: { userCohort: "new" }, dimensions: ["userCohort"] }]);
-    expect(requests.every(request => !request.codes.includes("M055"))).toBe(true);
-    expect(requests.filter(request => request.codes.includes("M094")).map(request => request.scope))
-      .toEqual([{}, { userCohort: "new" }]);
+    expect(point("M111").value).toBe(4 / 6);
+    expect(point("M111.new").value).toBe(2 / 3);
+    const adRequests = requests.filter(request => request.codes.includes("M055") || request.codes.includes("M094"));
+    expect(adRequests).toHaveLength(4);
+    for (const [scope, dimensions] of [
+      [{}, []], [{ userCohort: "new" }, ["userCohort"]],
+      [{ adType: "navigation" }, ["adType"]], [{ adType: "navigation", userCohort: "new" }, ["adType", "userCohort"]]
+    ] as const) {
+      const request = adRequests.find(request => JSON.stringify(Object.entries(request.scope).sort()) === JSON.stringify(Object.entries(scope).sort()))!;
+      expect(request.codes).toEqual(expect.arrayContaining(["M055", "M094"]));
+      expect(request.dimensions.toSorted()).toEqual([...dimensions]);
+      expect(request.granularity).toBe("day");
+      if ("adType" in scope) expect(request.codes).toEqual(["M055", "M094"]);
+    }
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
   });
 
-  test("READY零分母的点击次数真零仍可用，人均次数保持zero_denominator", async () => {
-    const { point } = await execute("5.2", scope => adRows(scope, { numerator: 0, denominator: 0, value: null }));
-    for (const id of ["M055.ads", "M055.new"]) expect(point(id)).toMatchObject({ state: "available", sourceStatus: "READY", value: 0, inputs: [{ value: 0 }] });
-    for (const id of ["M110", "M110.new"]) expect(point(id)).toMatchObject({ state: "zero_denominator", sourceStatus: "READY", value: null });
-    for (const id of ["M094.ads", "M094.new"]) expect(point(id)).toMatchObject({ state: "no_record", value: null });
-  });
-
-  for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
-    test(`广告次数不消费${dataStatus}附带分子，新用户状态不受总体READY影响`, async () => {
-      const { point } = await execute("5.2", scope => adRows(scope, scope.userCohort === "new" ? { dataStatus } : {}));
-      expect(point("M055.ads")).toMatchObject({ state: "available", sourceStatus: "READY", value: 5 });
-      expect(point("M055.new")).toMatchObject({ state, sourceStatus: dataStatus, value: null, inputs: [{ value: null }] });
-    });
-  }
-
-  for (const [numerator, state] of [[undefined, "source_failure"], [null, "source_failure"], [-1, "source_failure"], [.5, "invalid_value"], [Number.MAX_SAFE_INTEGER + 1, "invalid_value"]] as const) {
-    test(`广告次数拒绝缺失或非法分子${String(numerator)}，不从value反推`, async () => {
-      const { point } = await execute("5.2", scope => adRows(scope, scope.userCohort === "new" ? { numerator, value: 2 / 3 } : {}));
-      expect(point("M055.ads")).toMatchObject({ state: "available", value: 5 });
-      expect(point("M055.new")).toMatchObject({ state, value: null, inputs: [{ value: null }] });
-    });
-  }
-
-  test("广告次数拒绝错误单位；精确新用户分子不能由总体或含端别的交叉行代替", async () => {
-    for (const invalidRows of [
-      [metricRow("M110", { userCohort: "new" }, 2, 3, { unit: "ratio" })],
-      [metricRow("M110", {}, 5, 6), metricRow("M110", { clientPlatform: "android", userCohort: "new" }, 2, 3)]
-    ]) {
-      const { point } = await execute("5.2", scope => scope.userCohort === "new" ? invalidRows : adRows(scope));
-      expect(point("M055.ads")).toMatchObject({ state: "available", value: 5 });
-      expect(point("M055.new")).toMatchObject({ state: invalidRows.length === 1 ? "invalid_value" : "source_failure", value: null, inputs: [{ value: null }] });
+  test("直返真零可用，缺失导航保持无记录", async () => {
+    const { point } = await execute("5.2", scope => scope.adType ? [] : adRows(scope).map(item =>
+      item.metricCode === "M055" || item.metricCode === "M094" ? { ...item, numerator: 0, value: 0 } : item), legacyAdRows);
+    for (const code of ["M055", "M094"]) {
+      for (const suffix of ["ads", "total", "new", "total.new"])
+        expect(point(`${code}.${suffix}`)).toMatchObject({ state: "available", sourceStatus: "READY", value: 0, inputs: [{ value: 0 }] });
+      for (const suffix of ["navigation", "navigation.new"])
+        expect(point(`${code}.${suffix}`)).toMatchObject({ state: "no_record", value: null, inputs: [{ value: null }] });
     }
   });
 
-  test("广告次数仅在旧源完整有效时沿用既有SOURCE_INCOMPLETE回退", async () => {
-    const { point } = await execute("5.2", scope => adRows(scope, { dataStatus: "SOURCE_INCOMPLETE" }),
-      [row({ sumDate: date, adsCount: 8, adsClickedNewCount: 0 })]);
-    expect(point("M055.ads")).toMatchObject({ state: "available", value: 8 });
-    expect(point("M055.new")).toMatchObject({ state: "available", value: 0 });
-    for (const id of ["M055.ads", "M055.new"]) expect(point(id)).not.toHaveProperty("sourceStatus");
+  for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
+    test(`新用户广告直读保留${dataStatus}，不借总体、诊断分子或旧源`, async () => {
+      const { point } = await execute("5.2", scope => adRows(scope).map(item =>
+        scope.userCohort === "new" && (item.metricCode === "M055" || item.metricCode === "M094") ? { ...item, dataStatus, value: null } : item), legacyAdRows);
+      for (const [code, value] of [["M055", 100], ["M094", 63]] as const) {
+        expect(point(`${code}.ads`)).toMatchObject({ state: "available", sourceStatus: "READY", value });
+        for (const suffix of ["new", "total.new", "navigation.new"])
+          expect(point(`${code}.${suffix}`)).toMatchObject({ state, sourceStatus: dataStatus, value: null, inputs: [{ value: null }] });
+      }
+    });
+  }
+
+  test("点击次数拒绝错误版本、单位或不一致的计数，点击人数仍可用", async () => {
+    for (const overrides of [{ ruleVersion: "old-ad-rule" }, { unit: "ratio", value: .5, numerator: 1, denominator: 2 },
+      { value: 3 }, { value: .5, numerator: .5 }, { value: null }]) {
+      const { point } = await execute("5.2", scope => adRows(scope).map(item =>
+        scope.userCohort === "new" && item.metricCode === "M055" ? { ...item, ...overrides } : item), legacyAdRows);
+      expect(point("M055.ads")).toMatchObject({ state: "available", value: 100 });
+      expect(point("M055.new")).toMatchObject({ state: "invalid_value", value: null, inputs: [{ value: null }] });
+      expect(point("M094.new")).toMatchObject({ state: "available", value: 22 });
+    }
+  });
+
+  test("导航新用户的返回必须含两个筛选维度", async () => {
+    const { point } = await execute("5.2", scope => scope.adType && scope.userCohort
+      ? [metricRow("M055", { adType: "ordinary", userCohort: "new" }, 88), metricRow("M094", { userCohort: "new" }, 77)]
+      : adRows(scope), legacyAdRows);
+    for (const code of ["M055", "M094"]) {
+      expect(point(`${code}.navigation.new`)).toMatchObject({ state: "source_failure", value: null });
+      expect(point(`${code}.new`).state).toBe("available");
+      expect(point(`${code}.navigation`).state).toBe("available");
+    }
+  });
+
+  test("完整区间仅提供广告点击人数日均，计数提供合计与日均", async () => {
+    const { requests, series } = await execute("5.2", scope => adRows(scope).flatMap(item =>
+      [item, { ...item, businessDate: nextDate }]), [], [date, nextDate]);
+    for (const [id, value] of [["M094.total", 63], ["M094.navigation", 20], ["M094.total.new", 22], ["M094.navigation.new", 7]] as const)
+      expect(series(id).periodStatistics).toMatchObject({ state: "available", values: [{ kind: "daily_average", value }] });
+    expect(series("M055.total").periodStatistics).toMatchObject({ state: "available", values: [
+      { kind: "period_sum", value: 200 }, { kind: "daily_average", value: 100 }
+    ] });
+    expect(requests.filter(request => request.codes.includes("M094")).every(request => request.granularity === "day")).toBe(true);
   });
 
   const crossRows = (scope: Scope) => {
@@ -1828,7 +1866,7 @@ describe("多来源真实数据边界",()=>{
 });
 
 describe("日看板真实候选读取", () => {
-  test("旧直接字段与广告总量保持独立，金额和付费率等待bi-v1结果", async () => {
+  test("保留适用旧字段，广告计数、金额和付费率等待各自的bi-v1结果", async () => {
     const result = await service().execute(query);
     const value = (id: string) => result.data.series.find(series => series.metric.id === id)!.points[0].value;
     expect(value("M016")).toBe(100); expect(value("M008")).toBe(30);
@@ -1838,7 +1876,9 @@ describe("日看板真实候选读取", () => {
     expect(result.data.series.find(series=>series.metric.id==="M058")!.metric).toMatchObject({unit:"元",inputs:[{unit:"元"}]});
     for(const id of ["M067","M087"]) expect(result.data.series.find(series=>series.metric.id===id)!.metric).toMatchObject({unit:"元/人",inputs:[{unit:"元"},{unit:"人"}]});
     expect(result.data.series.find(series=>series.metric.id==="M058")!.metric.sourceNote).toContain("人民币元");
-    expect(value("M055.navigation")).toBe(5); expect(value("M055.total")).toBe(26); expect(value("M094.total")).toBe(11);
+    for (const id of ["M055.navigation", "M055.total", "M094.total"]) {
+      expect(result.data.series.find(series => series.metric.id === id)!.points[0]).toMatchObject({ state: "no_record", value: null });
+    }
     expect(value("M110")).toBe(.2); expect(value("M111")).toBe(.1);
     expect(JSON.stringify(result)).not.toContain("must-never-project");
     expect(result.data).toMatchObject({ validationStatus: "pending_validation", completeness: "unknown", watermark: null });

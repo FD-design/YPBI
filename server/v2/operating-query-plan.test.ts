@@ -22,6 +22,9 @@ describe("server-owned operating job plan", () => {
     expect(daily).toHaveLength(13);
     expect(daily.every(unit => unit.query.startDate === range[0] && unit.query.endDate === "2026-10-18")).toBe(true);
     expect(daily.find(unit => unit.query.dimensions === "videoType")!.query.metricCodes).toBe("M034,M036,M097");
+    expect(daily.filter(unit => unit.query.metricCodes.split(",").includes("M055")).map(({ query }) =>
+      [query.dimensions, query.dimensionFilters, query.metricCodes.split(",").includes("M094")]))
+      .toEqual([[undefined, undefined, true], ["userCohort", '{"userCohort":"new"}', true]]);
     expect(plan.request.queries.filter(unit => unit.query.granularity === "summary").map(unit => unit.query))
       .toEqual([{ pid: "PH,FBI", metricCodes: "M018", startDate: "2026-10-01", endDate: "2026-10-21", granularity: "summary", includeIncomplete: true }]);
   });
@@ -49,8 +52,11 @@ describe("server-owned operating job plan", () => {
     const units = emptyUnits(plan.units.length);
     const overall = plan.units.findIndex(unit => unit.kind === "metrics" && !unit.scope.dimensionFilters);
     units[overall].rows = [row("PH", 0), row("FBI", 12)];
+    units[overall].rows.push({ ...row("PH", 0), metricCode: "M055", ruleVersion: "ad-raw-click-v2" });
     const result = normalizeOperatingQueryResults(plan, units);
     expect(result.get("PH")!.metricDays.find(day => day.date === range[1])!.metrics.M008).toMatchObject({ value: 0, state: "available", dataStatus: "READY" });
+    expect(result.get("PH")!.metricDays.find(day => day.date === range[1])!.metrics.M055).toMatchObject({ value: 0, state: "available", dataStatus: "READY" });
+    expect(result.get("FBI")!.metricDays.find(day => day.date === range[1])!.metrics.M055).toMatchObject({ value: null, state: "no_record" });
     expect(result.get("FBI")!.metricDays.find(day => day.date === range[1])!.metrics.M008).toMatchObject({ value: 12, state: "available", dataStatus: "READY" });
     expect(result.get("PH")!.metricDays.find(day => day.date === range[0])!.metrics.M008).toMatchObject({ value: null, state: "no_record", dataStatus: null });
     expect(result.get("PH")!.playbackDays.every(day => Object.values(day.metrics).every(point => point.value === null))).toBe(true);

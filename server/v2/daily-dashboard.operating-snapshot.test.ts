@@ -35,6 +35,7 @@ function fixture(mode: Mode) {
           value: value as number | null, numerator: ratio ? zero ? 0 : 1 : value, denominator: ratio ? 2 : 0,
           unit: code === "M058" ? "currency" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
           dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: code === "M058" ? "paid-order-value-rmb-v2" : code === "M102" ? "foreground-watch-duration-v1"
+            : code === "M055" ? "ad-raw-click-v2"
             : ["M034", "M036"].includes(code) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "snapshot-fixture-v1" };
         if (path === BI_V1_PLAYBACK_API && code === "M034") Object.assign(row, { value: zero ? 0 : 1, numerator: zero ? 0 : 1 });
         if (path === BI_V1_PLAYBACK_API && code === "M036") Object.assign(row, { value: zero ? null : 0.5, denominator: zero ? 0 : 2 });
@@ -153,7 +154,7 @@ describe("operating snapshot service", () => {
       assertProjection(defaultResult, snapshot);
       const watchFallbackDays = mode === "legacy" || mode === "network_failure" ? dates.length : 0;
       expect(full.reads.filter(read => read.path.endsWith("pRealDayLine"))).toHaveLength(watchFallbackDays);
-      expect(full.reads).toHaveLength(36 + watchFallbackDays);
+      expect(full.reads).toHaveLength(38 + watchFallbackDays);
       expect(sparse.reads).toHaveLength({ ready: 14, legacy: 22, processing: 14, incomplete: 19,
         missing_scope: 15, scope_conflict: 14, wrong_rule: 14, network_failure: 22 }[mode]);
       expect(sparse.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(12);
@@ -166,6 +167,8 @@ describe("operating snapshot service", () => {
       expect(sparse.reads.filter(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path) && read.params.granularity === "day")
         .every(read => read.params.startDate === dates[0] && read.params.endDate === shift(dates.at(-1)!, 1))).toBe(true);
       if (mode === "ready") {
+        expect(point(snapshot, "M055.ads", dates[0])).toMatchObject({ state: "available", value: 0, sourceStatus: "READY" });
+        expect(point(snapshot, "M055.new")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });
         expect(point(snapshot, "M058", dates[0])).toMatchObject({ state: "available", value: 0, sourceStatus: "READY" });
         expect(snapshot.data.series.find(series => series.metric.id === "M058")!.metric.unit).toBe("元");
         expect(snapshot.data.series.find(series => series.metric.id === "M067")!.metric.unit).toBe("元/人");
