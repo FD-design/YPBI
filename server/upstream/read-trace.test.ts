@@ -104,11 +104,12 @@ test("所有固定失败来源及安全数字分类可取证，原始输入不�
     });
   });
   const result = trace.snapshot();
-  expect(result.summary.errorCodeCounts).toEqual({ UPSTREAM_TIMEOUT: 8, unknown: 1 });
-  expect(result.summary.upstreamHttpStatusCounts).toEqual({ "503": 8 });
-  expect(result.summary.upstreamBusinessCodeCounts).toEqual({ "400": 8 });
+  const fixedOriginCount = UPSTREAM_READ_FAILURE_ORIGINS.length;
+  expect(result.summary.errorCodeCounts).toEqual({ UPSTREAM_TIMEOUT: fixedOriginCount, unknown: 1 });
+  expect(result.summary.upstreamHttpStatusCounts).toEqual({ "503": fixedOriginCount });
+  expect(result.summary.upstreamBusinessCodeCounts).toEqual({ "400": fixedOriginCount });
   expect(Object.keys(result.summary.failureOriginCounts).sort()).toEqual([...UPSTREAM_READ_FAILURE_ORIGINS].sort());
-  expect(result.logicalReads[8]).toMatchObject({ sourceId: "unknown", groupId: "unknown", code: "unknown" });
+  expect(result.logicalReads[fixedOriginCount]).toMatchObject({ sourceId: "unknown", groupId: "unknown", code: "unknown" });
   expect(JSON.stringify(result)).not.toContain("PRIVATE");
   expect(JSON.stringify(result)).not.toContain("https:");
 });

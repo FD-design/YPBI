@@ -30,6 +30,9 @@ import { ReadAdmission } from "../upstream/read-admission";
 
 const sourceAdmissions = new WeakMap<object, ReadAdmission>();
 const activeReadUnit = new AsyncLocalStorage<{ scope: object; budget: SourceReadBudget }>();
+// Leave time for projection and delivery before the production gateway's 60s cutoff.
+const OPERATING_SNAPSHOT_READ_TIMEOUT_MS = 50_000;
+type SnapshotReadDeadline = { signal: AbortSignal; check: () => void };
 function admissionFor(client: object) {
   let admission = sourceAdmissions.get(client);
   if (!admission) {
@@ -547,13 +550,26 @@ export interface OperatingModernSources {
 }
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
-  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number; readTraceEnabled?: boolean } = {}) {}
-  execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
-    if (this.options.readTraceEnabled && this.logger && query.projection === "operating_snapshot") {
-      const trace = new UpstreamReadTrace();
-      return runWithUpstreamReadTrace(trace, () => this.executeSources(query, consumerSignal, undefined, trace));
+  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number; readTraceEnabled?: boolean; operatingSnapshotReadTimeoutMs?: number } = {}) {}
+  async execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
+    if (query.projection !== "operating_snapshot") return this.executeSources(query, consumerSignal);
+    const timeoutMs = this.options.operatingSnapshotReadTimeoutMs ?? OPERATING_SNAPSHOT_READ_TIMEOUT_MS;
+    const controller = new AbortController();
+    const deadlineAt = performance.now() + timeoutMs;
+    const deadline: SnapshotReadDeadline = {
+      signal: controller.signal,
+      check: () => { if (performance.now() >= deadlineAt) controller.abort(); }
+    };
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      if (this.options.readTraceEnabled && this.logger) {
+        const trace = new UpstreamReadTrace();
+        return await runWithUpstreamReadTrace(trace, () => this.executeSources(query, consumerSignal, undefined, trace, deadline));
+      }
+      return await this.executeSources(query, consumerSignal, undefined, undefined, deadline);
+    } finally {
+      clearTimeout(timer);
     }
-    return this.executeSources(query, consumerSignal);
   }
   executeOperating(query: DailyDashboardQuery, sources: Promise<OperatingModernSources>, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
     if (query.boardId !== "5.2" || query.projection !== "operating_snapshot" || !dailyDashboardQuerySchema.safeParse(query).success) {
@@ -575,9 +591,10 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     void pending.catch(() => undefined);
     return this.executeSources(query, consumerSignal, pending);
   }
-  private async executeSources(query: DailyDashboardQuery, consumerSignal?: AbortSignal, operatingSources?: Promise<OperatingModernSources>, readTrace?: UpstreamReadTrace): Promise<DailyDashboardV2Success> {
+  private async executeSources(query: DailyDashboardQuery, consumerSignal?: AbortSignal, operatingSources?: Promise<OperatingModernSources>, readTrace?: UpstreamReadTrace, deadline?: SnapshotReadDeadline): Promise<DailyDashboardV2Success> {
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     if (query.projection !== undefined && !dailyDashboardQuerySchema.safeParse(query).success) throw new UpstreamError("INVALID_DAILY_READING_QUERY", "看板查询参数不合法", 400);
+    const sourceSignal = consumerSignal && deadline ? AbortSignal.any([consumerSignal, deadline.signal]) : consumerSignal ?? deadline?.signal;
     const fetchedAt = this.now().toISOString();
     const operatingSnapshot = query.projection === "operating_snapshot";
     const ids = operatingSnapshot && query.boardId === "5.2" ? OPERATING_METRIC_IDS as readonly CandidateId[] : boardMetrics[query.boardId] ?? [];
@@ -596,11 +613,17 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       const source: SourceReadDiagnostics = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, abandonedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} };
       if (this.logger) sourceDiagnostics.push(source);
       const cancelled = () => new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取已取消", 504, { origin: "consumer_cancelled" });
-      const runUnit = async <V>(start: () => Promise<V>, signal?: AbortSignal): Promise<V> => {
-        if (closed || consumerSignal?.aborted || signal?.aborted) return Promise.reject(cancelled());
+      const admitUnit = async <V>(start: () => Promise<V>, signal?: AbortSignal): Promise<V> => {
+        deadline?.check();
+        if (closed || sourceSignal?.aborted || signal?.aborted) throw cancelled();
+        const deliver = !deadline ? start : () => start().then(value => {
+          deadline.check();
+          if (sourceSignal?.aborted) throw cancelled();
+          return value;
+        });
         const active = activeReadUnit.getStore();
-        if (active?.scope === scope) return active.budget.read(start, signal);
-        const cancellation = consumerSignal && signal ? AbortSignal.any([consumerSignal, signal]) : consumerSignal ?? signal;
+        if (active?.scope === scope) return active.budget.read(deliver, signal);
+        const cancellation = sourceSignal && signal ? AbortSignal.any([sourceSignal, signal]) : sourceSignal ?? signal;
         const modern = ["metrics", "playback", "monthly", "acquisition"].includes(sourceId);
         if (!modern) await new Promise<void>((resolve, reject) => {
           const cancel = () => { cancellation?.removeEventListener("abort", cancel); reject(cancelled()); };
@@ -610,15 +633,27 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             error => { cancellation?.removeEventListener("abort", cancel); reject(error); });
         });
         return admission.run(async () => {
+          deadline?.check();
           if (closed || cancellation?.aborted) throw cancelled();
           const budget = new SourceReadBudget(this.options.sourceReadTimeoutMs ?? 10_000, cancellation);
           try {
-            return await activeReadUnit.run({ scope, budget }, () => budget.read(start, signal));
+            return await activeReadUnit.run({ scope, budget }, () => budget.read(deliver, signal));
           } finally {
             source.budgetExpired ||= budget.expired;
             budget.dispose();
           }
         }, modern ? "modern" : "legacy", cancellation);
+      };
+      const runUnit = !deadline ? admitUnit : async <V>(start: () => Promise<V>, signal?: AbortSignal): Promise<V> => {
+        try {
+          return await admitUnit(start, signal);
+        } catch (error) {
+          if (deadline.signal.aborted && !consumerSignal?.aborted && !signal?.aborted
+            && getUpstreamReadFailure(error)?.origin === "consumer_cancelled") {
+            throw new UpstreamError("UPSTREAM_TIMEOUT", "经营快照读取超时", 504, { origin: "snapshot_deadline" });
+          }
+          throw error;
+        }
       };
       try {
         return await runWithReadDeliveryBoundary(runUnit,

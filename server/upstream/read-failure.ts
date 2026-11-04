@@ -7,7 +7,7 @@ export const UPSTREAM_READ_ERROR_CODES = [
 export type UpstreamReadErrorCode = typeof UPSTREAM_READ_ERROR_CODES[number] | "unknown";
 
 export const UPSTREAM_READ_FAILURE_ORIGINS = [
-  "source_budget", "consumer_cancelled", "queue_deadline", "http_deadline",
+  "source_budget", "snapshot_deadline", "consumer_cancelled", "queue_deadline", "http_deadline",
   "http", "business", "network", "validation"
 ] as const;
 export type UpstreamReadFailureOrigin = typeof UPSTREAM_READ_FAILURE_ORIGINS[number];

@@ -315,21 +315,22 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
     if (!query.success || !board) return sendV2Error(request, reply, 400, "INVALID_DAILY_READING_QUERY", "看板查询参数不合法");
     if (!canAccessPid(principal, query.data.pid)) return sendV2Error(request, reply, 403, "PID_ACCESS_DENIED", "当前账号无权访问所选业务平台");
     if (!board.metricIds.length) return sendV2Error(request, reply, 422, "DAILY_BOARD_NOT_READY", "该看板尚无可读取的数据");
+    const scopeTag = dailyDashboardScopeTag(query.data, context.environment.mode);
     const controller = new AbortController();
     const unbindClientAbort = bindClientRequestAbort(request.raw, reply.raw, controller, "daily_reading_client_aborted");
     try {
       const result = dailyDashboardSuccessSchema.safeParse(await runInEnvironment(context, () => options.dailyDashboardService!.execute(query.data, controller.signal)));
       const expectedMetricIds = query.data.projection ? OPERATING_METRIC_IDS : board.metricIds;
       if (!result.success || !dailyDashboardMatchesQuery(result.data, query.data, expectedMetricIds) || !dailyDashboardMatchesMapping(result.data)) {
-        request.log.warn({ outcome: "response_contract_conflict", durationMs: Date.now() - startedAt }, "daily dashboard query rejected");
+        request.log.warn({ outcome: "response_contract_conflict", durationMs: Date.now() - startedAt, scopeTag }, "daily dashboard query rejected");
         return sendV2Error(request, reply, 502, "DAILY_SOURCE_CONFLICT", "数据结构或范围异常，未显示本次结果");
       }
       request.log.info({ outcome: "success", durationMs: Date.now() - startedAt, boardId: board.id,
-        queryId: result.data.data.queryId, scopeTag: dailyDashboardScopeTag(query.data, context.environment.mode)
+        queryId: result.data.data.queryId, scopeTag
       }, "daily dashboard query completed");
       return result.data;
     } catch (error) {
-      request.log.warn({ outcome: "query_failed", durationMs: Date.now() - startedAt, errorCode: error instanceof UpstreamError ? error.code : "invalid_response" }, "daily dashboard query failed");
+      request.log.warn({ outcome: "query_failed", durationMs: Date.now() - startedAt, scopeTag, errorCode: error instanceof UpstreamError ? error.code : "invalid_response" }, "daily dashboard query failed");
       if (error instanceof UpstreamError && error.code !== "DAILY_SOURCE_CONFLICT") {
         const failure = mapUpstreamFailure(error);
         return sendV2Error(request, reply, failure.statusCode, failure.code, failure.message);

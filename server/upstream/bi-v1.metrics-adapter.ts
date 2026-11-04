@@ -613,6 +613,11 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
       } catch (error) {
         // Sibling cancellation must not replace the first fatal rejection.
         if (fatalFailure) throw fatalFailure.error;
+        if (getUpstreamReadFailure(error)?.origin === "snapshot_deadline") {
+          recordUpstreamReadBoundaryFailure({ code: "UPSTREAM_TIMEOUT", failure: { origin: "snapshot_deadline" } });
+          stopped = true;
+          return;
+        }
         if (error instanceof UpstreamError && error.code === "UPSTREAM_TIMEOUT" && error.statusCode === 504
           && getUpstreamReadFailure(error)?.origin === "source_budget") {
           if (currentReadDeliveryExpiryScope() === "source") {
