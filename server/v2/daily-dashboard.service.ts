@@ -13,7 +13,7 @@ import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { REALTIME_API } from "../upstream/realtime.adapter";
 import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-daily.adapter";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API, aggregateBiV1Playback, projectBiV1PlaybackGroups, queryBiV1Playback, unavailableBiV1PlaybackGroups, type BiV1PlaybackDay, type BiV1PlaybackMetricCode } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API, biV1MetricKey, failedBiV1MetricRead, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension, type BiV1MetricQuery } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, LANDING_IP_CONVERSION_RULE_VERSIONS, biV1MetricKey, biV1MetricRequestKeys, failedBiV1MetricRead, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension, type BiV1MetricQuery } from "../upstream/bi-v1.metrics-adapter";
 import { readBiV1MonthlyMetricDays, type BiV1MonthlyMetricDay } from "../upstream/bi-v1.monthly-adapter";
 import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, supportsAcquisitionGroupMetric, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
@@ -55,14 +55,18 @@ const VALUE_RULE_VERSIONS = {
   M036: BI_V1_EFFECTIVE_PLAY_RULE_VERSION,
   M055: "ad-raw-click-v2",
   M058: "paid-order-value-rmb-v2",
+  M099: LANDING_IP_CONVERSION_RULE_VERSIONS.day,
   M101: "legacy-content-view-count-v1",
-  M102: "foreground-watch-duration-v1"
+  M102: "foreground-watch-duration-v1",
+  M110: "ad-clicks-per-active-user-v3",
+  M111: "ad-raw-click-v2"
 } as const;
 const WATCH_TIME_NOTE = `来自 bi-v1 M102 的播放成功后前台观看时长，规则版本 ${VALUE_RULE_VERSIONS.M102}，单位为秒。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态。`;
 const AD_CLICK_COUNT_NOTE = "来自 bi-v1 M055 同日、同 PID、同广告范围及人群的点击次数；展示 READY 计数，保留其他来源状态。";
 const AD_CLICK_USER_NOTE = "来自 bi-v1 M094 同日、同 PID、同广告范围及人群的独立去重人数；展示 READY 计数，保留其他来源状态。";
 const RECHARGE_AMOUNT_NOTE = `来自 bi-v1 M058 的人民币元金额，规则版本 ${VALUE_RULE_VERSIONS.M058}，保留接口数值。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态；按完整业务日提供合计及日均。`;
 const ACQUISITION_TYPE_REGISTRATIONS_NOTE = "来自 bi-v1 M008 的同平台、同业务日、获客类型独立结果；保留接口真实数据状态，不使用旧渠道统计补值。";
+const RETAINED_USER_COUNT_NOTE = "直接读取 bi-v1 M115 同注册日、同 PID、对应留存周期的去重回访人数，保留接口产出和成熟状态。";
 const baseMappings = {
   M034: { fields: ["effectivePlayCount"], inputIds: ["M034"], inputNames: ["有效观看次数"], inputUnits: ["次"], unit: "次", biV1Playback: true, formula: "各视频类型有效观看次数之和", sourceNote: "来自 bi-v1 播放域；仅展示 READY 结果，其他状态保留为数据状态，不补 0。" },
   M036: { fields: ["effectivePlayCount", "successfulStartCount"], inputIds: ["M034", "M097"], inputNames: ["有效观看次数", "成功起播次数"], inputUnits: ["次", "次"], unit: "%", biV1Playback: true, formula: "有效观看次数 ÷ 成功起播次数 × 100%", sourceNote: "来自 bi-v1 播放域；先汇总各视频类型的分子、分母再计算，不平均分类比率或日比率。" },
@@ -132,7 +136,7 @@ const baseMappings = {
   "M002": {"referenceMetricId":"M002","name":"落地页访问IP数（去重）","fields":["landingVisitIpCount"],"inputIds":["M002"],"inputNames":["落地页访问IP数（去重）"],"inputUnits":["IP"],"unit":"IP","biV1Metric":"M002","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；使用接口返回的去重 IP 结果和完整性状态，不用访问次数或每日 IP 数推算跨日去重结果。"},
   "M095": {"referenceMetricId":"M095","name":"落地页下载IP数（去重）","fields":["landingDownloadIpCount"],"inputIds":["M095"],"inputNames":["落地页下载IP数（去重）"],"inputUnits":["IP"],"unit":"IP","biV1Metric":"M095","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；按接口登记的业务日和下载目标去重规则读取，不由下载点击次数估算。"},
   "M005": {"referenceMetricId":"M005","name":"落地页访问-下载点击转化率","fields":["totalDownCountNoDedup","visiCountNoDedup"],"inputIds":["M005","M005"],"inputNames":["下载点击次数","落地页访问次数"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M005"},
-  "M099": {"referenceMetricId":"M099","name":"落地页访问-下载点击转化率（去重）","fields":["landingDownloadIpCount","landingVisitIpCount"],"inputIds":["M095","M002"],"inputNames":["落地页下载IP数（去重）","落地页访问IP数（去重）"],"inputUnits":["IP","IP"],"unit":"%","biV1Metric":"M099","biV1Only":true,"sourceNote":"来自 bi-v1 获客域；仅采用同一业务日、同一查询范围的分子、分母和比率。多日统一 IP 去重未提供前，不把每日去重 IP 相加或平均每日比率。"},
+  M099: { referenceMetricId: "M099", name: "落地页访问-下载点击转化率（去重）", fields: ["landingDownloadIpCount", "landingVisitIpCount"], inputIds: ["M099", "M099"], inputNames: ["下载点击去重 IP", "落地页访问去重 IP"], inputUnits: ["IP", "IP"], unit: "%", biV1Metric: "M099", biV1Only: true, sourceNote: "取 bi-v1 M099 同一行的比率、点击去重 IP 和访问去重 IP。单日按业务日去重，区间按查询范围精确去重。" },
   "M006": {"referenceMetricId":"M006","name":"落地页下载点击-注册转化率","fields":["registerUserCount","totalDownCountByIp"],"inputIds":["M008","M095"],"inputNames":["单日注册用户数（去重）","单日下载 IP·天"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M006","fallbackFrom":["M008","M095"],"legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：单日注册用户数÷单日下载 IP·天。优先读取合法 bi-v1 READY 同批比率；比率不可用时使用同 PID、同业务日的 READY M008 与 M095 直接相除，允许超过100%，零分母保持未定义。基础结果不可用时保留已确认的完整旧渠道事实兼容；不混用新旧输入、不使用点击次数、不补0。区间注册去重未提供前仅展示逐日结果，不解释为同一用户漏斗。"},
   "M007": {"referenceMetricId":"M007","name":"落地页访问-注册转化率","fields":["registerUserCount","ipStatTotalCount"],"inputIds":["M008","M002"],"inputNames":["单日注册用户数（去重）","单日访问 IP·天"],"inputUnits":["人","IP·天"],"unit":"%","channel":true,"allowAboveOne":true,"biV1Metric":"M007","fallbackFrom":["M008","M002"],"legacyFallback":"available_or_zero_denominator","sourceNote":"非归因趋势口径：单日注册用户数÷单日访问 IP·天。优先读取合法 bi-v1 READY 同批比率；比率不可用时使用同 PID、同业务日的 READY M008 与 M002 直接相除，允许超过100%，零分母保持未定义。基础结果不可用时保留已确认的完整旧渠道事实兼容；不混用新旧输入、不使用访问次数、不补0。区间注册去重未提供前仅展示逐日结果，不解释为同一用户漏斗。"},
   "M016.web": { "referenceMetricId": "M016", "name": "日活跃用户数（Web）", "fields": ["webLoginUserCount"], "inputIds": ["M016"], "inputNames": ["Web 日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["web"] },
@@ -148,25 +152,25 @@ const baseMappings = {
   "M020.ios": { referenceMetricId: "M020", name: "注册用户D1留存率（iOS）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["iOS注册批次D1回访人数", "iOS注册批次人数"], unit: "%", cohortDays: 1, biV1Metric: "M020", biV1Dimensions: ["ios"], biV1Only: true },
   "M020.natural": { referenceMetricId: "M020", name: "注册用户D1留存率（自然新增）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["自然新增注册批次D1回访人数", "自然新增注册批次人数"], unit: "%", cohortDays: 1, biV1Metric: "M020", biV1Dimensions: ["natural"], biV1Only: true },
   "M020.internal": { referenceMetricId: "M020", name: "注册用户D1留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D1回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 1, biV1Metric: "M020", biV1Dimensions: ["internal"], biV1Only: true },
-  "M115.d1": { referenceMetricId: "M115", name: "注册用户第1日留存人数", fields: ["afterFirstData1.loginCnt"], inputIds: ["M115"], inputNames: ["第1日留存人数"], unit: "人", cohortDays: 1, biV1Metric: "M020", biV1Value: "numerator" },
+  "M115.d1": { referenceMetricId: "M115", name: "注册用户第1日留存人数", fields: ["afterFirstData1.loginCnt"], inputIds: ["M115"], inputNames: ["第1日留存人数"], unit: "人", biV1Metric: "M115", biV1Dimensions: ["D1"], biV1Only: true, sourceNote: RETAINED_USER_COUNT_NOTE },
   "M021": { fields: ["afterFirstData3.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第3日留存人数", "该注册日用户数"], unit: "%", cohortDays: 3, biV1Metric: "M021" },
   "M021.android": { referenceMetricId: "M021", name: "注册用户D3留存率（Android）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["Android注册批次D3回访人数", "Android注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["android"], biV1Only: true },
   "M021.ios": { referenceMetricId: "M021", name: "注册用户D3留存率（iOS）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["iOS注册批次D3回访人数", "iOS注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["ios"], biV1Only: true },
   "M021.natural": { referenceMetricId: "M021", name: "注册用户D3留存率（自然新增）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["自然新增注册批次D3回访人数", "自然新增注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["natural"], biV1Only: true },
   "M021.internal": { referenceMetricId: "M021", name: "注册用户D3留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D3回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 3, biV1Metric: "M021", biV1Dimensions: ["internal"], biV1Only: true },
-  "M115.d3": { referenceMetricId: "M115", name: "注册用户第3日留存人数", fields: ["afterFirstData3.loginCnt"], inputIds: ["M115"], inputNames: ["第3日留存人数"], unit: "人", cohortDays: 3, biV1Metric: "M021", biV1Value: "numerator" },
+  "M115.d3": { referenceMetricId: "M115", name: "注册用户第3日留存人数", fields: ["afterFirstData3.loginCnt"], inputIds: ["M115"], inputNames: ["第3日留存人数"], unit: "人", biV1Metric: "M115", biV1Dimensions: ["D3"], biV1Only: true, sourceNote: RETAINED_USER_COUNT_NOTE },
   "M022": { fields: ["afterFirstData7.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第7日留存人数", "该注册日用户数"], unit: "%", cohortDays: 7, biV1Metric: "M022" },
   "M022.android": { referenceMetricId: "M022", name: "注册用户D7留存率（Android）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["Android注册批次D7回访人数", "Android注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["android"], biV1Only: true },
   "M022.ios": { referenceMetricId: "M022", name: "注册用户D7留存率（iOS）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["iOS注册批次D7回访人数", "iOS注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["ios"], biV1Only: true },
   "M022.natural": { referenceMetricId: "M022", name: "注册用户D7留存率（自然新增）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["自然新增注册批次D7回访人数", "自然新增注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["natural"], biV1Only: true },
   "M022.internal": { referenceMetricId: "M022", name: "注册用户D7留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D7回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 7, biV1Metric: "M022", biV1Dimensions: ["internal"], biV1Only: true },
-  "M115.d7": { referenceMetricId: "M115", name: "注册用户第7日留存人数", fields: ["afterFirstData7.loginCnt"], inputIds: ["M115"], inputNames: ["第7日留存人数"], unit: "人", cohortDays: 7, biV1Metric: "M022", biV1Value: "numerator" },
+  "M115.d7": { referenceMetricId: "M115", name: "注册用户第7日留存人数", fields: ["afterFirstData7.loginCnt"], inputIds: ["M115"], inputNames: ["第7日留存人数"], unit: "人", biV1Metric: "M115", biV1Dimensions: ["D7"], biV1Only: true, sourceNote: RETAINED_USER_COUNT_NOTE },
   "M023": { fields: ["afterFirstData30.loginCnt", "registerCount"], inputIds: ["M115", "M008"], inputNames: ["第30日留存人数", "该注册日用户数"], unit: "%", cohortDays: 30, biV1Metric: "M023" },
   "M023.android": { referenceMetricId: "M023", name: "注册用户D30留存率（Android）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["Android注册批次D30回访人数", "Android注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["android"], biV1Only: true },
   "M023.ios": { referenceMetricId: "M023", name: "注册用户D30留存率（iOS）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["iOS注册批次D30回访人数", "iOS注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["ios"], biV1Only: true },
   "M023.natural": { referenceMetricId: "M023", name: "注册用户D30留存率（自然新增）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["自然新增注册批次D30回访人数", "自然新增注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["natural"], biV1Only: true },
   "M023.internal": { referenceMetricId: "M023", name: "注册用户D30留存率（内部导量）", fields: ["retainedUserCount", "registeredUserCount"], inputIds: ["M115", "M008"], inputNames: ["内部导量注册批次D30回访人数", "内部导量注册批次人数"], unit: "%", cohortDays: 30, biV1Metric: "M023", biV1Dimensions: ["internal"], biV1Only: true },
-  "M115.d30": { referenceMetricId: "M115", name: "注册用户第30日留存人数", fields: ["afterFirstData30.loginCnt"], inputIds: ["M115"], inputNames: ["第30日留存人数"], unit: "人", cohortDays: 30, biV1Metric: "M023", biV1Value: "numerator" },
+  "M115.d30": { referenceMetricId: "M115", name: "注册用户第30日留存人数", fields: ["afterFirstData30.loginCnt"], inputIds: ["M115"], inputNames: ["第30日留存人数"], unit: "人", biV1Metric: "M115", biV1Dimensions: ["D30"], biV1Only: true, sourceNote: RETAINED_USER_COUNT_NOTE },
   "M016.android": { "referenceMetricId": "M016", "name": "日活跃用户数（Android）", "fields": ["androidLoginUserCount"], "inputIds": ["M016"], "inputNames": ["Android 日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["android"] },
   "M016.ios": { "referenceMetricId": "M016", "name": "日活跃用户数（iOS）", "fields": ["iosLoginUserCount"], "inputIds": ["M016"], "inputNames": ["iOS 日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["ios"] },
   "M016.old": { "referenceMetricId": "M016", "name": "日活跃用户数（老用户）", "fields": ["oldUserLoginUserCount"], "inputIds": ["M016"], "inputNames": ["老用户日活跃用户数"], "unit": "人", "biV1Metric": "M016", "biV1Dimensions": ["old"] },
@@ -197,10 +201,10 @@ const baseMappings = {
   M058: { fields: ["diamondChargeAmt"], inputIds: ["M058"], unit: AMOUNT_UNIT, biV1Metric: "M058", biV1Unit: "currency", biV1Only: true, sourceNote: RECHARGE_AMOUNT_NOTE },
   M067: { fields: ["diamondChargeAmt", "payingUserCount"], inputIds: ["M058", "M059"], inputNames: ["总充值金额", "同范围付费去重用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, derivedFrom: ["M058", "M059"], sourceNote: "按同日同 PID 的 M058 总充值金额除以 M059 付费去重人数，单位为元/人；区间去重分母未提供前，仅提供逐日结果。" },
   M087: { fields: ["diamondChargeAmt", "loginUserCount"], inputIds: ["M058", "M016"], inputNames: ["总充值金额", "同范围日活跃用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, derivedFrom: ["M058", "M016"], sourceNote: "按同日同 PID 的 M058 总充值金额除以 M016 日活跃用户数，单位为元/人；当前提供逐日结果。" },
-  M110: { fields: ["adsCount", "loginUserCount"], inputIds: ["M055", "M016"], inputNames: ["广告点击次数", "日活跃用户数"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user" },
+  M110: { fields: ["adsCount", "loginUserCount"], inputIds: ["M055", "M016"], inputNames: ["广告点击次数", "日活跃用户数"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user", biV1Only: true },
   "M110.new": { referenceMetricId: "M110", name: "活跃用户人均广告点击次数（新用户）", fields: ["newUserAdClickCount", "newUserActiveUserCount"], inputIds: ["M055", "M016"], inputNames: ["新用户广告点击次数", "新用户日活跃用户数"], inputUnits: ["次", "人"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user", biV1Dimensions: ["new"], biV1Only: true },
-  M111: { fields: ["adsClickedPerson", "loginUserCount"], inputIds: ["M094", "M016"], inputNames: ["广告点击人数", "日活跃用户数"], unit: "%", biV1Metric: "M111" },
-  "M111.new": { referenceMetricId: "M111", name: "活跃用户广告点击渗透率（新用户）", fields: ["newUserAdClickUserCount", "newUserActiveUserCount"], inputIds: ["M094", "M016"], inputNames: ["新用户广告点击人数", "新用户日活跃用户数"], unit: "%", biV1Metric: "M111", biV1Dimensions: ["new"], biV1Only: true },
+  M111: { fields: ["adsClickedPerson", "loginUserCount"], inputIds: ["M111", "M016"], inputNames: ["同日活跃且点击广告人数", "日活跃用户数"], unit: "%", biV1Metric: "M111", biV1Only: true },
+  "M111.new": { referenceMetricId: "M111", name: "活跃用户广告点击渗透率（新用户）", fields: ["newUserAdClickUserCount", "newUserActiveUserCount"], inputIds: ["M111", "M016"], inputNames: ["同日活跃且点击广告的新用户数", "新用户日活跃用户数"], unit: "%", biV1Metric: "M111", biV1Dimensions: ["new"], biV1Only: true },
   "M059.new": { referenceMetricId: "M059", name: "新增付费人数", fields: ["newPayingUserCount"], inputIds: ["M059"], inputNames: ["注册当日付费去重用户数"], unit: "人", biV1Metric: "M059", biV1Dimensions: ["new"], biV1Only: true, sourceNote: "来自 bi-v1 M059 同注册批次的注册当日付费新用户独立去重结果；仅展示 READY 计数，其他状态保持原样。" },
   "M055.ads": { referenceMetricId: "M055", name: "广告点击次数", fields: ["adsCount"], inputIds: ["M055"], unit: "次", biV1Metric: "M055", biV1Only: true, sourceNote: AD_CLICK_COUNT_NOTE },
   "M055.navigation": { referenceMetricId: "M055", name: "导航广告点击次数", fields: ["navCount"], inputIds: ["M055"], unit: "次", biV1Metric: "M055", biV1Dimensions: ["navigation"], biV1Only: true, sourceNote: AD_CLICK_COUNT_NOTE },
@@ -370,20 +374,22 @@ function sourceMetricIds(ids: readonly CandidateId[]): CandidateId[] {
 export function dailyDashboardMetricQueries(query: DailyDashboardQuery): BiV1MetricQuery[] {
   const ids = query.projection === "operating_snapshot" && query.boardId === "5.2"
     ? OPERATING_METRIC_IDS as readonly CandidateId[] : boardMetrics[query.boardId] ?? [];
-  const groups = new Map<string, { filters: BiV1MetricDimensionFilters; codes: Set<BiV1MetricCode> }>();
+  const groups = new Map<string, { filters: BiV1MetricDimensionFilters; dimensions: BiV1MetricDimension[]; codes: Set<BiV1MetricCode> }>();
   for (const id of sourceMetricIds(ids)) {
     const mapping = mappings[id];
     if (!mapping.biV1Metric || mapping.biV1Metric === "M018") continue;
-    const filters = dimensionFilters(mapping.biV1Dimensions);
-    const key = JSON.stringify(filters);
-    const group = groups.get(key) ?? { filters, codes: new Set<BiV1MetricCode>() };
+    // One request covers the four retention counts. Rates keep their own scopes.
+    const filters = mapping.biV1Metric === "M115" ? {} : dimensionFilters(mapping.biV1Dimensions);
+    const dimensions: BiV1MetricDimension[] = mapping.biV1Metric === "M115" ? ["retentionDay"] : Object.keys(filters) as BiV1MetricDimension[];
+    const key = JSON.stringify([filters, dimensions]);
+    const group = groups.get(key) ?? { filters, dimensions, codes: new Set<BiV1MetricCode>() };
     group.codes.add(mapping.biV1Metric);
     groups.set(key, group);
   }
   return [...groups.values()].map(group => ({
     pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1],
     metricCodes: [...group.codes].sort(), expectedRuleVersions: VALUE_RULE_VERSIONS,
-    dimensions: Object.keys(group.filters) as BiV1MetricDimension[],
+    dimensions: group.dimensions,
     ...(Object.keys(group.filters).length ? { dimensionFilters: group.filters } : {})
   }));
 }
@@ -444,8 +450,9 @@ export function dailyDashboardMatchesMapping(result: DailyDashboardSuccess) {
       || isDeepStrictEqual(series.periodStatistics, periodStatistics(id, series.points, result.data.query, toBeijingDate(result.data.fetchedAt))));
   });
 }
-function usesBiV1RatioInputs(mapping: CandidateMapping) {
-  return Boolean(mapping.biV1Metric) && mapping.fields.length === 2 && (mapping.biV1Unit ?? "ratio") === "ratio";
+function keepsBiV1RatioDiagnostics(mapping: CandidateMapping) {
+  return Boolean(mapping.biV1Metric) && mapping.fields.length === 2 && (mapping.biV1Unit ?? "ratio") === "ratio"
+    && mapping.biV1Metric !== "M099" && mapping.biV1Metric !== "M111";
 }
 function metric(id: CandidateId): DailyReadingMetric {
   const mapping = mappings[id];
@@ -463,7 +470,7 @@ function metric(id: CandidateId): DailyReadingMetric {
   return { id, referenceMetricId, name: mapping.name ?? definition.name, unit: mapping.unit, authorityVersion: definition.authority.version,
     definition: mapping.definition ?? metricBusinessDefinition(definition.authority),
     formula: mapping.formula ?? (mapping.fields.length === 2 ? mapping.inputNames ? mapping.inputNames.join(" ÷ ") + (mapping.unit === "%" ? " × 100%" : "") : definition.authority.registeredFormula : null),
-    sourceNote: usesBiV1RatioInputs(mapping) ? [sourceNote, "所选来源不完整时，合法分子分母仅作为诊断输入，不用于计算正式值、人数或汇总。"].filter(Boolean).join(" ") : sourceNote,
+    sourceNote: keepsBiV1RatioDiagnostics(mapping) ? [sourceNote, "所选来源不完整时，合法分子分母仅作为诊断输入，不用于计算正式值、人数或汇总。"].filter(Boolean).join(" ") : sourceNote,
     inputs: mapping.fields.map((key, index) => ({ key, name: mapping.inputNames?.[index] ?? mapping.name ?? getV2MetricDefinition(mapping.inputIds[index])!.name, unit: mapping.inputUnits?.[index] ?? (mapping.fields.length === 1 ? mapping.unit : mapping.payment ? "次" : key.endsWith("Amt") ? AMOUNT_UNIT : ["adsCount", "navCount", "totalClickedCount", "adsClickedNewCount", "totalVistCount", "navClickedNewCount", "newUserTotalClickedCount", "totalDownCountNoDedup", "visiCountNoDedup"].includes(key) ? "次" : ["totalDownCountByIp", "ipStatTotalCount"].includes(key) ? "IP·天" : "人") }))
   };
 }
@@ -849,7 +856,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           // borrow the overall value or overwrite another group's healthy result.
           for (const date of dates) {
             const existing = biV1MetricDays.get(date) ?? { date, metrics: {} };
-            for (const code of request.metricCodes) existing.metrics[biV1MetricKey(code, request.dimensionFilters)] = failedBiV1MetricRead(code, error);
+            for (const code of request.metricCodes) {
+              for (const key of biV1MetricRequestKeys(code, request)) existing.metrics[key] = failedBiV1MetricRead(code, error);
+            }
             biV1MetricDays.set(date, existing);
           }
         }
@@ -862,7 +871,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         while (next < requests.length) {
           const request = requests[next++];
           const task = readGroup(request);
-          for (const code of request.metricCodes) metricGroupTasks.set(biV1MetricKey(code, request.dimensionFilters), task);
+          for (const code of request.metricCodes) {
+            for (const key of biV1MetricRequestKeys(code, request)) metricGroupTasks.set(key, task);
+          }
           await task;
         }
       }));
@@ -953,7 +964,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           const values = usesReturnedNumerator
             ? [biV1Point.numerator]
             : mapping.fields.length === 2
-              ? biV1Point.diagnosticInputs && biV1Point.dataStatus === "SOURCE_INCOMPLETE" && usesBiV1RatioInputs(mapping)
+              ? biV1Point.diagnosticInputs && biV1Point.dataStatus === "SOURCE_INCOMPLETE" && keepsBiV1RatioDiagnostics(mapping)
                 ? [biV1Point.diagnosticInputs.numerator, biV1Point.diagnosticInputs.denominator]
                 : [biV1Point.numerator, biV1Point.denominator]
               : [biV1Point.value];

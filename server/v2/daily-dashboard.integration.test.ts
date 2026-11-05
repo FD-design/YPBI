@@ -29,7 +29,8 @@ const makeRow = (metricCode: string, filters: Filters, numerator: number, denomi
   value: unit === "count" ? numerator : numerator / denominator,
   numerator, denominator, unit, dataStatus: "READY", metricVersion: "bi-v1",
   ruleVersion: metricCode === "M101" ? "legacy-content-view-count-v1"
-    : metricCode === "M055" ? "ad-raw-click-v2" : "integration-fixture-v1"
+    : ["M055", "M111"].includes(metricCode) ? "ad-raw-click-v2"
+      : metricCode === "M110" ? "ad-clicks-per-active-user-v3" : "integration-fixture-v1"
 });
 const envelope = (rows: Row[]) => ({ code: 200, msg: { metricVersion: "bi-v1", generatedAt, watermark: null, rows } });
 
@@ -74,6 +75,9 @@ function requestDrivenUpstream(failure: "none" | "cross" | "legacy_fallback" = "
     makeRow("M094", {}, 4), makeRow("M094", { userCohort: "new" }, 2),
     makeRow("M020", {}, 8, 10, "ratio"), makeRow("M021", {}, 7, 10, "ratio"),
     makeRow("M022", {}, 6, 10, "ratio"), makeRow("M023", {}, 5, 10, "ratio"),
+    ...["D1", "D3", "D7", "D30"].map((retentionDay, index) => ({
+      ...makeRow("M115", { retentionDay }, 8 - index, 10), ruleVersion: `retention-${retentionDay.toLowerCase()}-v1`
+    })),
     makeRow("M112", {}, 26), makeRow("M113", {}, 20), makeRow("M060", {}, 9), makeRow("M114", {}, 9, 26, "ratio"),
     makeRow("M110", {}, 3, 6, "count_per_user"), makeRow("M111", {}, 2, 6, "ratio"),
     makeRow("M110", { userCohort: "new" }, 2, 3, "count_per_user"), makeRow("M111", { userCohort: "new" }, 1, 3, "ratio"),
@@ -109,6 +113,7 @@ function requestDrivenUpstream(failure: "none" | "cross" | "legacy_fallback" = "
       }
       const selected = rows.filter(row => {
         const { pid: _pid, ...rowFilters } = row.dimensions;
+        if (params.dimensions === "retentionDay") return row.metricCode === "M115";
         return requestedCodes.has(row.metricCode) && scopeKey(rowFilters) === scopeKey(filters);
       }).map(row => {
         if (failure !== "cross" || scopeKey(filters) !== scopeKey({ clientPlatform: "ios", userCohort: "old" })) return row;
@@ -153,7 +158,10 @@ function expectRequestScopes(calls: Request[]) {
       expect(params.endDate).toBe("2020-01-02");
       continue;
     }
-    expect((params.dimensions ?? "").split(",").filter(Boolean).sort()).toEqual(Object.keys(filters).sort());
+    if (params.metricCodes === "M115") {
+      expect(params.dimensions).toBe("retentionDay");
+      expect(filters).toEqual({});
+    } else expect((params.dimensions ?? "").split(",").filter(Boolean).sort()).toEqual(Object.keys(filters).sort());
     if (params.granularity === "summary") {
       expect(params.metricCodes).toBe("M018");
       expect(params.endDate).toBe("2020-02-01");

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { DAILY_STATISTICS_VERSION, dailyDashboardMatchesQuery, dailyDashboardSuccessSchema, type DailyDashboardQuery, type DailyDashboardV2Success } from "../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSnapshotDates } from "../../contracts/operating-detail-projection";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, BI_V1_RETENTION_DAYS } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamError } from "../upstream/client";
 import { CHANNEL_V2_API, DailyDashboardService, dailyDashboardMatchesMapping, PAYMENT_RATE_API } from "./daily-dashboard.service";
 import { createOperatingQueryPlan, normalizeOperatingQueryResults } from "./operating-query-plan";
@@ -27,7 +27,7 @@ function fixture(mode: Mode) {
       const filters = JSON.parse(params.dimensionFilters ?? "{}") as Record<string, string>;
       if (params.granularity === "summary") return envelope([{ metricCode: "M018", dimensions: { pid: query.pid }, value: 42, numerator: 42, denominator: 0,
         unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "monthly-fixture-v1" }]);
-      return envelope(dates.flatMap(date => params.metricCodes.split(",").flatMap(code => {
+      return envelope(dates.flatMap(date => params.metricCodes.split(",").flatMap<unknown>(code => {
         if (mode === "missing_scope" && filters.clientPlatform === "ios" && date === query.dateRange[1]) return [];
         const ratio = ratios.has(code) || code === "M110", zero = date === query.dateRange[0];
         const value = zero ? 0 : ratio ? 0.5 : code === "M058" ? 12.34 : code === "M102" ? 7200 : 2;
@@ -35,7 +35,7 @@ function fixture(mode: Mode) {
           value: value as number | null, numerator: ratio ? zero ? 0 : 1 : value, denominator: ratio ? 2 : 0,
           unit: code === "M058" ? "currency" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
           dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: code === "M058" ? "paid-order-value-rmb-v2" : code === "M102" ? "foreground-watch-duration-v1"
-            : code === "M055" ? "ad-raw-click-v2"
+            : code === "M055" ? "ad-raw-click-v2" : code === "M099" ? "landing-ip-click-rate-v1" : code === "M110" ? "ad-clicks-per-active-user-v3" : code === "M111" ? "ad-raw-click-v2"
             : ["M034", "M036"].includes(code) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "snapshot-fixture-v1" };
         if (path === BI_V1_PLAYBACK_API && code === "M034") Object.assign(row, { value: zero ? 0 : 1, numerator: zero ? 0 : 1 });
         if (path === BI_V1_PLAYBACK_API && code === "M036") Object.assign(row, { value: zero ? null : 0.5, denominator: zero ? 0 : 2 });
@@ -45,6 +45,10 @@ function fixture(mode: Mode) {
           numerator: ratio ? 1 : 999, denominator: ratio ? 2 : 0 });
         if (mode === "scope_conflict" && filters.userCohort === "old" && filters.clientPlatform === "android") row.dimensions.pid = "OTHER";
         if (mode === "wrong_rule" && ["M058", "M102", "M034", "M036"].includes(code)) row.ruleVersion = "older-rule-fixture";
+        if (code === "M115") return BI_V1_RETENTION_DAYS.map((retentionDay, index) => ({
+          ...row, dimensions: { pid: query.pid, retentionDay }, value: zero ? 0 : index + 1, numerator: zero ? 0 : index + 1,
+          denominator: 10, ruleVersion: `retention-${retentionDay.toLowerCase()}-v1`
+        }));
         return [row];
       })));
     }
@@ -154,10 +158,14 @@ describe("operating snapshot service", () => {
       assertProjection(defaultResult, snapshot);
       const watchFallbackDays = mode === "legacy" || mode === "network_failure" ? dates.length : 0;
       expect(full.reads.filter(read => read.path.endsWith("pRealDayLine"))).toHaveLength(watchFallbackDays);
-      expect(full.reads).toHaveLength(38 + watchFallbackDays);
-      expect(sparse.reads).toHaveLength({ ready: 14, legacy: 22, processing: 14, incomplete: 19,
-        missing_scope: 15, scope_conflict: 14, wrong_rule: 14, network_failure: 22 }[mode]);
-      expect(sparse.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(12);
+      expect(full.reads).toHaveLength(39 + watchFallbackDays);
+      expect(sparse.reads).toHaveLength({ ready: 15, legacy: 23, processing: 15, incomplete: 20,
+        missing_scope: 16, scope_conflict: 15, wrong_rule: 15, network_failure: 23 }[mode]);
+      const metricDays = sparse.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day");
+      expect(metricDays).toHaveLength(13);
+      expect(metricDays.filter(read => read.params.metricCodes === "M115")).toEqual([expect.objectContaining({
+        params: expect.objectContaining({ dimensions: "retentionDay" })
+      })]);
       expect(sparse.reads.some(read => read.path.endsWith("pRealDayLine"))).toBe(false);
       for (const path of [PAYMENT_RATE_API, CHANNEL_V2_API]) {
         const selected = sparse.reads.filter(read => read.path === path).map(read => (read.params.startTime ?? read.params.sumDateBegin).slice(0, 10));

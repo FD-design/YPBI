@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { biQueryJobRequestSchema, biQueryJobProgressSchema, biQueryJobUnitResultSchema, type BiQueryJobRequest } from "../../contracts/query-jobs";
 import type { Principal } from "../identity/identity-provider";
 import { getEnabledPlatformByPid } from "../platforms/registry";
-import { biV1MetricCodeSchema, biV1MetricDimensionNameSchema, biV1MetricDimensionFilterSchema } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_RETENTION_DAYS, biV1MetricCodeSchema, biV1MetricDimensionNameSchema, biV1MetricDimensionFilterSchema } from "../upstream/bi-v1.metrics-adapter";
 import { monthlyQueryScopes } from "../../contracts/monthly-query-scope";
 import { validateBiV1MonthlyMetadata } from "../upstream/bi-v1.monthly-adapter";
 import { toBeijingDate } from "../upstream/date";
@@ -29,7 +29,6 @@ function invalid(): never { throw new BiQueryJobError("QUERY_JOB_RESULT_INVALID"
 function tokens(value: string | undefined) { return value ? [...new Set(value.split(","))].sort() : []; }
 const isRetention = (code: string) => ["M020", "M021", "M022", "M023", "M115"].includes(code);
 const isPlayback = (code: string) => ["M034", "M036", "M097"].includes(code);
-const retentionDays = ["D1", "D3", "D7", "D30"];
 const priorDate = (date: string) => new Date(Date.parse(date) - 86_400_000).toISOString().slice(0, 10);
 function monthlyScope(query: BiQueryJobRequest["queries"][number]["query"], today: string) {
   const scopes = monthlyQueryScopes(query.startDate, priorDate(query.endDate), today);
@@ -40,7 +39,7 @@ function validDimensions(dimensions: readonly string[], filters: Record<string, 
   return allDimensions.every(key => key === "retentionDay" ? codes.every(code => code === "M115")
     : key === "videoType" ? codes.every(isPlayback) : biV1MetricDimensionNameSchema.safeParse(key).success)
     && (!codes.some(isPlayback) || allDimensions.every(key => key === "videoType"))
-    && (filters.retentionDay === undefined || retentionDays.includes(filters.retentionDay as string))
+    && (filters.retentionDay === undefined || BI_V1_RETENTION_DAYS.some(period => period === filters.retentionDay))
     && (filters.videoType === undefined || typeof filters.videoType === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(filters.videoType))
     && biV1MetricDimensionFilterSchema.safeParse(Object.fromEntries(Object.entries(filters).filter(([key]) => key !== "retentionDay" && key !== "videoType"))).success
     && (!codes.includes("M115") || allDimensions.includes("retentionDay"));

@@ -12,14 +12,15 @@ const row = (pid: string, value: number) => ({ metricCode: "M008", businessDate:
 const emptyUnits = (count: number) => Array.from({ length: count }, () => ({ rows: [] as unknown[], generatedAt }));
 
 describe("server-owned operating job plan", () => {
-  test("one-site CSV shares 12 metric groups, one videoType unit and one natural-month summary", () => {
+  test("one-site CSV shares 13 metric groups, one videoType unit and one natural-month summary", () => {
     const plan = createOperatingQueryPlan(["PH", "FBI"], range, today);
-    expect(plan.units).toHaveLength(14);
-    expect(plan.units.filter(unit => unit.kind === "metrics")).toHaveLength(12);
+    expect(plan.units).toHaveLength(15);
+    expect(plan.units.filter(unit => unit.kind === "metrics")).toHaveLength(13);
     expect(biQueryJobRequestSchema.safeParse(plan.request).success).toBe(true);
     expect(plan.request.queries.every(unit => unit.query.pid === "PH,FBI" && unit.query.includeIncomplete)).toBe(true);
     const daily = plan.request.queries.filter(unit => unit.query.granularity === "day");
-    expect(daily).toHaveLength(13);
+    expect(daily).toHaveLength(14);
+    expect(daily.filter(unit => unit.query.dimensions === "retentionDay").map(unit => unit.query.metricCodes)).toEqual(["M115"]);
     expect(daily.every(unit => unit.query.startDate === range[0] && unit.query.endDate === "2026-10-18")).toBe(true);
     expect(daily.find(unit => unit.query.dimensions === "videoType")!.query.metricCodes).toBe("M034,M036,M097");
     expect(daily.filter(unit => unit.query.metricCodes.split(",").includes("M055")).map(({ query }) =>
@@ -31,7 +32,7 @@ describe("server-owned operating job plan", () => {
 
   test("cross-month range retains two independent monthly summaries and three-day output anchors", () => {
     const plan = createOperatingQueryPlan(["PH"], ["2026-09-27", "2026-10-04"], today);
-    expect(plan.units).toHaveLength(15);
+    expect(plan.units).toHaveLength(16);
     expect(plan.units.filter(unit => unit.kind === "monthly").map(unit => unit.scope)).toEqual([
       { pid: "PH", startDate: "2026-09-01", endDate: "2026-09-30", metricCodes: ["M018"], granularity: "summary", dimensions: [] },
       { pid: "PH", startDate: "2026-10-01", endDate: "2026-10-20", metricCodes: ["M018"], granularity: "summary", dimensions: [] }

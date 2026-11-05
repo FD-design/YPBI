@@ -1,8 +1,8 @@
 {
   "schemaVersion": "metric-definitions-ui/v1",
   "authorityDocument": "全站指标体系.md",
-  "authorityVersion": "v0.39-draft",
-  "sourceContentSha256": "2996748bf2ac65d50026d004a60537ccd5f6ad570f301eda6a02b48a54266415",
+  "authorityVersion": "v0.40-draft",
+  "sourceContentSha256": "2770d9054e38cae7366432c17be2aa10a75e975245c2a5496a1793632ccbbc31",
   "items": [
     {
       "id": "M001",
@@ -32,7 +32,7 @@
     {
       "id": "M099",
       "name": "落地页访问-下载点击转化率（去重）",
-      "definition": "同一业务日、渠道、下载目标和PID范围内，去重访问IP中产生下载点击意图的比例\n公式：单一业务日内， 落地页下载IP数（去重） ÷ 落地页访问IP数（去重） × 100%"
+      "definition": "同一站点、平台、时间及筛选范围内，落地页下载点击去重 IP 数占落地页访问去重 IP 数的比例\n公式：同一接口结果中的落地页下载点击去重 IP 数 ÷ 落地页访问去重 IP 数 × 100%"
     },
     {
       "id": "M006",

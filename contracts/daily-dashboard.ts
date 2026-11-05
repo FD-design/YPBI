@@ -228,8 +228,6 @@ const dailyDashboardV2DataSchema = z.object({ ...dailyDashboardDataFields,
   }
   if (data.acquisitionGroups && data.query.boardId !== "5.7") ctx.addIssue({ code: "custom", path: ["acquisitionGroups"], message: "动态获客分组仅适用于获客看板" });
   if (data.playbackGroups && data.query.boardId !== "5.12") ctx.addIssue({ code: "custom", path: ["playbackGroups"], message: "视频类型分组仅适用于播放看板" });
-  if (data.acquisitionGroups && data.query.dateRange[0] !== data.query.dateRange[1]
-    && (data.acquisitionGroups.channel.summary.scopeStatuses.some(scope => scope.metricId === "M099") || data.acquisitionGroups.channel.groups.some(group => group.series.some(series => series.metric.id === "M099" && series.summary.state !== "unsupported")))) ctx.addIssue({ code: "custom", path: ["acquisitionGroups"], message: "多日M099汇总不适用" });
 });
 export const dailyDashboardV2SuccessSchema = z.object({ success: z.literal(true), data: dailyDashboardV2DataSchema }).strict();
 export type DailyDashboardV2Success = z.infer<typeof dailyDashboardV2SuccessSchema>;

@@ -224,7 +224,35 @@ describe("来源不完整留存输入与四个D1分组参考展示", () => {
     const overallCell = connectedCohortRows(live.query, live.state, "overall")[0].cells[0];
     expect(overallCell.rate).toBeNull();
     expect(overallCell.referenceRate).toBeUndefined();
-    expect(connectedCohortExportRows(live.query, live.state, "overall")[1].slice(10)).toEqual([null, null]);
+    expect(connectedCohortExportRows(live.query, live.state, "overall")[1].slice(10)).toEqual([null, null, null, "字段未返回"]);
+  });
+
+  test("总体正式留存人数与留存率分子分别读取、展示和导出", () => {
+    const { live, result, series } = fixture();
+    const rate = { ...series[0], metric: { ...series[0].metric, id: "M020" },
+      points: [{ ...series[0].points[0], state: "available" as const, sourceStatus: "READY" as const, value: 0.5 }] };
+    const count = { ...series[0], metric: { ...series[0].metric, id: "M115.d1", unit: "人", inputs: [series[0].metric.inputs[0]] },
+      points: [{ ...series[0].points[0], state: "available" as const, sourceStatus: "READY" as const, value: 0,
+        inputs: [{ key: "retainedUserCount", value: 0 }] }] };
+    result.data.series.push(rate, count);
+    const rows = connectedCohortRows(live.query, live.state, "overall");
+    const cell = rows[0].cells[0];
+    expect(cell).toMatchObject({ rate: 0.5, countReading: { value: 0 } });
+    expect(retentionCellCalculationInputs(rows[0], cell)).toEqual({ count: 1, base: 2 });
+    const columns = [{ id: "M020", name: "D1留存率", label: "D1", definition: "留存人数 ÷ 注册人数 × 100%" }];
+    const html = renderToStaticMarkup(<RetentionMatrix title="注册留存" rows={[{ ...rows[0], cells: [cell] }]} columns={columns}
+      dateLabel="注册日" baseLabel="注册用户数" onOpen={() => {}} resetKey="fixture" initialMode="count" />);
+    expect(html).toContain('aria-label="2020-01-01 D1 0"');
+    const exported = connectedCohortExportRows(live.query, live.state, "overall");
+    expect(exported[1][4]).toBe(1);
+    expect(exported[1][5]).toBe(50);
+    expect(exported[1][exported[0].indexOf("留存人数（M115）")]).toBe(0);
+    result.data.series.splice(result.data.series.indexOf(count), 1, { ...count, points: [{
+      ...count.points[0], state: "no_value", sourceStatus: "PROCESSING", value: null, inputs: [{ key: "retainedUserCount", value: null }]
+    }] });
+    const processing = connectedCohortRows(live.query, live.state, "overall")[0].cells[0];
+    expect(processing.countReading).toMatchObject({ value: null, status: expect.stringContaining("计算中") });
+    expect(processing.rate).toBe(0.5);
   });
 
   test("四组SOURCE_INCOMPLETE仍不可读，READY的2/3正式结果与D3保持原行为", () => {

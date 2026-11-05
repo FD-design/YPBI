@@ -2,7 +2,7 @@
   "schemaVersion": "metric-release-admission/v1",
   "snapshot": {
     "path": "server/v2/generated/metric-definitions.json",
-    "contentSha256": "d0d4d702d8efb074a60261848695ce551136b53bf1cb27470f527797f24bd5a5"
+    "contentSha256": "406af4613d3b15c5b4639f4afe04c88440e5a7b363445b76bf46499d6c6e001a"
   },
   "registry": {
     "path": "server/v2/config/metric-mapping-registry.v1.json",

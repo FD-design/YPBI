@@ -12,7 +12,9 @@ const metricFor = (id: AcquisitionGroupMetric): DailyReadingMetric => ({ id, nam
   definition: "test", authorityVersion: "test", formula: null, referenceMetricId: id, sourceNote: null,
   inputs: ["M001", "M003"].includes(id) ? [{ key: "count", name: "次数", unit: "次" }] : [{ key: "numerator", name: "分子", unit: "次" }, { key: "denominator", name: "分母", unit: "次" }] });
 const row = (overrides: Record<string, unknown> = {}) => ({ metricCode: "M003", businessDate: query.dateRange[0], dimensions: { pid: "PH", channel: "A-B" },
-  value: 3, numerator: 3, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "actual-rule", ...overrides });
+  value: 3, numerator: 3, denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1",
+  ruleVersion: overrides.metricCode === "M099" ? ("businessDate" in overrides && !overrides.businessDate ? "landing-ip-conversion-range-v1" : "landing-ip-click-rate-v1") : "actual-rule",
+  ...overrides });
 const envelope = (rows: unknown[]) => ({ code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-23T01:00:00+08:00", watermark: "actual-watermark", rows } });
 type Params = Record<string, string>;
 const channelRequestMetrics = ["M001", "M003", "M005", "M099"] as const;
@@ -135,7 +137,7 @@ describe("真实 HTTP 客户端到获客分组的拒绝隔离", () => {
 });
 
 describe("获客动态分组独立读取", () => {
-  test("四路并发、显式维度、排除结束日、跨日 M099 不查询 summary", async () => {
+  test("四路独立查询、显式维度、排除结束日，M099 同批读取 day 和 summary", async () => {
     const calls: Params[] = []; let active = 0, maxActive = 0;
     const result = await readBiV1AcquisitionGroups({ get: async (path, params) => {
       expect(path).toBe("/api/admin/bi/v1/metrics"); calls.push(params); maxActive = Math.max(maxActive, ++active);
@@ -145,7 +147,7 @@ describe("获客动态分组独立读取", () => {
     expect(calls).toHaveLength(4);
     for (const call of calls) expect(call).toMatchObject({ pid: "PH", startDate: "2026-09-21", endDate: "2026-09-23", includeIncomplete: "true" });
     expect(calls.map(call => [call.dimensions, call.granularity, call.metricCodes])).toEqual([
-      ["channel", "day", "M001,M003,M005,M099"], ["channel", "summary", "M001,M003,M005"],
+      ["channel", "day", "M001,M003,M005,M099"], ["channel", "summary", "M001,M003,M005,M099"],
       ["downloadPlatform", "day", "M003"], ["downloadPlatform", "summary", "M003"]
     ]);
     expect(result.channel).toMatchObject({ completeness: "unknown", day: { state: "empty" }, summary: { state: "empty" }, groups: [] });
@@ -159,7 +161,7 @@ describe("获客动态分组独立读取", () => {
     expect(result.downloadPlatform.groups.map(group => group.label)).toEqual(keys);
     expect(series(result, "M003").points.map(point => [point.state, point.value])).toEqual([["available", 3], ["no_record", null]]);
     expect(series(result, "M003").summary).toMatchObject({ state: "available", value: 80, ruleVersion: "actual-rule" });
-    expect(series(result, "M099").summary).toMatchObject({ state: "unsupported", value: null, ruleVersion: null });
+    expect(series(result, "M099").summary).toMatchObject({ state: "no_record", value: null, ruleVersion: null });
     expect(result.channel.summary).toMatchObject({ generatedAt: "2026-09-23T01:00:00+08:00", watermark: "actual-watermark" });
     expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
   });
@@ -215,15 +217,19 @@ describe("获客动态分组独立读取", () => {
       expect((await onlyDay(rows)).channel.day.state).toBe("invalid_response");
     }
   });
-  test("summary不能带日期，单日M099可直返", async () => {
+  test("多日 M099 使用独立区间比率，summary 不得携带业务日", async () => {
     const invalid = await run(params => params.dimensions === "channel" && params.granularity === "summary" ? [row()] : []);
     expect(invalid.channel.summary.state).toBe("invalid_response");
     const result = await run(params => {
-      if (params.dimensions !== "channel" || params.granularity !== "summary") return [];
+      if (params.dimensions !== "channel") return [];
       expect(params.metricCodes).toContain("M099");
-      return [row({ metricCode: "M099", businessDate: undefined, unit: "ratio", value: 0.5, numerator: 2, denominator: 4 })];
-    }, { ...query, dateRange: [query.dateRange[0], query.dateRange[0]] });
-    expect(series(result, "M099").summary).toMatchObject({ value: 0.5, inputs: [{ value: 2 }, { value: 4 }] });
+      return params.granularity === "summary"
+        ? [row({ metricCode: "M099", businessDate: undefined, unit: "ratio", value: 0.5, numerator: 2, denominator: 4 })]
+        : [row({ metricCode: "M099", unit: "ratio", value: 0.75, numerator: 3, denominator: 4 })];
+    });
+    expect(series(result, "M099").points[0]).toMatchObject({ value: 0.75, inputs: [{ value: 3 }, { value: 4 }] });
+    expect(series(result, "M099").summary).toMatchObject({ value: 0.5, inputs: [{ value: 2 }, { value: 4 }], ruleVersion: "landing-ip-conversion-range-v1" });
+    expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
   });
   test("M099不添加无来源依据的比率上限；浮点校验采用现有adapter尺度", async () => {
     const result = await onlyDay([row({ metricCode: "M099", unit: "ratio", value: 2, numerator: 4, denominator: 2 }),
@@ -344,7 +350,7 @@ describe("获客批量指标选择拒绝的有界隔离", () => {
     expect(dailyAcquisitionGroupsSchema.safeParse(result).success).toBe(true);
   });
 
-  test("summary恢复使用独立直返值；其他三路不受影响，跨日M099不请求", async () => {
+  test("summary 恢复使用独立直返值，跨日 M099 与其他指标各自结算", async () => {
     const calls: Params[] = [];
     const result = await readBiV1AcquisitionGroups({ get: async (_path, params) => {
       calls.push(params);
@@ -356,8 +362,8 @@ describe("获客批量指标选择拒绝的有界隔离", () => {
         ...(params.granularity === "summary" ? { businessDate: undefined, ...(["M001", "M003"].includes(id) ? { value: 80, numerator: 80 } : {}) } : {}) })));
     } }, query, metricFor);
     const summaryCalls = calls.filter(params => params.dimensions === "channel" && params.granularity === "summary");
-    expect(summaryCalls).toHaveLength(4); expect(summaryCalls.every(params => !params.metricCodes.includes("M099"))).toBe(true);
-    expect(calls).toHaveLength(7);
+    expect(summaryCalls).toHaveLength(5); expect(summaryCalls.some(params => params.metricCodes === "M099")).toBe(true);
+    expect(calls).toHaveLength(8);
     expect(series(result, "M003").summary).toMatchObject({ state: "available", value: 80, ruleVersion: "actual-rule" });
     expect(series(result, "M003").points[0].value).toBe(3);
     expect(series(result, "M005").summary).toMatchObject({ state: "source_failure", value: null });
@@ -367,7 +373,7 @@ describe("获客批量指标选择拒绝的有界隔离", () => {
       expect(series(result, id).summary.sourceStatus).toBeUndefined();
     }
     expectIncompleteChannelScope(result, "day"); expectIncompleteChannelScope(result, "summary");
-    expect(series(result, "M099").summary.state).toBe("unsupported");
+    expect(series(result, "M099").summary).toMatchObject({ state: "available", value: 0.5, ruleVersion: "landing-ip-conversion-range-v1" });
     expect(result.downloadPlatform.groups[0].series[0].summary.value).toBe(80);
     expect(result.channel.day.generatedAt).toBe("2026-09-23T01:00:00+08:00");
     expect(result.channel.summary.generatedAt).toBeNull();
@@ -394,7 +400,7 @@ describe("获客批量指标选择拒绝的有界隔离", () => {
       if (params.metricCodes.includes(",") || params.dimensions === "downloadPlatform") throw rejected();
       return envelope([]);
     } }, query, metricFor);
-    expect(calls).toHaveLength(11);
+    expect(calls).toHaveLength(12);
     expect(calls.filter(params => params.dimensions === "downloadPlatform")).toHaveLength(2);
     expect(result.channel).toMatchObject({ groups: [], day: { state: "empty", generatedAt: null }, summary: { state: "empty", generatedAt: null } });
     expect(result.downloadPlatform).toMatchObject({ groups: [], day: { state: "source_failure" }, summary: { state: "source_failure" } });

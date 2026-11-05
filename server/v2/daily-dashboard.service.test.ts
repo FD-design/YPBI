@@ -15,6 +15,10 @@ const row = (fields: Record<string, unknown> = {}) => ({ pid: "PH", sumDate: "20
   watchUserCount: 80, totalChargeUserCount: 4, newUserChargeUserCount: 2, diamondChargeAmt: "40.50", adsCount: 20, navCount: 5,
   totalClickedCount: 26, adsClickedPerson: 10, navClickedPerson: 3, totalClickedPerson: 11, secret: "must-never-project", ...fields });
 const emptyMetrics = { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-10-09T00:00:00Z", watermark: null, rows: [] } };
+const retainedCountRow = (businessDate: string, retentionDay: string, numerator: number, denominator: number, dataStatus = "READY") => ({
+  metricCode: "M115", businessDate, dimensions: { pid: "PH", retentionDay }, value: dataStatus === "READY" ? numerator : null,
+  numerator, denominator, unit: "count", dataStatus, metricVersion: "bi-v1", ruleVersion: `retention-${retentionDay.toLowerCase()}-v1`
+});
 const service = (rows: Record<string, unknown>[] = [row()], envelope = {}) => new DailyDashboardService({ get: async (path) => path === "/api/admin/bi/v1/metrics" ? emptyMetrics : path.endsWith("pDaySum") ? ({ code: 200, msg: { pageData: rows, totalCount: rows.length, ...envelope } }) : path.includes("reletionsStatPlus") ? {data:[]} : {msg:{pageData:[],totalData:[],totalCount:0}} });
 const getSeries = async (id: string, fields: Record<string, unknown> = {}) => (await service([row(fields)]).execute(query)).data.series.find(series => series.metric.id === id)!;
 
@@ -861,9 +865,13 @@ describe("bi-v1 通用指标渐进替换", () => {
   test("核心总览批次中的未就绪脏值不压掉其他 READY 指标", async () => {
     const metricRow = (metricCode: string, value: number, numerator = value, denominator = 0, unit: "count" | "ratio" = "count") => ({
       metricCode, businessDate: date, dimensions: { pid: "PH" }, value, numerator, denominator, unit,
-      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1"
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M099" ? "landing-ip-click-rate-v1" : "rule-v1"
     });
-    const result = await new DailyDashboardService({ get: async path => {
+    const result = await new DailyDashboardService({ get: async (path, params) => {
+      if (path === "/api/admin/bi/v1/metrics" && params.dimensions === "retentionDay") {
+        return { ...emptyMetrics, msg: { ...emptyMetrics.msg,
+          rows: ["D1", "D3", "D7", "D30"].map((period, index) => retainedCountRow(date, period, 8 - index, 10)) } };
+      }
       if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
         metricVersion: "bi-v1", generatedAt: "2026-09-06T10:00:00+08:00", watermark: null,
         rows: [
@@ -1059,7 +1067,8 @@ describe("bi-v1 通用指标渐进替换", () => {
   test("经营明细总体与交叉维度一次接入，不把已返回维度误判为待支持", async () => {
     const metricRow = (metricCode: string, value: number, dimensions: Record<string, string> = {}, numerator = value, denominator = 0, unit: "count" | "ratio" | "count_per_user" = "count") => ({
       metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, value, numerator, denominator, unit,
-      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "first-batch-v1"
+      dataStatus: "READY", metricVersion: "bi-v1",
+      ruleVersion: metricCode === "M110" ? "ad-clicks-per-active-user-v3" : metricCode === "M111" ? "ad-raw-click-v2" : "first-batch-v1"
     });
     const rows = [
       metricRow("M018", 9),
@@ -1074,6 +1083,7 @@ describe("bi-v1 通用指标渐进替换", () => {
       metricRow("M020", .8, {}, 8, 10, "ratio"), metricRow("M020", .75, { d0Platform: "Android" }, 3, 4, "ratio"),
       metricRow("M020", 1, { d0Platform: "iOS" }, 2, 2, "ratio"), metricRow("M020", .5, { acquisitionType: "natural" }, 2, 4, "ratio"),
       metricRow("M020", 1, { acquisitionType: "internal_channel" }, 2, 2, "ratio"),
+      retainedCountRow(date, "D1", 8, 10),
       metricRow("M110", 2, { userType: "new" }, 4, 2, "count_per_user"), metricRow("M111", .5, { userType: "new" }, 1, 2, "ratio"),
       metricRow("M113", 4), metricRow("M113", 1, { payment_method: "alipay" }), metricRow("M113", 2, { payment_method: "wechat" }), metricRow("M113", 1, { payment_method: "usdt" }),
       metricRow("M112", 2, { payment_method: "usdt" }), metricRow("M060", 1, { payment_method: "usdt" }), metricRow("M114", .5, { payment_method: "usdt" }, 1, 2, "ratio")
@@ -1182,6 +1192,9 @@ describe("来源不完整的诊断输入与正式值隔离", () => {
             unit: code === "M055" ? "count" : "ratio", dataStatus: ready ? "READY" : "SOURCE_INCOMPLETE",
             metricVersion: "bi-v1", ruleVersion: code === "M055" ? "ad-raw-click-v2" : "retention-d0-D1-v1" };
         });
+        if (params.metricCodes === "M115") {
+          rows.push(retainedCountRow(date, "D1", ready ? 2 : 8, ready ? 3 : 10, ready ? "READY" : "SOURCE_INCOMPLETE"));
+        }
         return { ...emptyMetrics, msg: { ...emptyMetrics.msg, rows } };
       }
       if (legacy && path.includes("reletionsStatPlus")) return { data: [{ pid: "PH", sumDate: date,
@@ -1224,7 +1237,7 @@ describe("来源不完整的诊断输入与正式值隔离", () => {
   test("独立旧源回退仍使用完整旧源输入，不混入不完整的新源输入", async () => {
     const result = await execute("5.8", historicalDate, true);
     expect(series(result, "M020").points[0]).toMatchObject({ state: "available", value: .9, inputs: [{ value: 9 }, { value: 10 }] });
-    expect(series(result, "M115.d1").points[0]).toMatchObject({ state: "available", value: 9, inputs: [{ value: 9 }] });
+    expect(series(result, "M115.d1").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null, inputs: [{ value: null }] });
     expect(series(result, "M020.android").points[0]).toMatchObject({ state: "no_value", sourceStatus: "SOURCE_INCOMPLETE", value: null,
       inputs: [{ value: 1 }, { value: 2 }] });
   });
@@ -1377,7 +1390,8 @@ describe("bi-v1 广告直读与新用户交叉投影", () => {
     metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, numerator, denominator,
     value: denominator ? numerator / denominator : numerator,
     unit: metricCode === "M110" ? "count_per_user" : metricCode === "M081" || metricCode === "M111" ? "ratio" : "count",
-    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M055" ? "ad-raw-click-v2" : "rule-v1", ...overrides
+    dataStatus: "READY", metricVersion: "bi-v1",
+    ruleVersion: metricCode === "M110" ? "ad-clicks-per-active-user-v3" : ["M055", "M111"].includes(metricCode) ? "ad-raw-click-v2" : "rule-v1", ...overrides
   });
   const execute = async (boardId: string, rowsForScope: (scope: Scope) => MetricRow[], legacyRows: MetricRow[] = [],
     dateRange: [string, string] = [date, date]) => {
@@ -1444,6 +1458,22 @@ describe("bi-v1 广告直读与新用户交叉投影", () => {
       for (const suffix of ["navigation", "navigation.new"])
         expect(point(`${code}.${suffix}`)).toMatchObject({ state: "no_record", value: null, inputs: [{ value: null }] });
     }
+  });
+
+  test("广告人均次数和渗透率总体只使用各自新版行，合法空规则保留未就绪", async () => {
+    const { point, requests } = await execute("5.2", scope => scope.adType ? [] : [
+      metricRow("M110", scope, 8, 0, { value: null, dataStatus: "SOURCE_INCOMPLETE", ruleVersion: "" }),
+      metricRow("M111", scope, 0, 3),
+      metricRow("M094", scope, 7)
+    ], legacyAdRows);
+    expect(point("M110")).toMatchObject({ value: null, state: "no_value", sourceStatus: "SOURCE_INCOMPLETE",
+      inputs: [{ value: null }, { value: null }] });
+    expect(point("M111")).toMatchObject({ value: 0, state: "available", sourceStatus: "READY",
+      inputs: [{ value: 0 }, { value: 3 }] });
+    expect(point("M094.total").value).toBe(7);
+    expect(requests.filter(request => !Object.keys(request.scope).length
+      && request.codes.some(code => code === "M110" || code === "M111")).map(request => request.codes))
+      .toEqual([expect.arrayContaining(["M110", "M111"])]);
   });
 
   for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const) {
@@ -1533,7 +1563,8 @@ describe("bi-v1 分维单位与状态回归", () => {
   const date = "2026-09-05";
   const metricRow = (metricCode: string, overrides: Record<string, unknown> = {}) => ({
     metricCode, businessDate: date, dimensions: { pid: "PH" }, value: 1, numerator: 1, denominator: 0,
-    unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1", ...overrides
+    unit: "count", dataStatus: "READY", metricVersion: "bi-v1",
+    ruleVersion: metricCode === "M110" ? "ad-clicks-per-active-user-v3" : metricCode === "M111" ? "ad-raw-click-v2" : "rule-v1", ...overrides
   });
   const execute = (rows: Record<string, unknown>[], boardId = "5.2") => new DailyDashboardService({ get: async (path, params) => {
     if (path === "/api/admin/bi/v1/metrics") return { code: 200, msg: {
@@ -1577,7 +1608,7 @@ describe("bi-v1 分维单位与状态回归", () => {
         value: unit === "count" ? 2 : 2 / 3, numerator: 2, denominator: unit === "count" ? 0 : 3
       })]);
       expect(result.data.series.find(item => item.metric.id === "M110.new")!.points[0]).toMatchObject({
-        state: "invalid_value", value: null, sourceStatus: "READY", inputs: [{ value: null }, { value: null }]
+        state: "invalid_value", value: null, inputs: [{ value: null }, { value: null }]
       });
     });
   }
@@ -1604,8 +1635,9 @@ describe("bi-v1 分维单位与状态回归", () => {
     expect(point("M110.new")).toMatchObject({ state: "available", sourceStatus: "READY", value: 2 / 3,
       inputs: [{ value: 2 }, { value: 3 }] });
     for (const id of ["M111.new", "M114", "M114.alipay"]) {
-      expect(point(id)).toMatchObject({ state: "invalid_value", sourceStatus: "READY", value: null,
+      expect(point(id)).toMatchObject({ state: "invalid_value", value: null,
         inputs: [{ value: null }, { value: null }] });
+      expect(point(id).sourceStatus).toBe(id === "M111.new" ? undefined : "READY");
     }
   });
 
@@ -1616,13 +1648,14 @@ describe("bi-v1 分维单位与状态回归", () => {
           dimensions: { pid: "PH", userCohort: "new" }, value: .5, numerator: 1, denominator: 2,
           unit: code === "M110" ? "count_per_user" : "ratio", dataStatus
         })),
-        metricRow("M020", { value: .5, numerator: 1, denominator: 2, unit: "ratio", dataStatus })
+        metricRow("M020", { value: .5, numerator: 1, denominator: 2, unit: "ratio", dataStatus }),
+        { ...retainedCountRow(date, "D1", 1, 2, dataStatus), value: 1 }
       ]);
       const ids = dataStatus === "SOURCE_INCOMPLETE" ? ["M110.new", "M111.new"] : ["M110.new", "M111.new", "M020", "M115.d1"];
       for (const id of ids) {
         const point = result.data.series.find(item => item.metric.id === id)!.points[0];
         expect(point).toMatchObject({ state, sourceStatus: dataStatus, value: null });
-        expect(point.inputs.map(input => input.value)).toEqual(dataStatus === "SOURCE_INCOMPLETE" && id === "M111.new" ? [1, 2] : point.inputs.map(() => null));
+        expect(point.inputs.map(input => input.value)).toEqual(point.inputs.map(() => null));
       }
     });
   }
@@ -1702,18 +1735,22 @@ describe("bi-v1 分维单位与状态回归", () => {
     }
   }
 
-  test("D1/D3/D7/D30人数使用同批精确分子，零基数保留人数真零", async () => {
+  test("D1/D3/D7/D30人数使用各自M115结果，零基数保留人数真零", async () => {
     const codes = ["M020", "M021", "M022", "M023"] as const;
     const periods = ["d1", "d3", "d7", "d30"] as const;
     for (const denominator of [3, 0]) {
       const numerator = denominator ? 1 : 0;
-      const result = await execute(codes.map(code => metricRow(code, {
-        value: denominator ? numerator / denominator : null, numerator, denominator, unit: "ratio"
-      })));
+      const directCounts = periods.map((_, index) => denominator ? index : 0);
+      const result = await execute([
+        ...codes.map(code => metricRow(code, {
+          value: denominator ? numerator / denominator : null, numerator, denominator, unit: "ratio"
+        })),
+        ...periods.map((period, index) => retainedCountRow(date, period.toUpperCase(), directCounts[index], denominator))
+      ]);
       codes.forEach((code, index) => {
         const ratio = result.data.series.find(item => item.metric.id === code)!.points[0];
         const count = result.data.series.find(item => item.metric.id === `M115.${periods[index]}`)!.points[0];
-        expect(count).toMatchObject({ state: "available", sourceStatus: "READY", value: numerator, inputs: [{ value: numerator }] });
+        expect(count).toMatchObject({ state: "available", sourceStatus: "READY", value: directCounts[index], inputs: [{ value: directCounts[index] }] });
         expect(ratio).toMatchObject({ state: denominator ? "available" : "zero_denominator", inputs: [{ value: numerator }, { value: denominator }] });
       });
     }
@@ -1879,7 +1916,7 @@ describe("日看板真实候选读取", () => {
     for (const id of ["M055.navigation", "M055.total", "M094.total"]) {
       expect(result.data.series.find(series => series.metric.id === id)!.points[0]).toMatchObject({ state: "no_record", value: null });
     }
-    expect(value("M110")).toBe(.2); expect(value("M111")).toBe(.1);
+    expect(value("M110")).toBeNull(); expect(value("M111")).toBeNull();
     expect(JSON.stringify(result)).not.toContain("must-never-project");
     expect(result.data).toMatchObject({ validationStatus: "pending_validation", completeness: "unknown", watermark: null });
     expect(result.data.series.find(series=>series.metric.id==="M016")!.points[1].state).toBe("no_record");

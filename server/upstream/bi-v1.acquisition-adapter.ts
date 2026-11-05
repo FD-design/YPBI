@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { DAILY_ACQUISITION_MAX_GROUPS, DAILY_ACQUISITION_MAX_POINTS, DAILY_ACQUISITION_METRIC_IDS, type DailyAcquisitionGroupResult, type DailyAcquisitionGroups, type DailyAcquisitionRequestStatus, type DailyAcquisitionSummary, type DailyDashboardQuery, type DailyReadingMetric } from "../../contracts/daily-dashboard";
-import { BI_V1_METRICS_API } from "./bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, LANDING_IP_CONVERSION_RULE_VERSIONS } from "./bi-v1.metrics-adapter";
 import { isBiV1MetricSelectionRejection } from "./bi-v1.request-isolation";
 import { UpstreamError, type UpstreamClient } from "./client";
 
@@ -18,7 +18,7 @@ type Granularity = "day" | "summary";
 type Query = Pick<DailyDashboardQuery, "pid" | "dateRange">;
 type Reading = DailyAcquisitionSummary;
 type GroupRows = Map<string, Map<string, Reading>>;
-type ScopeRow = DailyAcquisitionRequestStatus["scopeStatuses"][number] & { ruleVersion: string };
+type ScopeRow = DailyAcquisitionRequestStatus["scopeStatuses"][number] & { ruleVersion: string; invalid?: true };
 type RequestResult = { status: DailyAcquisitionRequestStatus; groups: GroupRows; scopes: Map<string, ScopeRow>; failedMetrics: Set<AcquisitionGroupMetric>; rowCount: number };
 const rowSchema = z.object({
   metricCode: z.enum(["M001", "M003", "M005", "M006", "M007", "M099"]),
@@ -47,7 +47,15 @@ const failure = (state: "source_failure" | "invalid_response"): RequestResult =>
 });
 const rowKey = (metric: string, date?: string) => JSON.stringify([metric, date ?? null]);
 
-function reading(row: z.infer<typeof rowSchema>, metric: DailyReadingMetric): Reading {
+function invalidConversionRow(row: z.infer<typeof rowSchema>, granularity: Granularity) {
+  if (row.metricCode !== "M099") return false;
+  const ready = row.dataStatus === "READY";
+  return row.unit !== "ratio"
+    || (ready || row.ruleVersion !== "") && row.ruleVersion !== LANDING_IP_CONVERSION_RULE_VERSIONS[granularity];
+}
+
+function reading(row: z.infer<typeof rowSchema>, metric: DailyReadingMetric, granularity: Granularity): Reading {
+  if (invalidConversionRow(row, granularity)) return unavailable(metric, "invalid_value");
   if (row.dataStatus !== "READY") return unavailable(metric, statusState(row.dataStatus), row.dataStatus, row.ruleVersion);
   const parsed = readyNumbersSchema.safeParse(row);
   if (!parsed.success) return unavailable(metric, "invalid_value", "READY", row.ruleVersion);
@@ -96,17 +104,18 @@ async function queryGroups(client: Pick<UpstreamClient, "get">, query: Query, di
     if (!hasGroup) {
       // A pid-only non-READY row describes the request scope, not a synthetic group.
       scopes.set(rowKey(row.metricCode, row.businessDate), { metricId: row.metricCode, sourceStatus: row.dataStatus as ScopeRow["sourceStatus"], ruleVersion: row.ruleVersion,
+        ...(invalidConversionRow(row, granularity) ? { invalid: true } : {}),
         ...(row.businessDate ? { businessDate: row.businessDate } : {}) });
       continue;
     }
     const key = group as string, values = groups.get(key) ?? new Map<string, Reading>();
-    values.set(rowKey(row.metricCode, row.businessDate), reading(row, metricFor(row.metricCode)));
+    values.set(rowKey(row.metricCode, row.businessDate), reading(row, metricFor(row.metricCode), granularity));
     groups.set(key, values);
     if (groups.size > DAILY_ACQUISITION_MAX_GROUPS) return failure("invalid_response");
   }
   if ([...scopes.values()].some(scope => scope.businessDate && scopes.has(rowKey(scope.metricId)) && scopes.get(rowKey(scope.metricId))!.sourceStatus !== scope.sourceStatus)) return failure("invalid_response");
   return { groups, scopes, failedMetrics: new Set(), rowCount: rows.length, status: { state: rows.length ? "returned" : "empty", generatedAt, watermark,
-    scopeStatuses: [...scopes.values()].map(({ ruleVersion: _ruleVersion, ...scope }) => scope) } };
+    scopeStatuses: publicScopeStatuses(scopes) } };
 }
 
 async function requestGroups(client: Pick<UpstreamClient, "get">, query: Query, dimension: AcquisitionGroupDimension,
@@ -141,8 +150,12 @@ async function requestGroups(client: Pick<UpstreamClient, "get">, query: Query, 
   // The contract needs real groups to carry per-metric request failures.
   if (result.failedMetrics.size && !result.groups.size) return failure("source_failure");
   result.status = { state: result.rowCount ? "returned" : "empty", generatedAt: null, watermark: null,
-    scopeStatuses: [...result.scopes.values()].map(({ ruleVersion: _ruleVersion, ...scope }) => scope) };
+    scopeStatuses: publicScopeStatuses(result.scopes) };
   return result;
+}
+
+function publicScopeStatuses(scopes: Map<string, ScopeRow>): DailyAcquisitionRequestStatus["scopeStatuses"] {
+  return [...scopes.values()].flatMap(({ invalid, ruleVersion: _ruleVersion, ...scope }) => invalid ? [] : [scope]);
 }
 
 function selectReading(result: RequestResult, key: string, id: AcquisitionGroupMetric, metric: DailyReadingMetric, date?: string): Reading {
@@ -150,7 +163,8 @@ function selectReading(result: RequestResult, key: string, id: AcquisitionGroupM
   if (result.failedMetrics.has(id)) return unavailable(metric, "source_failure");
   // A scope-level status takes precedence over rows in that incomplete scope.
   const scope = result.scopes.get(rowKey(id)) ?? result.scopes.get(rowKey(id, date));
-  if (scope) return unavailable(metric, statusState(scope.sourceStatus), scope.sourceStatus, scope.ruleVersion);
+  if (scope) return scope.invalid ? unavailable(metric, "invalid_value")
+    : unavailable(metric, statusState(scope.sourceStatus), scope.sourceStatus, scope.ruleVersion);
   const rows = result.groups.get(key), range = rows?.get(rowKey(id));
   if (date && range && range.sourceStatus !== "READY") return range;
   return rows?.get(rowKey(id, date)) ?? unavailable(metric, "no_record");
@@ -180,8 +194,7 @@ function dimensionResult(query: Query, dimension: AcquisitionGroupDimension, day
         const point = day.status.state === "returned" && !supportsAcquisitionGroupMetric(dimension, id)
           ? unavailable(metric, "no_value") : selectReading(day, key, id, metric, date);
         return { ...point, state: point.state as Exclude<Reading["state"], "unsupported">, date };
-      }), summary: id === "M099" && days > 1 ? unavailable(metric, "unsupported")
-        : summary.status.state === "returned" && !supportsAcquisitionGroupMetric(dimension, id)
+      }), summary: summary.status.state === "returned" && !supportsAcquisitionGroupMetric(dimension, id)
           ? unavailable(metric, "no_value") : selectReading(summary, key, id, metric) };
     })
   })) };
@@ -190,10 +203,9 @@ function dimensionResult(query: Query, dimension: AcquisitionGroupDimension, day
 /** Independent queries preserve raw group keys and direct day/summary results. */
 export async function readBiV1AcquisitionGroups(client: Pick<UpstreamClient, "get">, query: Query,
   metricFor: (id: AcquisitionGroupMetric) => DailyReadingMetric): Promise<DailyAcquisitionGroups> {
-  const channelSummary = query.dateRange[0] === query.dateRange[1] ? ACQUISITION_GROUP_REQUEST_METRICS.channel : ACQUISITION_GROUP_REQUEST_METRICS.channel.filter(id => id !== "M099");
   const [channelDay, channelPeriod, downloadDay, downloadPeriod] = await Promise.all([
     requestGroups(client, query, "channel", "day", ACQUISITION_GROUP_REQUEST_METRICS.channel, metricFor),
-    requestGroups(client, query, "channel", "summary", channelSummary, metricFor),
+    requestGroups(client, query, "channel", "summary", ACQUISITION_GROUP_REQUEST_METRICS.channel, metricFor),
     requestGroups(client, query, "downloadPlatform", "day", ACQUISITION_GROUP_REQUEST_METRICS.downloadPlatform, metricFor),
     requestGroups(client, query, "downloadPlatform", "summary", ACQUISITION_GROUP_REQUEST_METRICS.downloadPlatform, metricFor)
   ]);

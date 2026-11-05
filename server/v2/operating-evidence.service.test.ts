@@ -4,7 +4,7 @@ import { dailyDashboardSuccessSchema, type DailyDashboardQuery, type DailyDashbo
 import { OPERATING_METRIC_IDS, operatingSnapshotDates } from "../../contracts/operating-detail-projection";
 import { OPERATING_EVIDENCE_BOUNDARY, OPERATING_EVIDENCE_VERSION, operatingEvidenceQuerySchema, type OperatingEvidenceQuery } from "../../contracts/operating-evidence";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, BI_V1_RETENTION_DAYS } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamError } from "../upstream/client";
 import { CHANNEL_V2_API, DailyDashboardService, PAYMENT_RATE_API } from "./daily-dashboard.service";
 import type { OperatingEvidenceBusinessRow } from "./operating-evidence-collector";
@@ -47,7 +47,8 @@ function fixture(request: OperatingEvidenceQuery, mode: Mode = "ready", held = f
           value, numerator: ratio ? zero ? 0 : 1 : value, denominator: ratio ? 2 : 0,
           unit: metricCode === "M058" ? "currency" : metricCode === "M102" ? "seconds" : metricCode === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
           dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-rmb-v2"
-            : metricCode === "M102" ? "foreground-watch-duration-v1" : ["M034", "M036"].includes(metricCode) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "evidence-fixture-v1" };
+            : metricCode === "M102" ? "foreground-watch-duration-v1" : metricCode === "M099" ? "landing-ip-click-rate-v1" : metricCode === "M110" ? "ad-clicks-per-active-user-v3" : metricCode === "M111" ? "ad-raw-click-v2"
+            : ["M034", "M036"].includes(metricCode) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "evidence-fixture-v1" };
         if (path === BI_V1_PLAYBACK_API && metricCode === "M034") Object.assign(row, { value: zero ? 0 : 1, numerator: zero ? 0 : 1 });
         if (path === BI_V1_PLAYBACK_API && metricCode === "M036") Object.assign(row, { value: zero ? null : 0.5, denominator: zero ? 0 : 2 });
         if (["processing", "range_processing"].includes(mode) && metricCode === "M016") {
@@ -62,6 +63,10 @@ function fixture(request: OperatingEvidenceQuery, mode: Mode = "ready", held = f
         });
         if (mode === "wrong_rule" && ["M058", "M102", "M034", "M036"].includes(metricCode)) row.ruleVersion = "older-rule-fixture";
         if (mode === "scope_conflict" && filters.userCohort === "old" && filters.clientPlatform === "android") row.dimensions.pid = "OTHER";
+        if (metricCode === "M115") return BI_V1_RETENTION_DAYS.map((retentionDay, index) => ({
+          ...row, dimensions: { pid: request.pid, retentionDay }, value: zero ? 0 : index + 1, numerator: zero ? 0 : index + 1,
+          denominator: 10, ruleVersion: `retention-${retentionDay.toLowerCase()}-v1`
+        }));
         return [row];
       })));
     }
@@ -144,9 +149,9 @@ describe("operating evidence authoritative service integration", () => {
       expect(evidence.boundary).toEqual(OPERATING_EVIDENCE_BOUNDARY);
       expect(source.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
         .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
-      expect(source.reads).toHaveLength(14);
+      expect(source.reads).toHaveLength(15);
       expect(source.reads.every(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path))).toBe(true);
-      expect(evidence.calls).toHaveLength(14);
+      expect(evidence.calls).toHaveLength(15);
       expect(evidence.projection.data.series).toHaveLength(93);
       expect(evidence.calls.every(call => call.httpStatus === null && call.cacheHit === null)).toBe(true);
     });
@@ -173,8 +178,8 @@ describe("operating evidence authoritative service integration", () => {
       expect(observed.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
         .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
       if (view === "snapshot") {
-        expect(observed.reads).toHaveLength({ ready: 14, processing: 14, incomplete: 19, wrong_rule: 14,
-          missing_scope: 15, scope_conflict: 14, legacy: 22, network_failure: 22 }[mode]);
+        expect(observed.reads).toHaveLength({ ready: 15, processing: 15, incomplete: 20, wrong_rule: 15,
+          missing_scope: 16, scope_conflict: 15, legacy: 23, network_failure: 23 }[mode]);
         expect(evidence.projection.data.series.map(item => item.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
         expect(evidence.projection.data.series.every(item => item.points.map(point => point.date).join() === operatingSnapshotDates(query.dateRange).join())).toBe(true);
       } else {
@@ -201,8 +206,8 @@ describe("operating evidence authoritative service integration", () => {
         expect(actual.params.metricCodes.split(",")).toEqual(actual.params.metricCodes.split(",").sort());
       }
       if (view === "snapshot") {
-        expect(evidence.calls).toHaveLength(14);
-        expect(evidence.calls.filter(call => call.path === BI_V1_METRICS_API && call.params.granularity === "day")).toHaveLength(12);
+        expect(evidence.calls).toHaveLength(15);
+        expect(evidence.calls.filter(call => call.path === BI_V1_METRICS_API && call.params.granularity === "day")).toHaveLength(13);
       }
       for (const { value, before } of observed.payloads) {
         expect(JSON.stringify(value)).toBe(before);
@@ -292,9 +297,9 @@ describe("operating evidence authoritative service integration", () => {
     const evidence = await successful;
     const baseline = await new DailyDashboardService(fixture(input).client, now).execute(queryFor(input));
     expect(normalize(evidence.projection)).toEqual(normalize(baseline));
-    expect(evidence.calls).toHaveLength(14);
+    expect(evidence.calls).toHaveLength(15);
     expect(evidence.calls.every(call => call.state === "fulfilled" && call.errorCode === null && call.response?.truncated === false)).toBe(true);
-    expect(evidence.calls.map(call => call.sequence)).toEqual(Array.from({ length: 14 }, (_, index) => index + 1));
+    expect(evidence.calls.map(call => call.sequence)).toEqual(Array.from({ length: 15 }, (_, index) => index + 1));
     expect(getEventListeners(healthy.signal, "abort")).toHaveLength(0);
   });
 });

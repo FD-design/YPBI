@@ -158,7 +158,7 @@ describe("动态获客分组可选扩展契约", () => {
       (value: DailyAcquisitionGroups) => { value.channel.day.scopeStatuses = [{ metricId: "M008", sourceStatus: "FAILED" }]; }
     ]) { const value = acquisitionGroups(); mutate(value); expect(dailyAcquisitionGroupsSchema.safeParse(value).success).toBe(false); }
   });
-  test("日期与输入必须对齐查询，多日M099汇总明确不适用", () => {
+  test("日期与输入必须对齐查询，多日 M099 支持独立汇总", () => {
     const missing = groupedResponse(); missing.data.acquisitionGroups.channel.groups[0].series[0].points.pop();
     expect(dailyDashboardMatchesQuery(dailyDashboardSuccessSchema.parse(missing), query, ["M001"])).toBe(false);
     const wrongDate = groupedResponse(); wrongDate.data.acquisitionGroups.channel.groups[0].series[0].points[0].date = "2026-09-04";
@@ -167,8 +167,11 @@ describe("动态获客分组可选扩展契约", () => {
     expect(dailyDashboardMatchesQuery(dailyDashboardSuccessSchema.parse(wrongInput), query, ["M001"])).toBe(false);
     const wrongScope = groupedResponse(); wrongScope.data.acquisitionGroups.channel.day.scopeStatuses = [{ metricId: "M003", sourceStatus: "FAILED", businessDate: "2026-09-04" }];
     expect(dailyDashboardMatchesQuery(dailyDashboardSuccessSchema.parse(wrongScope), query, ["M001"])).toBe(false);
-    const badSummary = groupedResponse(); badSummary.data.acquisitionGroups.channel.groups[0].series[5].summary = structuredClone(badSummary.data.acquisitionGroups.channel.groups[0].series[0].summary);
-    expect(dailyDashboardSuccessSchema.safeParse(badSummary).success).toBe(false);
+    const summary = groupedResponse();
+    summary.data.acquisitionGroups.channel.groups[0].series[5].summary = {
+      ...structuredClone(summary.data.acquisitionGroups.channel.groups[0].series[0].summary), ruleVersion: "landing-ip-conversion-range-v1"
+    };
+    expect(dailyDashboardMatchesQuery(dailyDashboardSuccessSchema.parse(summary), query, ["M001"])).toBe(true);
   });
   test("1000分组上限与总输出点数上限均拒收", () => {
     const excessive = acquisitionGroups(); excessive.downloadPlatform.groups = Array.from({ length: 1001 }, (_, i) => ({ ...structuredClone(excessive.downloadPlatform.groups[0]), key: `group-${i}` }));

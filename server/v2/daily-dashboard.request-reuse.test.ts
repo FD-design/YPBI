@@ -40,17 +40,23 @@ function fixture(invalidRetention = false, holdReads = false, options: {
         if (params.granularity === "summary") dates.push("");
         else for (let day = Date.parse(params.startDate); day < Date.parse(params.endDate); day += 86_400_000)
           dates.push(new Date(day).toISOString().slice(0, 10));
-        const rows = dates.flatMap(date => params.metricCodes.split(",").map(metricCode => {
+        const rows = dates.flatMap(date => params.metricCodes.split(",").flatMap(metricCode => {
           const ratio = ratios.has(metricCode) || metricCode === "M110";
           const numerator = ratio ? invalidRetention && ["M020", "M021", "M022", "M023"].includes(metricCode) ? 3 : 1
             : metricCode === "M058" ? 12.34 : metricCode === "M102" ? 64 : 2;
           const denominator = ratio ? 2 : 0;
-          return { metricCode, ...(date ? { businessDate: date } : {}), dimensions: { pid: params.pid, ...filters,
+          const row = { metricCode, ...(date ? { businessDate: date } : {}), dimensions: { pid: params.pid, ...filters,
             ...(url.pathname === BI_V1_PLAYBACK_API ? { videoType: "short_video" } : {}) },
             numerator, denominator, value: ratio ? numerator / denominator : numerator,
             unit: metricCode === "M058" ? "currency" : metricCode === "M102" ? "seconds" : metricCode === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
             dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-rmb-v2"
-              : metricCode === "M102" ? "foreground-watch-duration-v1" : ["M034", "M036"].includes(metricCode) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "in-memory-v1" };
+              : metricCode === "M102" ? "foreground-watch-duration-v1" : metricCode === "M055" || metricCode === "M111" ? "ad-raw-click-v2"
+              : metricCode === "M110" ? "ad-clicks-per-active-user-v3" : metricCode === "M099" ? "landing-ip-click-rate-v1"
+              : ["M034", "M036"].includes(metricCode) ? BI_V1_EFFECTIVE_PLAY_RULE_VERSION : "in-memory-v1" };
+          return metricCode === "M115" ? ["D1", "D3", "D7", "D30"].map((retentionDay, index) => ({
+            ...row, dimensions: { pid: params.pid, retentionDay }, value: index, numerator: index, denominator: 10,
+            ruleVersion: `retention-${retentionDay.toLowerCase()}-v1`
+          })) : [row];
         }));
         // The playback numerator has its independent count projection.
         if (url.pathname === BI_V1_PLAYBACK_API) rows.filter(row => row.metricCode === "M034").forEach(row => {
@@ -112,9 +118,9 @@ describe("经营快照与整板同源查询复用", () => {
     const [actual, expected] = await Promise.all([result, baseline.service.execute(snapshotQuery)]);
     expect(actual.data.series).toEqual(expected.data.series);
     expect(actual.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
-    expect(delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(12);
+    expect(delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(13);
     expect(delayed.reads.map(readKey).sort()).toEqual(baseline.reads.map(readKey).sort());
-    expect(delayed.reads).toHaveLength(14); // 12 formal metric groups, playback and natural-month summary
+    expect(delayed.reads).toHaveLength(15); // 13 formal metric groups, playback and natural-month summary
     expect(delayed.peakReads()).toBe(1);
   });
 
@@ -134,7 +140,7 @@ describe("经营快照与整板同源查询复用", () => {
     }
     expect(finished).toBe(true);
     const actual = await results;
-    expect(delayed.reads).toHaveLength(20 * 14);
+    expect(delayed.reads).toHaveLength(20 * 15);
     const baseline = fixture();
     const expected = await Promise.all(platforms.map(platform => baseline.service.execute({ ...snapshotQuery, pid: platform.pid })));
     expect(delayed.reads.map(readKey).sort()).toEqual(baseline.reads.map(readKey).sort());
@@ -220,8 +226,9 @@ describe("经营快照与整板同源查询复用", () => {
     const newCohortReads = reads.filter(read => read.path === BI_V1_METRICS_API
       && read.params.dimensionFilters === '{"userCohort":"new"}');
     expect(newCohortReads).toHaveLength(1);
+    expect(reads.filter(read => read.path === BI_V1_METRICS_API && read.params.metricCodes === "M115")).toHaveLength(1);
     expect(reads.filter(read => read.path.endsWith("pRealDayLine"))).toHaveLength(0);
-    expect(reads).toHaveLength(39);
+    expect(reads).toHaveLength(40);
     expect(full.data.series).toHaveLength(121);
     expect(snapshot.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
     for (const series of snapshot.data.series) {
@@ -232,10 +239,10 @@ describe("经营快照与整板同源查询复用", () => {
     for (const result of [full, snapshot]) expect(dailyDashboardSuccessSchema.safeParse(result).success).toBe(true);
   });
 
-  test("注册留存率异常人数不能进入四个周期的留存人数M115投影", async () => {
+  test("注册留存率异常不覆盖独立M115四周期人数", async () => {
     const { service } = fixture(true);
     const result = await service.execute(snapshotQuery);
-    for (const id of ["M020", "M020.android", "M020.ios", "M020.natural", "M020.internal", "M021", "M022", "M023", "M115.d1", "M115.d3", "M115.d7", "M115.d30"]) {
+    for (const id of ["M020", "M020.android", "M020.ios", "M020.natural", "M020.internal", "M021", "M022", "M023"]) {
       const series = result.data.series.find(item => item.metric.id === id)!;
       for (const point of series.points) {
         expect(point.value).toBeNull();
@@ -243,6 +250,10 @@ describe("经营快照与整板同源查询复用", () => {
         expect(point.inputs.every(input => input.value === null)).toBe(true);
       }
     }
+    ["d1", "d3", "d7", "d30"].forEach((period, index) => {
+      const points = result.data.series.find(item => item.metric.id === `M115.${period}`)!.points;
+      for (const point of points) expect(point).toMatchObject({ state: "available", sourceStatus: "READY", value: index });
+    });
     expect(result.data.series.find(item => item.metric.id === "M016")!.points.at(-1)).toMatchObject({ value: 2, state: "available" });
   });
 });

@@ -76,6 +76,7 @@ describe("真实留存专题整页导出", () => {
           expect(row.slice(0, 3)).toEqual([date, registrationCohortScopeLabel(scope), base]);
           expect(row.slice(4, 6)).toEqual([count, count / base * 100]);
           expect(row[8]).toBe("PH");
+          if (scope === "overall") expect(row.slice(12)).toEqual([987654, "已返回 · 待验数"]);
         });
       }
       expect(rows("指标口径").slice(1).map(row => row[0])).toEqual(["M016", "M024", ...REGISTRATION_RETENTION_WINDOWS.map(([id]) => registrationCohortMetricId(id, scope))]);
@@ -86,7 +87,9 @@ describe("真实留存专题整页导出", () => {
       expect(rows("周期统计").slice(1).map(row => [row[0], row[2], row[6]])).toEqual([["当前期", "M016", 100], ["对比期", "M016", 90]]);
       expect(rows("日值比较基准").slice(1).map(row => row[0])).toEqual(["M016", "M016", "M024", "M024"]);
       expect(rows("日值比较基准").slice(1).map(row => [row[4], row[5]])).toEqual([[90, "人"], [null, ""], [.4, "原始比值"], [null, ""]]);
-      expect(JSON.stringify(sheets)).not.toContain("987654");
+      const withoutOfficialCounts = sheets.map(sheet => /^(当前|对比)注册留存$/.test(sheet.name) && scope === "overall"
+        ? { ...sheet, rows: sheet.rows.map(row => row.slice(0, 12)) } : sheet);
+      expect(JSON.stringify(withoutOfficialCounts)).not.toContain("987654");
       expect(JSON.stringify({ live, cohortLive })).toBe(before);
     });
   }

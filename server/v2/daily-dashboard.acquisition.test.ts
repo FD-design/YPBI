@@ -19,7 +19,8 @@ const groupedRows = (params: Params) => envelope(params.metricCodes.split(",").m
   const ratio = !["M001", "M003"].includes(metricCode), summary = params.granularity === "summary";
   return { metricCode, ...(!summary ? { businessDate: query.dateRange[0] } : {}), dimensions: { pid: "PH", [params.dimensions]: "A-B" },
     value: ratio ? 0.5 : summary ? 80 : 3, numerator: ratio ? 2 : summary ? 80 : 3, denominator: ratio ? 4 : 0,
-    unit: ratio ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "returned-rule" };
+    unit: ratio ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1",
+    ruleVersion: metricCode === "M099" ? summary ? "landing-ip-conversion-range-v1" : "landing-ip-click-rate-v1" : "returned-rule" };
 }));
 
 describe("日看板动态获客分组兼容接入", () => {
@@ -36,7 +37,8 @@ describe("日看板动态获客分组兼容接入", () => {
         return { metricCode, ...(params.granularity === "summary" ? {} : { businessDate: selectedQuery.dateRange[0] }),
           dimensions: { pid: "PH", ...(grouped ? { [params.dimensions]: "A-B" } : {}) },
           value: ratio ? numerator / denominator : numerator, numerator, denominator,
-          unit: ratio ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "returned-rule" };
+          unit: ratio ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1",
+          ruleVersion: metricCode === "M099" ? params.granularity === "summary" ? "landing-ip-conversion-range-v1" : "landing-ip-click-rate-v1" : "returned-rule" };
       }));
     } }, () => new Date("2026-09-24T00:00:00Z"));
     const result = await service.execute(selectedQuery), channel = result.data.acquisitionGroups!.channel;

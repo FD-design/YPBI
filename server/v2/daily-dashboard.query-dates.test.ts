@@ -52,7 +52,8 @@ describe("daily dashboard query date reuse", () => {
       expect(reads.filter(read => read.path === CHANNEL_V2_API).map(read => read.params.sumDateBegin.slice(0, 10))).toEqual(dates);
       expect(reads.filter(read => read.path.endsWith("pRealDayLine")).map(read => read.params.startDate.slice(0, 10))).toEqual(dates.filter(date => date < "2026-10-14"));
       const grouped = reads.filter(read => read.path === "/api/admin/bi/v1/metrics" && read.params.granularity === "day");
-      expect(grouped).toHaveLength(18);
+      expect(grouped).toHaveLength(19);
+      expect(grouped.filter(read => read.params.dimensions === "retentionDay").map(read => read.params.metricCodes)).toEqual(["M115"]);
       const navigation = grouped.filter(read => JSON.parse(read.params.dimensionFilters ?? "{}").adType === "navigation");
       expect(navigation.map(read => read.params.metricCodes)).toEqual(["M055,M094", "M055,M094"]);
       expect(grouped.every(read => read.params.startDate === start && read.params.endDate === shift(end, 1))).toBe(true);
@@ -64,15 +65,19 @@ describe("daily dashboard query date reuse", () => {
     });
   }
 
-  test("failed source groups retain all dates, null inputs, and original read counts across leap day", async () => {
+  test("failed source groups retain all dates, null inputs, and independent month and retention reads across leap day", async () => {
     const query: DailyDashboardQuery = { boardId: "5.2", pid: "PH", dateRange: ["2024-02-26", "2024-03-04"] };
     const { dates, reads, client } = fixtures(query, true);
     const result = await new DailyDashboardService(client, now, undefined, { sourceReadTimeoutMs: 60_000 }).execute(query);
     expect(dates).toContain("2024-02-29");
-    expect(reads).toHaveLength(47); // The range intersects two independently queried natural months.
+    expect(reads).toHaveLength(48); // Two independent monthly reads and one four-period retention count read.
+    expect(reads.filter(read => read.params.dimensions === "retentionDay").map(read => read.params.metricCodes)).toEqual(["M115"]);
     for (const series of result.data.series) expect(series.points.map(point => point.date)).toEqual(dates);
     expect(result.data.series.find(series => series.metric.id === "M065")!.points.every(point => point.state === "source_failure"
       && point.value === null && point.inputs.every(input => input.value === null) && !point.sourceStatus)).toBe(true);
+    const counts = result.data.series.filter(series => series.metric.id.startsWith("M115."));
+    expect(counts).toHaveLength(4);
+    expect(counts.every(series => series.points.every(point => point.state === "source_failure" && point.value === null))).toBe(true);
     expect(reads.filter(read => read.path === CHANNEL_V2_API).map(read => read.params.sumDateBegin.slice(0, 10))).toEqual(dates);
     expect(dailyDashboardSuccessSchema.safeParse(result).success).toBe(true);
     expect(dailyDashboardMatchesMapping(result)).toBe(true);

@@ -9,7 +9,7 @@ import { topicMetric } from "./topic-preview-fixtures";
 import { shiftDate } from "../../components/ui/date-range-model";
 import { PreviewExportControl } from "../features/dashboards/PreviewExportControl";
 import { downloadPreviewWorkbook } from "./preview-workbook";
-import type { DailyDashboardQuery, DailyDashboardSuccess } from "../../../contracts/daily-dashboard";
+import type { DailyDashboardQuery, DailyDashboardSuccess, DailyPoint } from "../../../contracts/daily-dashboard";
 import { MenuSelect } from "../../components/ui/MenuSelect";
 import { REGISTRATION_COHORT_SCOPES, REGISTRATION_RETENTION_WINDOWS, isReadableRegistrationCohortPoint, registrationCohortMetricId, registrationCohortScopeLabel, registrationCohortDiagnosticInputs, registrationCohortReferenceRatio, REGISTRATION_DIAGNOSTIC_LABEL, type RegistrationCohortScope } from "../features/dashboards/registration-cohort";
 
@@ -47,6 +47,9 @@ export function useCohortReading(live: LiveDashboardReading | null, range: {star
 export function connectedCohortRows(query: DailyDashboardQuery, state: V2ResourceState<DailyDashboardSuccess | null>, scope: RegistrationCohortScope = "overall"): RetentionMatrixRow[] {
   const series = state.status === "success" ? state.data?.data.series ?? [] : [];
   const days = (Date.parse(query.dateRange[1]) - Date.parse(query.dateRange[0])) / 86400000 + 1;
+  const label = (point: DailyPoint | undefined, diagnosticLabel?: string) =>
+    state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败"
+      : point ? (diagnosticLabel ?? livePointStateLabel(point)) + (liveResourceRetainsResult(state) ? " · 上次查询结果" : " · 待验数") : "字段未返回";
   return Array.from({ length: days }, (_, index) => {
     const date = shiftDate(query.dateRange[0], index);
     const cells = windows.map(([id, days]) => {
@@ -55,18 +58,29 @@ export function connectedCohortRows(query: DailyDashboardQuery, state: V2Resourc
       const ready = isReadableRegistrationCohortPoint(point);
       const diagnostic = registrationCohortDiagnosticInputs(registrationCohortMetricId(id, scope), point);
       const referenceRate = source ? registrationCohortReferenceRatio(source.metric, point) : null;
+      const countPoint = scope === "overall" ? series.find(series => series.metric.id === `M115.d${days}`)
+        ?.points.find(point => point.date === date) : undefined;
       return { id, rate: ready ? point?.value ?? null : null, count: ready ? point?.inputs[0]?.value ?? null : null, base: ready ? point?.inputs[1]?.value ?? null : null, availableAt: shiftDate(date, days),
+        ...(scope === "overall" ? { countReading: {
+          value: countPoint?.state === "available" && countPoint.sourceStatus === "READY" ? countPoint.value : null,
+          status: label(countPoint)
+        } } : {}),
         ...(diagnostic ? { diagnosticInputs: { count: diagnostic.numerator, base: diagnostic.denominator } } : {}),
         ...(referenceRate ? { referenceRate } : {}),
-        status: state.status === "loading" ? "读取中" : state.status === "failure" ? "读取失败" : point ? (diagnostic ? REGISTRATION_DIAGNOSTIC_LABEL : livePointStateLabel(point)) + (liveResourceRetainsResult(state) ? " · 上次查询结果" : " · 待验数") : "字段未返回" };
+        status: label(point, diagnostic ? REGISTRATION_DIAGNOSTIC_LABEL : undefined) };
     });
     const bases = [...new Set(cells.map(cell => cell.base).filter((value): value is number => value !== null))];
     return { date, base: bases.length === 1 ? bases[0] : null, cells };
   });
 }
 export function connectedCohortExportRows(query: DailyDashboardQuery, state: V2ResourceState<DailyDashboardSuccess | null>, scope: RegistrationCohortScope) {
-  return [["注册日","注册日分组","注册人数（计算输入）","留存周期","留存人数（计算输入）","留存率（%）","目标日","状态","平台","查询时间","参考留存率（%）","参考说明"],
-    ...connectedCohortRows(query,state,scope).flatMap(row=>row.cells.map(cell=>{const inputs=retentionCellCalculationInputs(row,cell);return [row.date,registrationCohortScopeLabel(scope),inputs.base,topicMetric(cell.id).name,inputs.count,cell.rate===null?null:cell.rate*100,cell.availableAt,cell.status,query.pid,state.status==="success"?state.data?.data.fetchedAt??null:null,cell.referenceRate ? cell.referenceRate.value*100 : null,cell.referenceRate?.label ?? null];}))];
+  const countColumns = scope === "overall" ? ["留存人数（M115）", "留存人数状态"] : [];
+  return [["注册日","注册日分组","注册人数（计算输入）","留存周期","留存人数（计算输入）","留存率（%）","目标日","状态","平台","查询时间","参考留存率（%）","参考说明", ...countColumns],
+    ...connectedCohortRows(query,state,scope).flatMap(row=>row.cells.map(cell=>{
+      const inputs=retentionCellCalculationInputs(row,cell);
+      return [row.date,registrationCohortScopeLabel(scope),inputs.base,topicMetric(cell.id).name,inputs.count,cell.rate===null?null:cell.rate*100,cell.availableAt,cell.status,query.pid,state.status==="success"?state.data?.data.fetchedAt??null:null,cell.referenceRate ? cell.referenceRate.value*100 : null,cell.referenceRate?.label ?? null,
+        ...(cell.countReading ? [cell.countReading.value, cell.countReading.status] : [])];
+    }))];
 }
 export function ConnectedCohorts({ title, live, pending, open, scope = "overall", onScopeChange }: { title: string; live: LiveDashboardReading; range: {start:string;end:string}; pending:boolean; open:(title:string,content:ReactNode)=>void; scope?:RegistrationCohortScope; onScopeChange?:(scope:RegistrationCohortScope)=>void }) {
   const query = live.query, state = live.state, rows = connectedCohortRows(query, state, scope), scopeLabel = registrationCohortScopeLabel(scope);

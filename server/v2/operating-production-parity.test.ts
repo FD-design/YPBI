@@ -6,7 +6,7 @@ import { loadEnv } from "../config/env";
 import type { Principal } from "../identity/identity-provider";
 import { getEnabledPlatformByPid, platformRegistry, type PlatformSiteId } from "../platforms/registry";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API, type BiV1MetricDataStatus } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, BI_V1_RETENTION_DAYS, type BiV1MetricDataStatus } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamClient } from "../upstream/client";
 import { QueryJobsClient, type QueryJobCreateRequest } from "../upstream/query-jobs";
 import { DailyDashboardService, dailyDashboardMatchesMapping } from "./daily-dashboard.service";
@@ -56,8 +56,13 @@ function sourceRows(query: SourceQuery): FixtureRow[] {
       value: dataStatus !== "READY" ? null : ratio ? denominator === 0 ? null : numerator / denominator : numerator,
       numerator, denominator, unit: code === "M058" ? "currency" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
       dataStatus, metricVersion: "bi-v1", ruleVersion: code === "M058" ? "paid-order-value-rmb-v2"
-        : code === "M102" ? "foreground-watch-duration-v1" : "production-parity-fixture-v1" };
+        : code === "M102" ? "foreground-watch-duration-v1" : code === "M055" || code === "M111" ? "ad-raw-click-v2"
+        : code === "M110" ? "ad-clicks-per-active-user-v3" : code === "M099" ? "landing-ip-click-rate-v1" : "production-parity-fixture-v1" };
     if (code === "M018") return [{ ...base, month: query.startDate.slice(0, 7), cutoffDate: shift(query.endDate, -1), isComplete: query.startDate.slice(0, 7) < generatedAt.slice(0, 7) }];
+    if (code === "M115") return BI_V1_RETENTION_DAYS.map((retentionDay, index) => ({
+      ...base, dimensions: { pid, retentionDay }, value: dataStatus === "READY" ? numerator + index : null,
+      numerator: numerator + index, denominator: 100, ruleVersion: `retention-${retentionDay.toLowerCase()}-v1`
+    }));
     if (!playback) return [base];
     return ["short_video", "long_video"].map((videoType, index) => {
       const effective = 2 + index + platformIndex, starts = effective + 3;
@@ -200,18 +205,19 @@ describe("正式经营全平台同步／异步同源差分", () => {
         .map(read => filterKey(JSON.parse(read.query!.dimensionFilters ?? "{}"))))).toEqual(new Set(expectedFilters.map(filterKey)));
       for (const [index, site] of (["primary", "secondary"] as const).entries()) {
         const task = async.jobs.get(site)!;
-        expect(task.request.queries).toHaveLength(14);
+        expect(task.request.queries).toHaveLength(15);
+        expect(task.request.queries.filter(unit => unit.query.dimensions === "retentionDay").map(unit => unit.query.metricCodes)).toEqual(["M115"]);
         expect(task.request.queries.every(unit => unit.query.pid.split(",").sort().join() === [...groups[index]].sort().join())).toBe(true);
         expect(new Set(task.request.queries.filter(unit => unit.query.granularity === "day" && unit.query.dimensions !== "videoType")
           .map(unit => filterKey(JSON.parse(unit.query.dimensionFilters ?? "{}"))))).toEqual(new Set(expectedFilters.map(filterKey)));
       }
-      expect(modern).toHaveLength(20 * 14);
+      expect(modern).toHaveLength(20 * 15);
       expect(async.reads.filter(read => read.query)).toHaveLength(0);
       const jobReads = async.reads.filter(read => read.path.startsWith("/api/admin/bi/v1/queryJobs"));
       const counts = { syncModernReads: modern.length, asyncCreate: jobReads.filter(read => read.method === "POST").length,
         asyncPoll: jobReads.filter(read => read.method === "GET" && !read.path.endsWith("/result")).length,
         asyncResult: jobReads.filter(read => read.path.endsWith("/result")).length };
-      expect(counts).toMatchObject({ syncModernReads: 280, asyncCreate: 2, asyncPoll: 4 });
+      expect(counts).toMatchObject({ syncModernReads: 300, asyncCreate: 2, asyncPoll: 4 });
       expect(counts.asyncResult).toBeGreaterThanOrEqual(2);
       console.info("production-parity in-memory request counts; no live latency claim", JSON.stringify({ ...counts,
         points: observations.points, nonzero: observations.nonzero, zero: observations.zero, null: observations.null, zeroDenominator: observations.zeroDenominator }));

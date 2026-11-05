@@ -112,11 +112,14 @@ describe("经营取证下载的安全读取诊断扩展", () => {
       expect(data.boundary).toEqual({ kind: "upstream-client-business-field-projection", rawHttp: false, cacheSemantics: "existing-upstream-client-cache-and-inflight", httpStatusAvailable: false, metricAcceptanceGranted: false });
       expect(dailyDashboardSuccessSchema.safeParse(data.projection).success).toBe(true);
       expect(data.projection.data.series).toHaveLength(93);
-      expect(data.calls).toHaveLength(14);
+      expect(data.calls).toHaveLength(15);
+      const retentionRead = (data.calls as OperatingEvidenceCall[]).find(call => call.params.metricCodes === "M115");
+      expect(retentionRead?.params).toMatchObject({ dimensions: "retentionDay", granularity: "day" });
+      expect(retentionRead?.response?.rows[0]).toMatchObject({ dimensions: { retentionDay: "D1" } });
       expect(data.calls.every((call: OperatingEvidenceCall) => call.httpStatus === null && call.cacheHit === null && call.params.pid === pid)).toBe(true);
       const businessRequests = harness.observedRequests.filter(item => ["/api/admin/bi/v1/metrics", "/api/admin/bi/v1/playback"].includes(item.url.pathname));
-      expect(businessRequests).toHaveLength(14);
-      expect(businessRequests.filter(item => item.url.pathname.endsWith("/metrics") && item.url.searchParams.get("granularity") === "day")).toHaveLength(12);
+      expect(businessRequests).toHaveLength(15);
+      expect(businessRequests.filter(item => item.url.pathname.endsWith("/metrics") && item.url.searchParams.get("granularity") === "day")).toHaveLength(13);
       for (const call of data.calls as OperatingEvidenceCall[]) {
         const matching = businessRequests.find(item => item.url.pathname === call.path
           && [...item.url.searchParams].every(([key, value]) => key === "dimensionFilters"
@@ -171,7 +174,7 @@ function rawBusinessPayload(url: URL) {
     const pid = url.searchParams.get("pid");
     const filters = JSON.parse(url.searchParams.get("dimensionFilters") ?? "{}") as Record<string, string>;
     const codes = (url.searchParams.get("metricCodes") ?? "").split(",").filter(Boolean);
-    const rows = codes.flatMap(metricCode => {
+    const rows = codes.flatMap<unknown>(metricCode => {
       const row = {
         metricCode, dimensions: { pid, ...filters, ...(url.pathname.endsWith("/playback") ? { videoType: "long" } : {}) },
         value: null, numerator: 8, denominator: 10,
@@ -179,6 +182,8 @@ function rawBusinessPayload(url: URL) {
         dataStatus: metricCode === "M020" ? "SOURCE_INCOMPLETE" : "PROCESSING", metricVersion: "bi-v1", ruleVersion: "fixture_rule_v1",
         token: primaryToken, cookie: ordinaryCookie, authorization: `Bearer ${secondaryToken}`
       };
+      if (metricCode === "M115") return [{ ...row, businessDate: url.searchParams.get("startDate"),
+        dimensions: { pid, retentionDay: "D1" }, ruleVersion: "retention-d1-v1" }];
       return [{ ...row, businessDate: url.searchParams.get("startDate") }, row];
     });
     return {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { monthlyMetricMetadataSchema } from "../../contracts/monthly-query-scope";
 import { BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
-import { BI_V1_AD_TYPE_VALUES, BI_V1_METRICS_API, biV1MetricCodeSchema } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_AD_TYPE_VALUES, BI_V1_RETENTION_DAYS, BI_V1_METRICS_API, biV1MetricCodeSchema } from "../upstream/bi-v1.metrics-adapter";
 import type { UpstreamClient } from "../upstream/client";
 import { sourceReadErrorCode } from "./source-read-diagnostics";
 
@@ -20,13 +20,14 @@ export interface OperatingEvidenceFieldState {
   readonly sha256?: string;
 }
 const PARAM_FIELDS = ["pid", "startDate", "endDate", "granularity", "metricCodes", "includeIncomplete", "dimensions", "dimensionFilters"] as const;
-const DIMENSION_FIELDS = ["pid", "clientPlatform", "userCohort", "sourceType", "paymentMethod", "videoType", "adType"] as const;
+const DIMENSION_FIELDS = ["pid", "clientPlatform", "userCohort", "sourceType", "paymentMethod", "videoType", "adType", "retentionDay"] as const;
 const ROW_FIELDS = ["metricCode", "businessDate", "dimensions", "value", "numerator", "denominator", "unit", "dataStatus", "metricVersion", "ruleVersion"] as const;
 const MONTHLY_ROW_FIELDS = ["month", "cutoffDate", "isComplete"] as const;
 const MESSAGE_FIELDS = ["metricVersion", "generatedAt", "watermark", "rows"] as const;
 type ParamField = typeof PARAM_FIELDS[number];
 type DimensionField = typeof DIMENSION_FIELDS[number];
 type DimensionFilterField = Exclude<DimensionField, "pid" | "videoType">;
+type OptionalDimensionField = "adType" | "retentionDay";
 type RowField = typeof ROW_FIELDS[number];
 type MonthlyRowField = typeof MONTHLY_ROW_FIELDS[number];
 type MessageField = typeof MESSAGE_FIELDS[number];
@@ -54,7 +55,8 @@ export interface OperatingEvidenceDimensions {
   readonly paymentMethod?: string;
   readonly videoType?: string;
   readonly adType?: string;
-  readonly fieldState: FieldStates<Exclude<DimensionField, "adType">> & Readonly<Partial<Record<"adType", OperatingEvidenceFieldState>>>;
+  readonly retentionDay?: string;
+  readonly fieldState: FieldStates<Exclude<DimensionField, OptionalDimensionField>> & Readonly<Partial<Record<OptionalDimensionField, OperatingEvidenceFieldState>>>;
   readonly omittedFieldCount: number;
 }
 export interface OperatingEvidenceBusinessRow {
@@ -128,7 +130,8 @@ const DIMENSION_VALUES: Readonly<Record<Exclude<DimensionField, "pid">, readonly
   sourceType: ["natural", "internal_channel"],
   paymentMethod: ["ali_pay", "wx_pay", "usdt_pay", "unknown"],
   videoType: ["default", "short", "long", "short_video", "long_video", "短视频", "长视频"],
-  adType: BI_V1_AD_TYPE_VALUES
+  adType: BI_V1_AD_TYPE_VALUES,
+  retentionDay: BI_V1_RETENTION_DAYS
 };
 const units = new Set(["count", "ratio", "count_per_user", "seconds", "currency"]);
 const statuses = new Set(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_INCOMPLETE", "FAILED"]);
@@ -234,12 +237,15 @@ export function createOperatingEvidenceCollector(client: Pick<UpstreamClient, "g
   };
   const projectDimensions = (dimensions: unknown): OperatingEvidenceDimensions => {
     const values: Record<string, string> = {};
-    const states = {} as Record<Exclude<DimensionField, "adType">, OperatingEvidenceFieldState> & Partial<Record<"adType", OperatingEvidenceFieldState>>;
+    const states = {} as Record<Exclude<DimensionField, OptionalDimensionField>, OperatingEvidenceFieldState>
+      & Partial<Record<OptionalDimensionField, OperatingEvidenceFieldState>>;
     for (const name of DIMENSION_FIELDS) {
       const selected = select(dimensions, name, name === "pid"
         ? string(value => /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(value))
         : string(value => DIMENSION_VALUES[name].includes(value)));
-      if (name !== "adType" || selected.state.state !== "missing") states[name] = selected.state;
+      if ((name !== "adType" && name !== "retentionDay") || selected.state.state !== "missing") {
+        states[name] = selected.state;
+      }
       if (typeof selected.value === "string") values[name] = selected.value;
     }
     return { ...values, fieldState: states, omittedFieldCount: omittedFields(dimensions, DIMENSION_FIELDS) };

@@ -11,7 +11,12 @@ import { CalculationEvidence } from "./CalculationEvidence";
 import { retentionMatrixScale } from "./retention-matrix-scale";
 import "./retention-matrix.css";
 
-export interface RetentionMatrixRow { date: string; base: number | null; cells: { id: string; count: number | null; rate: number | null; base?: number | null; status: string; availableAt: string; diagnosticInputs?: { count: number; base: number }; referenceRate?: { value: number; label: string } }[] }
+export interface RetentionMatrixRow { date: string; base: number | null; cells: { id: string; count: number | null; rate: number | null; base?: number | null; status: string; availableAt: string; diagnosticInputs?: { count: number; base: number }; referenceRate?: { value: number; label: string }; countReading?: { value: number | null; status: string } }[] }
+type RetentionCell = RetentionMatrixRow["cells"][number];
+const countReading = (cell: RetentionCell | undefined) =>
+  cell?.countReading ?? { value: cell?.count ?? null, status: cell?.status ?? "未产出" };
+const readingFor = (cell: RetentionCell | undefined, mode: "rate" | "count") =>
+  mode === "count" ? countReading(cell) : { value: cell?.rate ?? null, status: cell?.status ?? "未产出" };
 export const retentionCellCalculationInputs = (row: RetentionMatrixRow, cell: RetentionMatrixRow["cells"][number]) =>
   cell.diagnosticInputs ?? { count: cell.count, base: cell.base === undefined ? row.base : cell.base };
 export function RetentionMatrix({ title, rows, columns, dateLabel, baseLabel, onOpen, tools, scopeControl, scopeLabel, resetKey, expanded=false, initialView="heatmap", initialMode="rate" }: {
@@ -21,13 +26,17 @@ export function RetentionMatrix({ title, rows, columns, dateLabel, baseLabel, on
   const [view,setView]=useState(initialView);
   const [mode, setMode] = useState<"rate" | "count">(initialMode);
   const [focus, setFocus] = useState<{date: string; id: string} | null>(null);
-  const scale = useMemo(() => retentionMatrixScale(rows.flatMap(row => row.cells.map(cell => mode === "rate" ? cell.rate : cell.count)), mode), [rows, mode]);
+  const scale = useMemo(() => retentionMatrixScale(rows.flatMap(row => row.cells.map(cell => readingFor(cell, mode).value)), mode), [rows, mode]);
   const format = (value: number) => mode === "rate" ? `${(value * 100).toFixed(2)}%` : value.toLocaleString();
   const referenceText = (cell: RetentionMatrixRow["cells"][number] | undefined) => mode === "rate" && cell?.rate === null && cell.referenceRate
     ? `${(cell.referenceRate.value * 100).toFixed(2)}% · ${cell.referenceRate.label}` : null;
   const cellDisplay = (cell: RetentionMatrixRow["cells"][number] | undefined) => {
-    const value = cell ? mode === "rate" ? cell.rate : cell.count : null;
-    return value === null ? referenceText(cell) ?? cell?.status ?? "未产出" : format(value);
+    const { value, status } = readingFor(cell, mode);
+    return value === null ? referenceText(cell) ?? status : format(value);
+  };
+  const countText = (cell: RetentionCell | undefined) => {
+    const { value, status } = countReading(cell);
+    return value === null ? status : value.toLocaleString() + " 人";
   };
   const cellContent = (cell: RetentionMatrixRow["cells"][number] | undefined) => referenceText(cell) && cell?.referenceRate
     ? <><span style={{display:"block"}}>{(cell.referenceRate.value * 100).toFixed(2)}%</span><small style={{display:"block",fontSize:"var(--font-size-caption)",lineHeight:1.4}}>{cell.referenceRate.label}</small></>
@@ -38,7 +47,7 @@ export function RetentionMatrix({ title, rows, columns, dateLabel, baseLabel, on
   const cellDetail=(row:RetentionMatrixRow,cell:RetentionMatrixRow["cells"][number])=>{
     const column=columns.find(column=>column.id===cell.id)!;
     const inputs = retentionCellCalculationInputs(row, cell);
-    onOpen(`${row.date} · ${column.name}`,<><CalculationEvidence basis={{formula:column.definition,scope:`${scopeLabel ? scopeLabel + " · " : ""}${dateLabel} ${row.date} · 观察窗口结束日 ${cell.availableAt}${cell.diagnosticInputs ? " · " + cell.status : ""}`,numerator:{name:`${column.label}留存人数`,value:inputs.count,unit:"人"},denominator:{name:baseLabel,value:inputs.base,unit:"人"},result:cell.rate===null?referenceText(cell) ?? cell.status:`${(cell.rate*100).toFixed(2)}%`,percentage:true}}/>{referenceText(cell) && <p>正式留存率：—</p>}<p>{cell.status}</p></>);
+    onOpen(`${row.date} · ${column.name}`,<>{mode === "count" && cell.countReading && <p>留存人数（M115）：{countText(cell)} · {cell.countReading.status}</p>}<CalculationEvidence basis={{formula:column.definition,scope:`${scopeLabel ? scopeLabel + " · " : ""}${dateLabel} ${row.date} · 观察窗口结束日 ${cell.availableAt}${cell.diagnosticInputs ? " · " + cell.status : ""}`,numerator:{name:`${column.label}留存人数`,value:inputs.count,unit:"人"},denominator:{name:baseLabel,value:inputs.base,unit:"人"},result:cell.rate===null?referenceText(cell) ?? cell.status:`${(cell.rate*100).toFixed(2)}%`,percentage:true}}/>{referenceText(cell) && <p>正式留存率：—</p>}<p>{cell.status}</p></>);
   };
 
   return <div className="retention-matrix" style={{"--retention-table-width": `${236 + columns.length * 112}px`} as CSSProperties}>
@@ -49,24 +58,24 @@ export function RetentionMatrix({ title, rows, columns, dateLabel, baseLabel, on
         <thead><tr><th>{dateLabel}</th>{columns.map(column=><th key={column.id}>{column.label}</th>)}</tr></thead>
         <tbody>{rows.map(row=><tr key={row.date}><th scope="row">{row.date}</th>{columns.map(column=>{
           const cell=row.cells.find(cell=>cell.id===column.id);
-          const value=cell?(mode==="rate"?cell.rate:cell.count):null;
+          const { value } = readingFor(cell, mode);
           const intensity=scale.intensity(value);
           return <td key={column.id} style={{"--retention-intensity":intensity===null?"0%":`${6+intensity*84}%`,color:intensity!==null&&intensity>.65?"var(--color-text-on-emphasis)":"var(--color-text-1)"} as CSSProperties} className={value===null?"is-pending":undefined}>
-            <FloatingHint content={<><strong>{row.date} · {column.label}</strong><p>{baseLabel}：{(cellBase(row,cell)?.toLocaleString() ?? "—")} 人</p><p>留存人数：{cell?.count?.toLocaleString()??cell?.status??"未产出"}</p>{cell?.diagnosticInputs&&<p>计算输入：留存 {cell.diagnosticInputs.count} 人 / 注册 {cell.diagnosticInputs.base} 人 · {cell.status}</p>}<p>留存率：{cell?.rate==null?cell?.status??"未产出":(cell.rate*100).toFixed(2)+"%"}</p>{referenceText(cell) && <p>参考留存率：{referenceText(cell)}</p>}<p>观察窗口结束：{cell?.availableAt??"—"}</p></>}>
+            <FloatingHint content={<><strong>{row.date} · {column.label}</strong><p>{baseLabel}：{(cellBase(row,cell)?.toLocaleString() ?? "—")} 人</p><p>留存人数：{countText(cell)}</p>{cell?.diagnosticInputs&&<p>计算输入：留存 {cell.diagnosticInputs.count} 人 / 注册 {cell.diagnosticInputs.base} 人 · {cell.status}</p>}<p>留存率：{cell?.rate==null?cell?.status??"未产出":(cell.rate*100).toFixed(2)+"%"}</p>{referenceText(cell) && <p>参考留存率：{referenceText(cell)}</p>}<p>观察窗口结束：{cell?.availableAt??"—"}</p></>}>
               <button type="button" onClick={()=>cell&&cellDetail(row,cell)} aria-label={`${row.date} ${column.label} ${cellDisplay(cell)}`}>{cellContent(cell)}</button>
             </FloatingHint>
           </td>;
         })}</tr>)}</tbody>
       </table>
     </div>}
-    {view==="line"&&<Chart theme="v13" ariaLabel={title+"各周期趋势"} style={{height:chartHeight}} onClick={params=>{const item=params as {dataIndex:number;seriesIndex:number};const row=rows[item.dataIndex],cell=row?.cells.find(cell=>cell.id===columns[item.seriesIndex]?.id);if(row&&cell)cellDetail(row,cell);}} option={{grid:{left:65,right:24,top:24,bottom:68},legend:{top:"auto",bottom:8,data:columns.map(c=>c.label),textStyle:{fontSize:12}},tooltip:{trigger:"axis",formatter:(params:{dataIndex:number}[])=>{const row=rows[params[0]?.dataIndex];return row?[row.date,`${baseLabel}：${(row.base?.toLocaleString() ?? "—")} 人`,...columns.map(column=>{const cell=row.cells.find(c=>c.id===column.id),value=cell?(mode==="rate"?cell.rate:cell.count):null;return `${column.label}：${value==null?cell?.status??"未产出":format(value)}`;})].join("<br/>"):"";}},xAxis:{type:"category",data:rows.map(row=>row.date),axisLabel:{formatter:(date:string)=>date.slice(5),hideOverlap:true}},yAxis:{type:"value",min:0,axisLabel:{formatter:(value:number)=>format(value)}},series:columns.map((column,i)=>({name:column.label,type:"line",connectNulls:false,showSymbol:rows.length<=10,symbolSize:7,data:rows.map(row=>{const cell=row.cells.find(cell=>cell.id===column.id);return cell?(mode==="rate"?cell.rate:cell.count):null;}),lineStyle:{color:CHART_PALETTE[i%CHART_PALETTE.length]},itemStyle:{color:CHART_PALETTE[i%CHART_PALETTE.length]}}))}}/>}
+    {view==="line"&&<Chart theme="v13" ariaLabel={title+"各周期趋势"} style={{height:chartHeight}} onClick={params=>{const item=params as {dataIndex:number;seriesIndex:number};const row=rows[item.dataIndex],cell=row?.cells.find(cell=>cell.id===columns[item.seriesIndex]?.id);if(row&&cell)cellDetail(row,cell);}} option={{grid:{left:65,right:24,top:24,bottom:68},legend:{top:"auto",bottom:8,data:columns.map(c=>c.label),textStyle:{fontSize:12}},tooltip:{trigger:"axis",formatter:(params:{dataIndex:number}[])=>{const row=rows[params[0]?.dataIndex];return row?[row.date,`${baseLabel}：${(row.base?.toLocaleString() ?? "—")} 人`,...columns.map(column=>{const { value, status } = readingFor(row.cells.find(c=>c.id===column.id), mode); return `${column.label}：${value===null?status:format(value)}`;})].join("<br/>"):"";}},xAxis:{type:"category",data:rows.map(row=>row.date),axisLabel:{formatter:(date:string)=>date.slice(5),hideOverlap:true}},yAxis:{type:"value",min:0,axisLabel:{formatter:(value:number)=>format(value)}},series:columns.map((column,i)=>({name:column.label,type:"line",connectNulls:false,showSymbol:rows.length<=10,symbolSize:7,data:rows.map(row=>readingFor(row.cells.find(cell=>cell.id===column.id), mode).value),lineStyle:{color:CHART_PALETTE[i%CHART_PALETTE.length]},itemStyle:{color:CHART_PALETTE[i%CHART_PALETTE.length]}}))}}/>}
     {view==="table"&&
     <PaginatedTable label={title} tableClassName="retention-matrix__table" resetKey={resetKey} columnCount={columns.length + 2} head={<tr><th>{dateLabel}</th><th>{baseLabel}</th>{columns.map(column => <th key={column.id} className={focus?.id === column.id ? "is-highlighted" : ""}><FloatingHint content={column.definition}><span>{column.label}</span></FloatingHint></th>)}</tr>} rows={rows.map(row => <tr key={row.date} className={focus?.date === row.date ? "is-highlighted" : ""}><td>{row.date}</td><td>{(row.base?.toLocaleString() ?? "—")}</td>{row.cells.map(cell => {
       const column = columns.find(column => column.id === cell.id)!;
-      const value = mode === "rate" ? cell.rate : cell.count, intensity = scale.intensity(value);
+      const value = readingFor(cell, mode).value, intensity = scale.intensity(value);
       const result = cell.rate === null ? cell.status : `${(cell.rate * 100).toFixed(2)}%`;
       return <td key={cell.id} className={`${intensity === null ? "is-pending" : ""} ${focus?.id === cell.id ? "is-highlighted" : ""}`} style={intensity === null ? undefined : {"--retention-intensity":`${6 + intensity * 84}%`, color:intensity > .65 ? "var(--color-text-on-emphasis)" : "var(--color-text-1)"} as CSSProperties} onMouseEnter={() => setFocus({date:row.date,id:cell.id})} onMouseLeave={() => setFocus(null)}>
-        <FloatingHint content={<><strong>{row.date} · {column.label}</strong><p>{baseLabel} {(cellBase(row,cell)?.toLocaleString() ?? "—")} 人</p><p>留存人数 {cell.count === null ? cell.status : cell.count.toLocaleString() + " 人"} · 留存率 {result}</p>{cell.diagnosticInputs&&<p>计算输入：留存 {cell.diagnosticInputs.count} 人 / 注册 {cell.diagnosticInputs.base} 人 · {cell.status}</p>}{referenceText(cell) && <p>参考留存率：{referenceText(cell)}</p>}<p>观察窗口结束日 {cell.availableAt}</p></>}>
+        <FloatingHint content={<><strong>{row.date} · {column.label}</strong><p>{baseLabel} {(cellBase(row,cell)?.toLocaleString() ?? "—")} 人</p><p>留存人数 {countText(cell)} · 留存率 {result}</p>{cell.diagnosticInputs&&<p>计算输入：留存 {cell.diagnosticInputs.count} 人 / 注册 {cell.diagnosticInputs.base} 人 · {cell.status}</p>}{referenceText(cell) && <p>参考留存率：{referenceText(cell)}</p>}<p>观察窗口结束日 {cell.availableAt}</p></>}>
           <button type="button" aria-label={`${row.date} ${column.label} ${cellDisplay(cell)}`} onFocus={() => setFocus({date:row.date,id:cell.id})} onBlur={() => setFocus(null)} onClick={() => cellDetail(row,cell)}>{cellContent(cell)}</button>
         </FloatingHint>
       </td>;

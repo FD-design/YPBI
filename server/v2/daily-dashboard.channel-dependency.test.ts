@@ -436,15 +436,16 @@ describe("经营快照按最终投影保留渠道依赖", () => {
   test("总体批量拒绝后单指标隔离按原顺序逐项完成，不预发渠道且93列三期保持", async () => {
     const recovery = deferred();
     const requests: string[] = [];
+    const isOverallDay = (params: Record<string, string>) => params.granularity === "day" && !params.dimensions && !params.dimensionFilters;
     const rejectOverallBatch = (params: Record<string, string>) => {
-      if (params.granularity === "day" && !params.dimensionFilters && params.metricCodes.includes(",")) {
+      if (isOverallDay(params) && params.metricCodes.includes(",")) {
         throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "unsupported metrics", 422);
       }
     };
     const held = fixture({ holdChannel: true, beforeMetricRead: async params => {
-      if (params.granularity === "day" && !params.dimensionFilters) requests.push(params.metricCodes);
+      if (isOverallDay(params)) requests.push(params.metricCodes);
       rejectOverallBatch(params);
-      if (params.granularity === "day" && !params.dimensionFilters && params.metricCodes === "M003") await recovery.promise;
+      if (isOverallDay(params) && params.metricCodes === "M003") await recovery.promise;
     } });
     const pending = held.service.execute(query); let completed = false;
     void pending.then(() => { completed = true; });

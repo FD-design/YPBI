@@ -186,7 +186,7 @@ describe("经营明细单日快照", () => {
     const sourceRows = [{
       metricCode: "M110", businessDate: date, dimensions: { pid: "PH", userCohort: "new" },
       value: 2 / 3, numerator: 2, denominator: 3, unit: "count_per_user",
-      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "rule-v1"
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "ad-clicks-per-active-user-v3"
     }];
     const data = await new DailyDashboardService({ get: async path => path === "/api/admin/bi/v1/metrics"
       ? { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-09T10:00:00+08:00", watermark: null, rows: sourceRows } }

@@ -844,7 +844,7 @@ describe("bi-v1 批量请求有界隔离", () => {
   test("所有指标失败时请求数不超过去重后的登记指标数加一，单指标不重复请求", async () => {
     let calls = 0;
     const client = { get: async () => { calls++; return { code: 400, err: "未知指标" }; } };
-    const codes = biV1MetricCodeSchema.options;
+    const codes = biV1MetricCodeSchema.options.filter(code => code !== "M115");
     const result = await readBiV1MetricDays(client, { ...query, metricCodes: [...codes, ...codes] });
     expect(calls).toBe(codes.length + 1);
     expect(Object.keys(result.days[0].metrics)).toHaveLength(codes.length);
@@ -853,6 +853,14 @@ describe("bi-v1 批量请求有界隔离", () => {
     const single = await readBiV1MetricDays(client, { ...query, metricCodes: ["M008", "M008"] });
     expect(calls).toBe(1);
     expect(single.days[0].metrics.M008.state).toBe("source_failure");
+    calls = 0;
+    const groupedRetention = await readBiV1MetricDays(client, { ...query, metricCodes: ["M115", "M115"], dimensions: ["retentionDay"] });
+    expect(calls).toBe(1);
+    const counts = groupedRetention.days[0].metrics;
+    expect(Object.keys(counts)).toHaveLength(4);
+    for (const period of ["D1", "D3", "D7", "D30"]) {
+      expect(counts[biV1MetricKey("M115", [period])]).toMatchObject({ state: "source_failure", value: null });
+    }
   });
 
   for (const error of [

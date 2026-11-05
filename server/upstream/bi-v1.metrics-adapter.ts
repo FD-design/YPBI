@@ -6,6 +6,10 @@ import { recordUpstreamReadBoundaryFailure } from "./read-trace";
 import { currentReadDeliveryExpiryScope, deliverUpstreamRead } from "./read-delivery";
 
 export const BI_V1_METRICS_API = "/api/admin/bi/v1/metrics";
+export const LANDING_IP_CONVERSION_RULE_VERSIONS = {
+  day: "landing-ip-click-rate-v1",
+  summary: "landing-ip-conversion-range-v1"
+} as const;
 
 export const biV1MetricCodeSchema = z.enum([
   "M001", "M002", "M003", "M005", "M006", "M007", "M008", "M016", "M018", "M020", "M021", "M022", "M023", "M026",
@@ -19,7 +23,8 @@ const dataStatusSchema = z.enum(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_IN
 const metricUnitSchema = z.enum(["count", "ratio", "count_per_user", "seconds", "currency"]);
 export type BiV1MetricUnit = z.infer<typeof metricUnitSchema>;
 const requiredMetricUnits: Partial<Record<BiV1MetricCode, BiV1MetricUnit>> = {
-  M055: "count", M058: "currency", M061: "ratio", M064: "ratio", M094: "count", M101: "count", M102: "seconds"
+  M055: "count", M058: "currency", M061: "ratio", M064: "ratio", M094: "count", M099: "ratio",
+  M101: "count", M102: "seconds", M110: "count_per_user", M111: "ratio"
 };
 const retentionMetricCodes = new Set<BiV1MetricCode>(["M020", "M021", "M022", "M023"]);
 const metricRowSchema = z.object({
@@ -74,8 +79,13 @@ export const biV1MetricDimensionFilterSchema = z.object({
 export const biV1MetricDimensionNameSchema = z.enum(["clientPlatform", "userCohort", "sourceType", "paymentMethod"]);
 // Navigation is read by the server's full board, outside the public job scopes.
 export const BI_V1_AD_TYPE_VALUES = ["ordinary", "navigation"] as const;
-const dimensionFilterSchema = biV1MetricDimensionFilterSchema.extend({ adType: z.enum(BI_V1_AD_TYPE_VALUES).optional() });
-const dimensionNameSchema = biV1MetricDimensionNameSchema.or(z.literal("adType"));
+export const BI_V1_RETENTION_DAYS = ["D1", "D3", "D7", "D30"] as const;
+const retentionDaySchema = z.enum(BI_V1_RETENTION_DAYS);
+const dimensionFilterSchema = biV1MetricDimensionFilterSchema.extend({
+  adType: z.enum(BI_V1_AD_TYPE_VALUES).optional(),
+  retentionDay: retentionDaySchema.optional()
+});
+const dimensionNameSchema = biV1MetricDimensionNameSchema.or(z.enum(["adType", "retentionDay"]));
 export type BiV1MetricDimensionFilters = z.infer<typeof dimensionFilterSchema>;
 export type BiV1MetricDimension = z.infer<typeof dimensionNameSchema>;
 
@@ -153,14 +163,15 @@ const dimensionFieldValues: Readonly<Record<string, readonly string[]>> = {
   sourceType: acquisitionValues,
   payment_method: paymentValues,
   paymentMethod: paymentValues,
-  adType: BI_V1_AD_TYPE_VALUES
+  adType: BI_V1_AD_TYPE_VALUES,
+  retentionDay: BI_V1_RETENTION_DAYS.map(value => value.toLowerCase())
 };
 
 const dimensionFieldNames: Readonly<Record<string, BiV1MetricDimension>> = {
   clientPlatform: "clientPlatform", platform: "clientPlatform", registerPlatform: "clientPlatform", d0Platform: "clientPlatform",
   userType: "userCohort", audience: "userCohort", userCohort: "userCohort",
   acquisitionType: "sourceType", sourceType: "sourceType",
-  payment_method: "paymentMethod", paymentMethod: "paymentMethod", adType: "adType"
+  payment_method: "paymentMethod", paymentMethod: "paymentMethod", adType: "adType", retentionDay: "retentionDay"
 };
 
 function recognizedDimensions(dimensions: Record<string, unknown>) {
@@ -173,7 +184,8 @@ function recognizedDimensions(dimensions: Record<string, unknown>) {
   for (const [field, value] of Object.entries(dimensions)) {
     if (field === "pid") continue;
     const token = typeof value === "string" ? normalizedDimensionValue(value) : "";
-    if (!Object.hasOwn(dimensionFieldValues, field) || !dimensionFieldValues[field].includes(token)) return null;
+    if (!Object.hasOwn(dimensionFieldValues, field) || !dimensionFieldValues[field].includes(token)
+      || field === "retentionDay" && !retentionDaySchema.safeParse(value).success) return null;
     const canonicalField = dimensionFieldNames[field];
     if (canonicalField === "userCohort" && token.includes("+")) {
       const [platform, cohort] = token.split("+");
@@ -210,6 +222,10 @@ function queryDimensions(query: BiV1MetricQuery) {
     && query.metricCodes.some(code => code !== "M055" && code !== "M094")) {
     throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 广告类型维度仅适用于广告点击次数和人数", 422);
   }
+  const hasRetentionDay = filters.data.retentionDay !== undefined || dimensions.data.includes("retentionDay");
+  if (hasRetentionDay ? query.metricCodes.some(code => code !== "M115") : query.metricCodes.includes("M115")) {
+    throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 留存人数须独立指定留存观察周期", 422);
+  }
   return {
     filters: Object.fromEntries(Object.entries(filters.data).filter(([, value]) => value !== undefined)) as BiV1MetricDimensionFilters,
     dimensions: [...new Set(dimensions.data)]
@@ -235,6 +251,16 @@ function requestedMetricKey(code: BiV1MetricCode, query: BiV1MetricQuery) {
   const key = biV1MetricKey(code, scope.filters);
   const groupedFields = scope.dimensions.filter(field => scope.filters[field] === undefined).sort();
   return groupedFields.length ? `${key}|group:${groupedFields.join(",")}` : key;
+}
+
+/** M115's grouped request owns all four existing display keys, including absent periods. */
+export function biV1MetricRequestKeys(code: BiV1MetricCode, query: BiV1MetricQuery) {
+  const scope = queryDimensions(query);
+  if (code === "M115" && scope.dimensions.includes("retentionDay") && !scope.filters.retentionDay
+    && scope.dimensions.every(field => field === "retentionDay" || scope.filters[field] !== undefined)) {
+    return BI_V1_RETENTION_DAYS.map(retentionDay => biV1MetricKey(code, { ...scope.filters, retentionDay }));
+  }
+  return [requestedMetricKey(code, query)];
 }
 
 function selectDimensionScope<T extends BiV1MetricSource>(message: T, query: BiV1MetricQuery): T {
@@ -374,6 +400,21 @@ function invalidMetric(): BiV1MetricPoint {
   return { dataStatus: null, state: "invalid_value", value: null, numerator: null, denominator: null, unit: null };
 }
 
+function isValidRetentionCountRow(row: z.infer<typeof metricRowSchema>) {
+  const period = retentionDaySchema.safeParse(row.dimensions.retentionDay);
+  if (!period.success || row.unit !== "count") return false;
+  if (row.dataStatus === "READY" && (!row.businessDate || row.isMature === false)) return false;
+  if (row.dataStatus !== "READY" && row.ruleVersion === "") return true;
+  return row.ruleVersion === `retention-${period.data.toLowerCase()}-v1`
+    || row.ruleVersion === `retention-d0-${period.data}-v1`;
+}
+
+function invalidDirectMetricPlaceholder(row: z.infer<typeof metricRowSchema>, expectedRuleVersion?: string): boolean {
+  if (row.dataStatus === "READY" || !["M099", "M110", "M111"].includes(row.metricCode)) return false;
+  return row.unit !== requiredMetricUnits[row.metricCode]
+    || expectedRuleVersion !== undefined && row.ruleVersion !== "" && row.ruleVersion !== expectedRuleVersion;
+}
+
 function isRecoverableSingleMetricTransportFailure(error: unknown) {
   if (!(error instanceof UpstreamError)) return false;
   if (error.code === "UPSTREAM_NETWORK_ERROR" || error.code === "UPSTREAM_FAILED") return error.statusCode >= 500;
@@ -459,14 +500,16 @@ export function aggregateBiV1MetricDays(
   const dimensionConflicts = scopedMessage.dimensionConflicts ?? [];
   const globalDimensionConflicts = new Set(dimensionConflicts.filter(conflict => !conflict.businessDate).map(conflict => conflict.metricCode));
   const dimensionConflictDays = new Set(dimensionConflicts.filter(conflict => conflict.businessDate).map(conflict => `${conflict.businessDate}\u0000${conflict.metricCode}`));
-  const requestedKeys = new Map(requested.map(code => [code, requestedMetricKey(code, query)]));
+  const requestedKeys = new Map(requested.map(code => [code, biV1MetricRequestKeys(code, query)]));
   for (const row of scopedMessage.rows) {
     const metricKey = biV1MetricKey(row.metricCode, row.dimensions);
     const uniqueKey = `${row.businessDate ?? ""}\u0000${metricKey}`;
     const invalidWatchSource = row.metricCode === "M101" && row.dataStatus === "SOURCE_INCOMPLETE"
       && (row.unit !== requiredMetricUnits.M101 || expectedRuleVersions.M101 !== undefined && row.ruleVersion !== expectedRuleVersions.M101);
-    if (invalidWatchSource) recordUpstreamReadBoundaryFailure({ code: "BI_V1_VALUE_CONFLICT", failure: { origin: "validation" } });
-    if (unique.has(uniqueKey) || invalidWatchSource) {
+    const invalidRetentionCount = row.metricCode === "M115" && !isValidRetentionCountRow(row);
+    const invalidSource = invalidWatchSource || invalidRetentionCount || invalidDirectMetricPlaceholder(row, expectedRuleVersions[row.metricCode]);
+    if (invalidSource) recordUpstreamReadBoundaryFailure({ code: "BI_V1_VALUE_CONFLICT", failure: { origin: "validation" } });
+    if (unique.has(uniqueKey) || invalidSource) {
       if (row.businessDate) invalidMetricDays.add(`${row.businessDate}\u0000${metricKey}`);
       else invalidGlobalMetrics.add(metricKey);
       continue;
@@ -496,7 +539,7 @@ export function aggregateBiV1MetricDays(
     const dayKeysByCode = dimensionMetricKeysByCode(grouped.keys());
     for (const code of requested) {
       const relatedKeys = new Set([
-        requestedKeys.get(code)!,
+        ...requestedKeys.get(code)!,
         ...(globalKeysByCode.get(code) ?? []),
         ...(dayKeysByCode.get(code) ?? [])
       ]);
@@ -507,7 +550,7 @@ export function aggregateBiV1MetricDays(
         }
         const rows = grouped.get(key) ?? [];
         if (!rows.length) {
-          const scopeConflict = key === requestedKeys.get(code)
+          const scopeConflict = requestedKeys.get(code)!.includes(key)
             && (globalDimensionConflicts.has(code) || dimensionConflictDays.has(`${date}\u0000${code}`));
           const globalStatus = globalStatuses.get(key);
           metrics[key] = scopeConflict && (code === "M101" || globalStatus === undefined)
@@ -543,8 +586,11 @@ export function aggregateBiV1MetricDays(
           }
           if (row.unit === "count") {
             const value = safeInteger(row.value!, `${key} 数值`);
-            if (row.numerator !== value || row.denominator !== 0) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 计数分子分母不一致`, 502);
-            metrics[key] = { dataStatus: "READY", state: "available", value, numerator: value, denominator: 0, unit: row.unit };
+            const denominator = row.metricCode === "M115" ? safeInteger(row.denominator, `${key} 注册基数`) : 0;
+            if (row.numerator !== value || row.denominator !== denominator || row.metricCode === "M115" && value > denominator) {
+              throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 计数分子分母不一致`, 502);
+            }
+            metrics[key] = { dataStatus: "READY", state: "available", value, numerator: value, denominator, unit: row.unit };
             continue;
           }
           const numerator = safeInteger(row.numerator, `${key} 分子`);
@@ -584,7 +630,7 @@ export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, qu
   const days: BiV1MetricDay[] = [];
   for (let date = query.startDate; date <= query.endDate; date = nextDate(date)) days.push({ date, metrics: {} });
   for (const day of days) for (const code of metricCodes) {
-    day.metrics[requestedMetricKey(code, query)] = failedBiV1MetricRead(code);
+    for (const key of biV1MetricRequestKeys(code, query)) day.metrics[key] = failedBiV1MetricRead(code);
   }
   let next = 0;
   let stopped = false;
