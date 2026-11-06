@@ -613,12 +613,20 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     let rejectModernReads!: (error: unknown) => void;
     const modernReadsSettled = new Promise<void>((resolve, reject) => { releaseModernReads = resolve; rejectModernReads = reject; });
     void modernReadsSettled.catch(() => undefined);
+    const snapshotFallbacks: Partial<Record<SourceReadDiagnostics["sourceId"], ReturnType<typeof Promise.withResolvers<void>>>> = operatingSnapshot && !operatingSources ? {
+      daily: Promise.withResolvers<void>(),
+      cohort: Promise.withResolvers<void>(),
+      payment: Promise.withResolvers<void>(),
+      channel: Promise.withResolvers<void>()
+    } : {};
     const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: Pick<UpstreamClient, "get">) => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
       const scope = {};
       let closed = false;
       const source: SourceReadDiagnostics = { sourceId, durationMs: 0, readCallCount: 0, successfulReadCallCount: 0, failedReadCallCount: 0, abandonedReadCallCount: 0, budgetExpired: false, errorCodeCounts: {} };
       if (this.logger) sourceDiagnostics.push(source);
+      const modern = ["metrics", "playback", "monthly", "acquisition"].includes(sourceId);
+      const fallback = snapshotFallbacks[sourceId];
       const cancelled = () => new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取已取消", 504, { origin: "consumer_cancelled" });
       const admitUnit = async <V>(start: () => Promise<V>, signal?: AbortSignal): Promise<V> => {
         deadline?.check();
@@ -631,12 +639,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         const active = activeReadUnit.getStore();
         if (active?.scope === scope) return active.budget.read(deliver, signal);
         const cancellation = sourceSignal && signal ? AbortSignal.any([sourceSignal, signal]) : sourceSignal ?? signal;
-        const modern = ["metrics", "playback", "monthly", "acquisition"].includes(sourceId);
         if (!modern) await new Promise<void>((resolve, reject) => {
           const cancel = () => { cancellation?.removeEventListener("abort", cancel); reject(cancelled()); };
           if (cancellation?.aborted) { cancel(); return; }
           cancellation?.addEventListener("abort", cancel, { once: true });
-          void modernReadsSettled.then(() => { cancellation?.removeEventListener("abort", cancel); resolve(); },
+          const legacyReady = fallback ? Promise.race([fallback.promise, modernReadsSettled]) : modernReadsSettled;
+          void legacyReady.then(() => { cancellation?.removeEventListener("abort", cancel); resolve(); },
             error => { cancellation?.removeEventListener("abort", cancel); reject(error); });
         });
         return admission.run(async () => {
@@ -649,7 +657,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             source.budgetExpired ||= budget.expired;
             budget.dispose();
           }
-        }, modern ? "modern" : "legacy", cancellation);
+        }, modern ? "modern" : fallback ? "snapshot-fallback" : "legacy", cancellation);
       };
       const runUnit = !deadline ? admitUnit : async <V>(start: () => Promise<V>, signal?: AbortSignal): Promise<V> => {
         try {
@@ -1032,12 +1040,12 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       }));
     });
     const nonChannelTask = Promise.all([acquisitionTask, dailyTask, cohortTask, paymentTask, checkinTask, watchTask, playbackTask, biV1MetricTask, monthlyTask]);
-    const legacyDependencyTask = operatingSnapshot ? Promise.all([
-      { ids: sourceIds.filter(id => usesLegacyDailySource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) dailyController?.abort(); } },
-      { ids: sourceIds.filter(id => usesLegacyCohortSource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) cohortController?.abort(); } },
-      { ids: sourceIds.filter(id => mappings[id].payment), cancel: (unused: string[]) => { unused.forEach(date => { unusedPaymentDates.add(date); paymentControllers.get(date)?.abort(); }); } },
-      { ids: sourceIds.filter(id => mappings[id].channel), cancel: (unused: string[]) => { unused.forEach(date => { unusedChannelDates.add(date); channelControllers.get(date)?.abort(); }); } }
-    ].map(async dependency => {
+    const legacyDependencyTask = operatingSnapshot ? Promise.all(([
+      { source: "daily", ids: sourceIds.filter(id => usesLegacyDailySource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) dailyController?.abort(); } },
+      { source: "cohort", ids: sourceIds.filter(id => usesLegacyCohortSource(mappings[id])), cancel: (unused: string[]) => { if (unused.length === dates.length) cohortController?.abort(); } },
+      { source: "payment", ids: sourceIds.filter(id => mappings[id].payment), cancel: (unused: string[]) => { unused.forEach(date => { unusedPaymentDates.add(date); paymentControllers.get(date)?.abort(); }); } },
+      { source: "channel", ids: sourceIds.filter(id => mappings[id].channel), cancel: (unused: string[]) => { unused.forEach(date => { unusedChannelDates.add(date); channelControllers.get(date)?.abort(); }); } }
+    ] as const).map(async dependency => {
       const inputIds = sourceMetricIds(dependency.ids.flatMap(id => mappings[id].fallbackFrom ?? []));
       const selectionIds = [...dependency.ids, ...inputIds];
       // A group settles only after its metric isolation and merged inputs are complete.
@@ -1060,6 +1068,8 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         return !needsLegacy;
       });
       dependency.cancel(unusedDates);
+      // Only dates still requiring this source can use the shared serial slot.
+      snapshotFallbacks[dependency.source]?.resolve();
     })) : undefined;
     void Promise.all([acquisitionTask, playbackTask, biV1MetricTask, monthlyTask, legacyDependencyTask]).then(releaseModernReads, rejectModernReads);
     const [[acquisitionGroups]] = await Promise.all([nonChannelTask, channelTask, legacyDependencyTask]);

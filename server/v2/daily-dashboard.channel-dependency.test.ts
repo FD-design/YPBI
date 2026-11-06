@@ -143,6 +143,38 @@ function assertProjection(actual: DailyDashboardV2Success, expected: DailyDashbo
 }
 
 describe("经营快照按最终投影保留渠道依赖", () => {
+  test("已有旧留存回退需求时先给它串行读取机会，再执行无关月活", async () => {
+    const monthly = deferred(), started: string[] = [];
+    const status = (code: string, _date: string, filters: BiV1MetricDimensionFilters): ModernStatus =>
+      code === "M020" && !Object.keys(filters).length ? "SOURCE_INCOMPLETE" : "READY";
+    const { client } = fixture({ status, legacyCohorts: true });
+    let active = 0, peak = 0;
+    const tracked = { get: async (...args: Parameters<typeof client.get>) => {
+      const [path, params] = args;
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        if (path === RETENTION_PLUS_API) started.push("cohort");
+        if (path === BI_V1_METRICS_API && params.metricCodes === "M018") {
+          started.push("monthly");
+          await monthly.promise;
+        }
+        return await client.get(...args);
+      } finally {
+        active--;
+      }
+    } };
+    const pending = new DailyDashboardService(tracked, now).execute(query);
+    await until(() => started.includes("monthly"));
+    monthly.resolve();
+    const result = await pending;
+    expect(started.slice(0, 2)).toEqual(["cohort", "monthly"]);
+    expect(peak).toBe(1);
+    expect(point(result, "M020")).toMatchObject({ state: "available", value: 0.4 });
+    expect(result.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
+    expect(result.data.series.every(series => series.points.length === selectedDates.length)).toBe(true);
+  });
+
   for (const source of ["daily", "cohort", "payment"] as const) for (const status of ["READY", "PROCESSING", "FAILED", "NOT_MATURE"] as const)
     test(`${status}现代选择充分时不等待挂起${source}旧源，279点保持`, async () => {
     const options = { status: () => status };
@@ -327,9 +359,8 @@ describe("经营快照按最终投影保留渠道依赖", () => {
       const pending = held.service.execute(query); let completed = false;
       void pending.then(() => { completed = true; });
       await flush();
-      // Necessary legacy reads retain FIFO order: the daily read holds the
-      // permit before any channel date is allowed to start.
-      expect(held.channels).toEqual([]);
+      // Both dependencies can be necessary and become eligible in either order.
+      expect(held.channels.length).toBeLessThanOrEqual(1);
       const completedBeforeDaily = completed;
       daily.resolve();
       const result = await releaseSerialReads(pending, held.channels);

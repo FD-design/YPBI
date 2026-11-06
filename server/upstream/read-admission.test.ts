@@ -24,12 +24,26 @@ test("microtask admission prioritizes modern units and preserves FIFO within eac
   expect(calls).toEqual(["modern-1", "modern-2", "legacy-1", "legacy-2"]);
 });
 
-test("queued cancellation removes only that unit and healthy queued work resumes", async () => {
+test("ready snapshot fallbacks share the serial slot with pending modern units", async () => {
+  const queue = fixture(), calls: string[] = [];
+  const work = (name: string) => async () => { calls.push(name); };
+  await Promise.all([
+    queue.run(work("legacy"), "legacy"),
+    queue.run(work("modern-1"), "modern"),
+    queue.run(work("modern-2"), "modern"),
+    queue.run(work("modern-3"), "modern"),
+    queue.run(work("fallback-1"), "snapshot-fallback"),
+    queue.run(work("fallback-2"), "snapshot-fallback")
+  ]);
+  expect(calls).toEqual(["modern-1", "fallback-1", "modern-2", "fallback-2", "modern-3", "legacy"]);
+});
+
+for (const priority of ["modern", "snapshot-fallback"] as const) test(`queued ${priority} cancellation removes only that unit and healthy queued work resumes`, async () => {
   const queue = fixture(), held = deferred<number>(), cancelled = new AbortController();
   const calls: string[] = [];
   const first = queue.run(() => held.promise, "modern");
   await flush();
-  const removed = queue.run(async () => { calls.push("cancelled"); return 2; }, "modern", cancelled.signal);
+  const removed = queue.run(async () => { calls.push("cancelled"); return 2; }, priority, cancelled.signal);
   const rejected = removed.then(() => null, error => error as Error);
   const healthy = queue.run(async () => { calls.push("healthy"); return 3; }, "legacy");
   cancelled.abort();

@@ -1,6 +1,6 @@
 import { AsyncResource } from "node:async_hooks";
 
-export type ReadAdmissionPriority = "modern" | "legacy";
+export type ReadAdmissionPriority = "modern" | "snapshot-fallback" | "legacy";
 interface PendingRead {
   start: () => void;
 }
@@ -13,10 +13,12 @@ interface ReadAdmissionOptions {
 /** Serial data admission; execution budgets start only after a permit is granted. */
 export class ReadAdmission {
   private readonly modern: PendingRead[] = [];
+  private readonly snapshotFallback: PendingRead[] = [];
   private readonly legacy: PendingRead[] = [];
   private readonly maxWaiting: number;
   private active = false;
   private scheduled = false;
+  private preferSnapshotFallback = false;
 
   constructor(private readonly options: ReadAdmissionOptions) {
     const maxWaiting = options.maxWaiting ?? 512;
@@ -26,8 +28,8 @@ export class ReadAdmission {
 
   run<T>(work: () => Promise<T>, priority: ReadAdmissionPriority, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) return Promise.reject(this.options.cancelled());
-    if (this.modern.length + this.legacy.length >= this.maxWaiting) return Promise.reject(this.options.overflow());
-    const pending = priority === "modern" ? this.modern : this.legacy;
+    if (this.waiting >= this.maxWaiting) return Promise.reject(this.options.overflow());
+    const pending = priority === "modern" ? this.modern : priority === "snapshot-fallback" ? this.snapshotFallback : this.legacy;
     const resource = new AsyncResource("ypbi-data-read-admission");
     return new Promise<T>((resolve, reject) => {
       const cancel = () => {
@@ -47,6 +49,7 @@ export class ReadAdmission {
           return;
         }
         this.active = true;
+        if (priority !== "legacy") this.preferSnapshotFallback = priority === "modern";
         const finish = () => {
           resource.emitDestroy();
           this.active = false;
@@ -62,13 +65,19 @@ export class ReadAdmission {
     });
   }
 
+  private get waiting() {
+    return this.modern.length + this.snapshotFallback.length + this.legacy.length;
+  }
+
   private schedule() {
-    if (this.scheduled || this.active || this.modern.length + this.legacy.length === 0) return;
+    if (this.scheduled || this.active || this.waiting === 0) return;
     this.scheduled = true;
     queueMicrotask(() => {
       this.scheduled = false;
       while (!this.active) {
-        const next = this.modern.shift() ?? this.legacy.shift();
+        // Ready snapshot fallbacks alternate with modern reads on the same permit.
+        const next = (this.preferSnapshotFallback ? this.snapshotFallback.shift() : undefined)
+          ?? this.modern.shift() ?? this.snapshotFallback.shift() ?? this.legacy.shift();
         if (!next) return;
         next.start();
       }
