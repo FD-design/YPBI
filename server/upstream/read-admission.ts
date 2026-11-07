@@ -1,6 +1,6 @@
 import { AsyncResource } from "node:async_hooks";
 
-export type ReadAdmissionPriority = "modern" | "snapshot-fallback" | "legacy";
+export type ReadAdmissionPriority = "modern" | "snapshot-secondary" | "snapshot-fallback" | "legacy";
 interface PendingRead {
   start: () => void;
 }
@@ -13,6 +13,7 @@ interface ReadAdmissionOptions {
 /** Serial data admission; execution budgets start only after a permit is granted. */
 export class ReadAdmission {
   private readonly modern: PendingRead[] = [];
+  private readonly snapshotSecondary: PendingRead[] = [];
   private readonly snapshotFallback: PendingRead[] = [];
   private readonly legacy: PendingRead[] = [];
   private readonly maxWaiting: number;
@@ -29,7 +30,7 @@ export class ReadAdmission {
   run<T>(work: () => Promise<T>, priority: ReadAdmissionPriority, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) return Promise.reject(this.options.cancelled());
     if (this.waiting >= this.maxWaiting) return Promise.reject(this.options.overflow());
-    const pending = priority === "modern" ? this.modern : priority === "snapshot-fallback" ? this.snapshotFallback : this.legacy;
+    const pending = this.queue(priority);
     const resource = new AsyncResource("ypbi-data-read-admission");
     return new Promise<T>((resolve, reject) => {
       const cancel = () => {
@@ -49,7 +50,7 @@ export class ReadAdmission {
           return;
         }
         this.active = true;
-        if (priority !== "legacy") this.preferSnapshotFallback = priority === "modern";
+        if (priority !== "legacy") this.preferSnapshotFallback = priority !== "snapshot-fallback";
         const finish = () => {
           resource.emitDestroy();
           this.active = false;
@@ -66,7 +67,16 @@ export class ReadAdmission {
   }
 
   private get waiting() {
-    return this.modern.length + this.snapshotFallback.length + this.legacy.length;
+    return this.modern.length + this.snapshotSecondary.length + this.snapshotFallback.length + this.legacy.length;
+  }
+
+  private queue(priority: ReadAdmissionPriority) {
+    switch (priority) {
+      case "modern": return this.modern;
+      case "snapshot-secondary": return this.snapshotSecondary;
+      case "snapshot-fallback": return this.snapshotFallback;
+      case "legacy": return this.legacy;
+    }
   }
 
   private schedule() {
@@ -75,9 +85,10 @@ export class ReadAdmission {
     queueMicrotask(() => {
       this.scheduled = false;
       while (!this.active) {
-        // Ready snapshot fallbacks alternate with modern reads on the same permit.
+        // Ready fallbacks alternate with the main FIFO and take precedence over
+        // secondary work when no main read is waiting.
         const next = (this.preferSnapshotFallback ? this.snapshotFallback.shift() : undefined)
-          ?? this.modern.shift() ?? this.snapshotFallback.shift() ?? this.legacy.shift();
+          ?? this.modern.shift() ?? this.snapshotFallback.shift() ?? this.snapshotSecondary.shift() ?? this.legacy.shift();
         if (!next) return;
         next.start();
       }

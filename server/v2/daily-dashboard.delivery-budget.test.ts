@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
 import { dailyDashboardMatchesQuery, dailyDashboardSuccessSchema, type DailyDashboardQuery } from "../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS, operatingSnapshotDates } from "../../contracts/operating-detail-projection";
+import { BI_V1_RETENTION_DAYS } from "../upstream/bi-v1.metrics-adapter";
 import { UpstreamError } from "../upstream/client";
-import { DailyDashboardService, dailyDashboardMatchesMapping } from "./daily-dashboard.service";
+import { P_DAY_SUM_API } from "../upstream/overview.adapter";
+import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
+import { CHANNEL_V2_API, DailyDashboardService, PAYMENT_RATE_API, dailyDashboardMatchesMapping } from "./daily-dashboard.service";
 
 const date = "2020-01-01";
 const generatedAt = "2020-01-02T00:00:00Z";
@@ -208,4 +211,84 @@ test("客户端中断同步经营快照时拒绝查询，独立的内部总预�
   fixture.stalled.resolve(snapshotCounts("M016", { pid: "PH", userCohort: "new" }));
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(fixture.calls).toHaveLength(callsBeforeAbort);
+});
+
+for (const stallNewUsers of [false, true]) test(`PH跨月经营快照先读取独立批组，慢新用户批组=${stallNewUsers}`, async () => {
+  const query: DailyDashboardQuery = {
+    ...snapshot, dateRange: ["2026-10-27", "2026-11-03"]
+  };
+  const dates = operatingSnapshotDates(query.dateRange);
+  const calls: Array<{ path: string; scope: string; startDate?: string; endDate?: string }> = [];
+  const heldNewUsers = deferred<unknown>();
+  const startedNewUsers = deferred<void>();
+  let active = 0, peak = 0;
+  const rows = (code: string, dimensions: Record<string, string> = { pid: "PH" }) => {
+    const row = payload(code, dimensions).msg.rows[0];
+    return dates.map(businessDate => ({ ...row, businessDate }));
+  };
+  const envelope = (rows: unknown[]) => ({ code: 200, msg: { ...emptyMetrics().msg, rows } });
+  const client = { get: async (path: string, params: Record<string, string>) => {
+    const filters = JSON.parse(params.dimensionFilters ?? "{}") as Record<string, string>;
+    const scope = params.metricCodes === "M115" ? "retentionDay"
+      : params.metricCodes === "M018" ? "monthly"
+      : filters.clientPlatform ? [filters.clientPlatform, filters.userCohort].filter(Boolean).join("_")
+      : filters.sourceType ?? filters.paymentMethod ?? filters.userCohort ?? "overall";
+    calls.push({ path, scope, startDate: params.startDate, endDate: params.endDate });
+    active++;
+    peak = Math.max(active, peak);
+    try {
+      if (path !== "/api/admin/bi/v1/metrics") {
+        if (path === RETENTION_PLUS_API) return { data: [] };
+        return emptyLegacy();
+      }
+      if (scope === "overall") {
+        await new Promise(resolve => setTimeout(resolve, 25));
+        throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "upstream calculation failed", 422,
+          { origin: "business", upstreamHttpStatus: 200, upstreamBusinessCode: 500 });
+      }
+      if (scope === "new") {
+        startedNewUsers.resolve();
+        return stallNewUsers ? await heldNewUsers.promise : emptyMetrics();
+      }
+      if (scope === "monthly") {
+        const { businessDate: _unused, ...row } = payload("M018").msg.rows[0];
+        return envelope([row]);
+      }
+      if (scope === "retentionDay") return envelope(BI_V1_RETENTION_DAYS.flatMap(retentionDay =>
+        rows("M115", { pid: "PH", retentionDay }).map(row => ({ ...row, denominator: 10, ruleVersion: `retention-${retentionDay.toLowerCase()}-v1` }))
+      ));
+      if (scope === "android" || scope === "ios") return envelope(rows("M016", { pid: "PH", ...filters }));
+      if (scope === "internal_channel") return envelope(rows("M008", { pid: "PH", ...filters }));
+      return emptyMetrics();
+    } finally {
+      active--;
+    }
+  } };
+  const read = new DailyDashboardService(client, () => new Date("2026-11-07T09:00:00Z"), undefined, {
+    sourceReadTimeoutMs: 1000, operatingSnapshotReadTimeoutMs: 500
+  }).execute(query);
+  await Promise.race([startedNewUsers.promise, read]);
+  const beforeDeadline = calls.slice();
+  const result = await read;
+  heldNewUsers.resolve(emptyMetrics());
+  const modernBeforeNew = beforeDeadline.filter(call => call.path === "/api/admin/bi/v1/metrics").map(call => call.scope);
+  expect(modernBeforeNew[0]).toBe("overall");
+  expect(modernBeforeNew.indexOf("new")).toBe(13);
+  expect(modernBeforeNew.slice(1, 13).sort()).toEqual([
+    "ali_pay", "android", "android_old", "internal_channel", "ios", "ios_old", "monthly", "natural",
+    "old", "retentionDay", "usdt_pay", "wx_pay"
+  ]);
+  expect(beforeDeadline.filter(call => call.scope === "monthly")).toEqual([{
+    path: "/api/admin/bi/v1/metrics", scope: "monthly", startDate: "2026-11-01", endDate: "2026-11-07"
+  }]);
+  for (const [path, count] of [[P_DAY_SUM_API, 1], [RETENTION_PLUS_API, 1], [PAYMENT_RATE_API, 3], [CHANNEL_V2_API, 3]] as const) {
+    expect(beforeDeadline.filter(call => call.path === path)).toHaveLength(count);
+    expect(calls.filter(call => call.path === path)).toHaveLength(count);
+  }
+  expect(peak).toBe(1);
+  expect(result.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
+  expect(result.data.series.every(series => series.points.map(point => point.date).join() === dates.join())).toBe(true);
+  for (const id of ["M016.android", "M016.ios", "M008.internal", "M115.d1", "M115.d3", "M115.d7", "M115.d30", "M018"])
+    expect(result.data.series.find(series => series.metric.id === id)!.points.at(-1)).toMatchObject({ state: "available", sourceStatus: "READY", value: 7 });
+  expect(point(result, "M016.new")).toMatchObject({ state: stallNewUsers ? "source_failure" : "no_record", value: null });
 });

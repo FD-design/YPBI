@@ -86,6 +86,28 @@ describe("bi-v1 自然月月活读取", () => {
     ]);
   });
 
+  test("经营快照只读取锚点属于观察日的自然月", async () => {
+    const octoberRange = ["2026-10-01", "2026-11-01"];
+    const novemberRange = ["2026-11-01", "2026-11-07"];
+    const cases = [
+      { projectedDates: ["2026-10-27", "2026-11-02", "2026-11-03"],
+        ranges: [novemberRange], points: [["2026-11-03", 37]] },
+      { projectedDates: ["2026-10-31", "2026-11-06", "2026-11-07"],
+        ranges: [octoberRange, novemberRange], points: [["2026-10-31", 31], ["2026-11-07", 37]] }
+    ];
+    for (const { projectedDates, ranges, points } of cases) {
+      const calls: string[][] = [];
+      const result = await readBiV1MonthlyMetricDays({ get: async (_path, params) => {
+        calls.push([params.startDate, params.endDate]);
+        const value = params.startDate === octoberRange[0] ? 31 : 37;
+        return payload([row({ value, numerator: value })]);
+      } }, { ...query, startDate: projectedDates[0], endDate: projectedDates[2] }, "2026-11-07", projectedDates);
+      expect(calls).toEqual(ranges);
+      expect(result.days).toHaveLength(8);
+      expect(result.days.filter(day => day.metrics.M018).map(day => [day.date, day.metrics.M018.value])).toEqual(points);
+    }
+  });
+
   test("当前月读取月初至昨日，日期筛选与查询截至日分别保存", async () => {
     const calls: Record<string, string>[] = [];
     const result = await readBiV1MonthlyMetricDays({ get: async (_path, params) => {

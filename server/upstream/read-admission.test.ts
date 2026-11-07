@@ -38,7 +38,22 @@ test("ready snapshot fallbacks share the serial slot with pending modern units",
   expect(calls).toEqual(["modern-1", "fallback-1", "modern-2", "fallback-2", "modern-3", "legacy"]);
 });
 
-for (const priority of ["modern", "snapshot-fallback"] as const) test(`queued ${priority} cancellation removes only that unit and healthy queued work resumes`, async () => {
+test("secondary snapshot reads yield to the modern FIFO and ready fallbacks", async () => {
+  const queue = fixture(), calls: string[] = [];
+  const work = (name: string) => async () => { calls.push(name); };
+  await Promise.all([
+    queue.run(work("secondary-1"), "snapshot-secondary"),
+    queue.run(work("legacy"), "legacy"),
+    queue.run(work("fallback-1"), "snapshot-fallback"),
+    queue.run(work("modern-1"), "modern"),
+    queue.run(work("secondary-2"), "snapshot-secondary"),
+    queue.run(work("fallback-2"), "snapshot-fallback"),
+    queue.run(work("fallback-3"), "snapshot-fallback")
+  ]);
+  expect(calls).toEqual(["modern-1", "fallback-1", "fallback-2", "fallback-3", "secondary-1", "secondary-2", "legacy"]);
+});
+
+for (const priority of ["modern", "snapshot-secondary", "snapshot-fallback"] as const) test(`queued ${priority} cancellation removes only that unit and healthy queued work resumes`, async () => {
   const queue = fixture(), held = deferred<number>(), cancelled = new AbortController();
   const calls: string[] = [];
   const first = queue.run(() => held.promise, "modern");

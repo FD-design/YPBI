@@ -85,7 +85,8 @@ export function projectBiV1MonthlyMetricScope(message: BiV1MetricSource, scope: 
 export async function readBiV1MonthlyMetricDays(
   client: Pick<UpstreamClient, "get">,
   query: MonthlyQuery,
-  today: string
+  today: string,
+  projectedDates?: readonly string[]
 ): Promise<{ days: BiV1MonthlyMetricDay[] }> {
   if (![query.startDate, query.endDate, today].every(date => z.iso.date().safeParse(date).success)
     || query.startDate > query.endDate) {
@@ -101,6 +102,7 @@ export async function readBiV1MonthlyMetricDays(
   }
 
   for (const scope of monthlyQueryScopes(query.startDate, query.endDate, today)) {
+    if (projectedDates && !projectedDates.includes(scope.anchor)) continue;
     const { queryStart, queryEnd } = scope;
     const anchor = daysByDate.get(scope.anchor)!;
     if (!queryStart || !queryEnd) {

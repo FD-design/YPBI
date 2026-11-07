@@ -30,6 +30,7 @@ import { ReadAdmission } from "../upstream/read-admission";
 
 const sourceAdmissions = new WeakMap<object, ReadAdmission>();
 const activeReadUnit = new AsyncLocalStorage<{ scope: object; budget: SourceReadBudget }>();
+const secondarySnapshotRead = new AsyncLocalStorage<boolean>();
 // Leave time for projection and delivery before the production gateway's 60s cutoff.
 const OPERATING_SNAPSHOT_READ_TIMEOUT_MS = 50_000;
 type SnapshotReadDeadline = { signal: AbortSignal; check: () => void };
@@ -647,6 +648,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
           void legacyReady.then(() => { cancellation?.removeEventListener("abort", cancel); resolve(); },
             error => { cancellation?.removeEventListener("abort", cancel); reject(error); });
         });
+        const priority = modern
+          ? secondarySnapshotRead.getStore() ? "snapshot-secondary" : "modern"
+          : fallback ? "snapshot-fallback" : "legacy";
         return admission.run(async () => {
           deadline?.check();
           if (closed || cancellation?.aborted) throw cancelled();
@@ -657,7 +661,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             source.budgetExpired ||= budget.expired;
             budget.dispose();
           }
-        }, modern ? "modern" : fallback ? "snapshot-fallback" : "legacy", cancellation);
+        }, priority, cancellation);
       };
       const runUnit = !deadline ? admitUnit : async <V>(start: () => Promise<V>, signal?: AbortSignal): Promise<V> => {
         try {
@@ -851,15 +855,21 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     }) : readSource("metrics", async (client) => {
       const requests = dailyDashboardMetricQueries(query);
       const readGroup = async (request: BiV1MetricQuery) => {
+        const groupId = metricReadGroup(request);
         try {
-          const result = await runWithUpstreamReadContext({ groupId: metricReadGroup(request) }, () => readBiV1MetricDays(client, request));
+          // The full-range new-user batch can occupy the serial slot for much of
+          // the snapshot window. Give independent groups and needed fallbacks
+          // their turns first, while keeping the same new-user request.
+          const secondary = Boolean(deadline) && groupId === "new";
+          const result = await secondarySnapshotRead.run(secondary, () =>
+            runWithUpstreamReadContext({ groupId }, () => readBiV1MetricDays(client, request)));
           for (const day of result.days) {
             const existing = biV1MetricDays.get(day.date) ?? { date: day.date, metrics: {} };
             Object.assign(existing.metrics, day.metrics);
             biV1MetricDays.set(day.date, existing);
           }
         } catch (error) {
-          runWithUpstreamReadContext({ groupId: metricReadGroup(request) }, () => noteReadBoundaryFailure(error));
+          runWithUpstreamReadContext({ groupId }, () => noteReadBoundaryFailure(error));
           // Each filter group is independent. Missing or failed slices cannot
           // borrow the overall value or overwrite another group's healthy result.
           for (const date of dates) {
@@ -892,7 +902,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     }) : readSource("monthly", async (client) => {
       if (!sourceIds.includes("M018")) return;
       try {
-        const result = await readBiV1MonthlyMetricDays(client, { pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1] }, today);
+        const result = await readBiV1MonthlyMetricDays(client, {
+          pid: query.pid, startDate: query.dateRange[0], endDate: query.dateRange[1]
+        }, today, deadline ? dates : undefined);
         result.days.forEach(day => monthlyDays.set(day.date, day));
       } catch (error) {
         noteReadBoundaryFailure(error);
@@ -1047,26 +1059,30 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       { source: "channel", ids: sourceIds.filter(id => mappings[id].channel), cancel: (unused: string[]) => { unused.forEach(date => { unusedChannelDates.add(date); channelControllers.get(date)?.abort(); }); } }
     ] as const).map(async dependency => {
       const inputIds = sourceMetricIds(dependency.ids.flatMap(id => mappings[id].fallbackFrom ?? []));
-      const selectionIds = [...dependency.ids, ...inputIds];
+      const needsLegacy = (id: CandidateId, date: string) => {
+        const selection = pointSourceFor(id, date);
+        return selection.kind === "legacy" || selection.kind === "modern" && selection.legacyFallback;
+      };
       // A group settles only after its metric isolation and merged inputs are complete.
       // Legacy dependencies wait for their modern facts; legacy-only inputs cannot supply READY trend facts.
       const metricSelectionTasks = new Set<Promise<void>>();
-      for (const id of selectionIds) {
+      for (const id of [...dependency.ids, ...inputIds]) {
         const mapping = mappings[id];
         if (!mapping.biV1Metric) continue;
         const task = mapping.biV1Metric === "M018" ? monthlyTask
           : operatingSources ? biV1MetricTask : metricGroupTasks.get(biV1MetricKey(mapping.biV1Metric, mapping.biV1Dimensions));
         if (!task) throw new Error("Legacy dependency metric group task missing");
         metricSelectionTasks.add(task);
+        // A single settled direct candidate can establish the need for the
+        // shared daily request. Other groups cannot make that candidate READY.
+        if (dependency.source === "daily" && snapshotFallbacks.daily && !mapping.fallbackFrom && dependency.ids.includes(id)) {
+          metricSelectionTasks.add(task.then(() => {
+            if (dates.some(date => needsLegacy(id, date))) snapshotFallbacks.daily?.resolve();
+          }));
+        }
       }
       await Promise.all(metricSelectionTasks);
-      const unusedDates = dates.filter(date => {
-        const needsLegacy = dependency.ids.some(id => {
-          const selection = pointSourceFor(id, date);
-          return selection.kind === "legacy" || selection.kind === "modern" && selection.legacyFallback;
-        });
-        return !needsLegacy;
-      });
+      const unusedDates = dates.filter(date => !dependency.ids.some(id => needsLegacy(id, date)));
       dependency.cancel(unusedDates);
       // Only dates still requiring this source can use the shared serial slot.
       snapshotFallbacks[dependency.source]?.resolve();
