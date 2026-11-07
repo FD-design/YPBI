@@ -37,10 +37,10 @@ describe("operating private read trace wiring", () => {
     const record = entries.find(entry => entry.message === "daily dashboard read trace completed")!.fields;
     expect(record.queryId).toBe(result.data.queryId);
     expect(record.scopeTag).toBe(dailyDashboardScopeTag(query));
-    expect(record.readTrace!.byGroup.new!.failedLogicalReadCount).toBe(1);
-    expect(record.readTrace!.byGroup.new!.upstreamHttpStatusCounts).toEqual({ 500: 1 });
-    expect(record.readTrace!.byGroup.new!.failureOriginCounts).toEqual({ http: 1 });
-    expect(record.readTrace!.physicalReads.filter(read => read.upstreamHttpStatus === 500)).toHaveLength(1);
+    expect(record.readTrace!.byGroup.new!.failedLogicalReadCount).toBe(2);
+    expect(record.readTrace!.byGroup.new!.upstreamHttpStatusCounts).toEqual({ 500: 2 });
+    expect(record.readTrace!.byGroup.new!.failureOriginCounts).toEqual({ http: 2 });
+    expect(record.readTrace!.physicalReads.filter(read => read.upstreamHttpStatus === 500)).toHaveLength(2);
     expect(record.failedPoints!.find(point => point.metricId === "M016.new")!.pointIndexes).toEqual([0, 1, 2]);
     expect(result.data).not.toHaveProperty("readTrace");
     for (const secret of ["private-fixture-name", "private-fixture-token", "private server reason", "https://", "/api/", "PH", "2026-10-21", "dimensionFilters"]) expect(JSON.stringify(record)).not.toContain(secret);

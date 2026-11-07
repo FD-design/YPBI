@@ -112,14 +112,14 @@ describe("经营取证下载的安全读取诊断扩展", () => {
       expect(data.boundary).toEqual({ kind: "upstream-client-business-field-projection", rawHttp: false, cacheSemantics: "existing-upstream-client-cache-and-inflight", httpStatusAvailable: false, metricAcceptanceGranted: false });
       expect(dailyDashboardSuccessSchema.safeParse(data.projection).success).toBe(true);
       expect(data.projection.data.series).toHaveLength(93);
-      expect(data.calls).toHaveLength(15);
+      expect(data.calls).toHaveLength(16);
       const retentionRead = (data.calls as OperatingEvidenceCall[]).find(call => call.params.metricCodes === "M115");
       expect(retentionRead?.params).toMatchObject({ dimensions: "retentionDay", granularity: "day" });
       expect(retentionRead?.response?.rows[0]).toMatchObject({ dimensions: { retentionDay: "D1" } });
       expect(data.calls.every((call: OperatingEvidenceCall) => call.httpStatus === null && call.cacheHit === null && call.params.pid === pid)).toBe(true);
       const businessRequests = harness.observedRequests.filter(item => ["/api/admin/bi/v1/metrics", "/api/admin/bi/v1/playback"].includes(item.url.pathname));
-      expect(businessRequests).toHaveLength(15);
-      expect(businessRequests.filter(item => item.url.pathname.endsWith("/metrics") && item.url.searchParams.get("granularity") === "day")).toHaveLength(13);
+      expect(businessRequests).toHaveLength(16);
+      expect(businessRequests.filter(item => item.url.pathname.endsWith("/metrics") && item.url.searchParams.get("granularity") === "day")).toHaveLength(14);
       for (const call of data.calls as OperatingEvidenceCall[]) {
         const matching = businessRequests.find(item => item.url.pathname === call.path
           && [...item.url.searchParams].every(([key, value]) => key === "dimensionFilters"

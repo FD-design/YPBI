@@ -211,13 +211,13 @@ describe("正式经营全平台同步／异步同源差分", () => {
         expect(new Set(task.request.queries.filter(unit => unit.query.granularity === "day" && unit.query.dimensions !== "videoType")
           .map(unit => filterKey(JSON.parse(unit.query.dimensionFilters ?? "{}"))))).toEqual(new Set(expectedFilters.map(filterKey)));
       }
-      expect(modern).toHaveLength(20 * 15);
+      expect(modern).toHaveLength(20 * 16);
       expect(async.reads.filter(read => read.query)).toHaveLength(0);
       const jobReads = async.reads.filter(read => read.path.startsWith("/api/admin/bi/v1/queryJobs"));
       const counts = { syncModernReads: modern.length, asyncCreate: jobReads.filter(read => read.method === "POST").length,
         asyncPoll: jobReads.filter(read => read.method === "GET" && !read.path.endsWith("/result")).length,
         asyncResult: jobReads.filter(read => read.path.endsWith("/result")).length };
-      expect(counts).toMatchObject({ syncModernReads: 300, asyncCreate: 2, asyncPoll: 4 });
+      expect(counts).toMatchObject({ syncModernReads: 320, asyncCreate: 2, asyncPoll: 4 });
       expect(counts.asyncResult).toBeGreaterThanOrEqual(2);
       console.info("production-parity in-memory request counts; no live latency claim", JSON.stringify({ ...counts,
         points: observations.points, nonzero: observations.nonzero, zero: observations.zero, null: observations.null, zeroDenominator: observations.zeroDenominator }));

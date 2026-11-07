@@ -74,6 +74,7 @@ test("真实看板：早完成的独立readGroup保留，晚组失败且日志�
     const client = { get: (path: string, params: Record<string, string>): Promise<unknown> => {
       if (path === "/api/admin/bi/v1/metrics") {
         if (params.granularity === "day" && params.dimensionFilters === '{"userCohort":"new"}') {
+          if (params.startDate === date) return Promise.resolve(payload("M016", { pid: "PH", userCohort: "new" }));
           rawStarted = true;
           return raw.promise;
         }
@@ -92,12 +93,16 @@ test("真实看板：早完成的独立readGroup保留，晚组失败且日志�
     // The ordinary event-loop turn lets the healthy group's complete validation
     // and merge finish before the other group's held response is released.
     await new Promise<void>(resolve => setImmediate(resolve));
-    raw.resolve(payload("M016", { pid: "PH", userCohort: "new" }));
+    const late = payload("M016", { pid: "PH", userCohort: "new" });
+    late.msg.rows[0].businessDate = "2020-01-08";
+    raw.resolve(late);
     queueMicrotask(() => block(1100));
     const result = await read;
     expect(point(result, "M016")).toMatchObject({ state: "available", sourceStatus: "READY", value: 7 });
-    expect(point(result, "M016.new")).toMatchObject({ state: "source_failure", value: null });
-    expect(point(result, "M016.new").sourceStatus).not.toBe("READY");
+    expect(point(result, "M016.new")).toMatchObject({ state: "available", sourceStatus: "READY", value: 7 });
+    const latestNewUsers = result.data.series.find(series => series.metric.id === "M016.new")!.points.at(-1);
+    expect(latestNewUsers).toMatchObject({ state: "source_failure", value: null });
+    expect(latestNewUsers?.sourceStatus).not.toBe("READY");
     if (mode.logging) expect(entries.flatMap(entry => entry.fields.sources ?? [])
       .find(source => source.sourceId === "metrics")!.budgetExpired).toBe(true);
     expect(entries.some(entry => entry.message === "daily dashboard read trace completed")).toBe(mode.tracing);
@@ -213,12 +218,12 @@ test("客户端中断同步经营快照时拒绝查询，独立的内部总预�
   expect(fixture.calls).toHaveLength(callsBeforeAbort);
 });
 
-for (const stallNewUsers of [false, true]) test(`PH跨月经营快照先读取独立批组，慢新用户批组=${stallNewUsers}`, async () => {
+for (const stalledWindow of ["none", "recent", "previousWeek"] as const) test(`PH跨月经营快照新用户日期分段，挂起窗口=${stalledWindow}`, async () => {
   const query: DailyDashboardQuery = {
     ...snapshot, dateRange: ["2026-10-27", "2026-11-03"]
   };
   const dates = operatingSnapshotDates(query.dateRange);
-  const calls: Array<{ path: string; scope: string; startDate?: string; endDate?: string }> = [];
+  const calls: Array<{ path: string; scope: string; startDate?: string; endDate?: string; codes?: string }> = [];
   const heldNewUsers = deferred<unknown>();
   const startedNewUsers = deferred<void>();
   let active = 0, peak = 0;
@@ -233,7 +238,7 @@ for (const stallNewUsers of [false, true]) test(`PH跨月经营快照先读取�
       : params.metricCodes === "M018" ? "monthly"
       : filters.clientPlatform ? [filters.clientPlatform, filters.userCohort].filter(Boolean).join("_")
       : filters.sourceType ?? filters.paymentMethod ?? filters.userCohort ?? "overall";
-    calls.push({ path, scope, startDate: params.startDate, endDate: params.endDate });
+    calls.push({ path, scope, startDate: params.startDate, endDate: params.endDate, codes: params.metricCodes });
     active++;
     peak = Math.max(active, peak);
     try {
@@ -248,7 +253,10 @@ for (const stallNewUsers of [false, true]) test(`PH跨月经营快照先读取�
       }
       if (scope === "new") {
         startedNewUsers.resolve();
-        return stallNewUsers ? await heldNewUsers.promise : emptyMetrics();
+        const window = params.startDate === "2026-11-02" ? "recent" : "previousWeek";
+        if (stalledWindow === window) return await heldNewUsers.promise;
+        return envelope(rows("M016", { pid: "PH", ...filters })
+          .filter(row => row.businessDate >= params.startDate && row.businessDate < params.endDate));
       }
       if (scope === "monthly") {
         const { businessDate: _unused, ...row } = payload("M018").msg.rows[0];
@@ -279,7 +287,7 @@ for (const stallNewUsers of [false, true]) test(`PH跨月经营快照先读取�
     "old", "retentionDay", "usdt_pay", "wx_pay"
   ]);
   expect(beforeDeadline.filter(call => call.scope === "monthly")).toEqual([{
-    path: "/api/admin/bi/v1/metrics", scope: "monthly", startDate: "2026-11-01", endDate: "2026-11-07"
+    path: "/api/admin/bi/v1/metrics", scope: "monthly", startDate: "2026-11-01", endDate: "2026-11-07", codes: "M018"
   }]);
   for (const [path, count] of [[P_DAY_SUM_API, 1], [RETENTION_PLUS_API, 1], [PAYMENT_RATE_API, 3], [CHANNEL_V2_API, 3]] as const) {
     expect(beforeDeadline.filter(call => call.path === path)).toHaveLength(count);
@@ -290,5 +298,12 @@ for (const stallNewUsers of [false, true]) test(`PH跨月经营快照先读取�
   expect(result.data.series.every(series => series.points.map(point => point.date).join() === dates.join())).toBe(true);
   for (const id of ["M016.android", "M016.ios", "M008.internal", "M115.d1", "M115.d3", "M115.d7", "M115.d30", "M018"])
     expect(result.data.series.find(series => series.metric.id === id)!.points.at(-1)).toMatchObject({ state: "available", sourceStatus: "READY", value: 7 });
-  expect(point(result, "M016.new")).toMatchObject({ state: stallNewUsers ? "source_failure" : "no_record", value: null });
+  const requests = calls.filter(call => call.scope === "new");
+  const expectedDates = [["2026-11-02", "2026-11-04"], ["2026-10-27", "2026-10-28"]];
+  expect(requests.map(call => [call.startDate, call.endDate])).toEqual(stalledWindow === "recent" ? expectedDates.slice(0, 1) : expectedDates);
+  expect(new Set(requests.map(call => call.codes))).toEqual(new Set(["M016,M026,M055,M058,M059,M081,M094,M110,M111"]));
+  const newUserPoints = result.data.series.find(series => series.metric.id === "M016.new")!.points;
+  expect(newUserPoints.map(item => [item.state, item.value])).toEqual(dates.map((_, index) =>
+    stalledWindow === "recent" || index === 0 && stalledWindow === "previousWeek"
+      ? ["source_failure", null] : ["available", 7]));
 });

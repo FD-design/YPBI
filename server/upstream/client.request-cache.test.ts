@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { loadEnv } from "../config/env";
 import { UpstreamClient } from "./client";
+import { runWithUpstreamRequestProfile } from "./request-profile";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -23,6 +24,28 @@ function fixture() {
   return { client, requests };
 }
 const response = (value: number) => new Response(JSON.stringify({ code: 200, msg: { value } }), { status: 200 });
+
+test("只读缓存探测限于同凭据分区、同范围及未过期响应", async () => {
+  const { client, requests } = fixture();
+  const path = "/api/in-memory", params = { pid: "PH", startDate: "2026-10-27", endDate: "2026-11-04" };
+  expect(client.getCached(path, params)).toBeUndefined();
+  const read = client.get(path, params);
+  expect(client.getCached(path, params)).toBeUndefined();
+  requests[0].resolve(response(7));
+  expect(client.getCached(path, params)).toBeUndefined();
+  await read;
+  expect(client.getCached(path, params)).toEqual({ value: { code: 200, msg: { value: 7 } } });
+  expect(client.getCached(path, { ...params, endDate: "2026-11-03" })).toBeUndefined();
+  const testResult = await runWithUpstreamRequestProfile({
+    environment: "test", baseUrl: "https://in-memory.invalid", userName: "in-memory-user",
+    token: "in-memory-test-token", cachePartition: "test:in-memory"
+  }, async () => client.getCached(path, params));
+  expect(testResult).toBeUndefined();
+  const cache = Reflect.get(client, "responseCache") as Map<string, { expiresAt: number }>;
+  for (const entry of cache.values()) entry.expiresAt = Date.now() - 1;
+  expect(client.getCached(path, params)).toBeUndefined();
+  expect(requests).toHaveLength(1);
+});
 
 test("同key并发读取合并，完成后复用缓存，失败结果不进入缓存", async () => {
   const { client, requests } = fixture();

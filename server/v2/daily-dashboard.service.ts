@@ -19,7 +19,7 @@ import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, supportsAcquisiti
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
 export const PAYMENT_RATE_API = "/api/admin/consumptionMgr/payChannel/getRechargeSucRate";
 export const CHECKIN_OVERVIEW_API = "/api/admin/dataDashboard/overview";
-import { getUpstreamReadFailure, UpstreamError, type UpstreamClient } from "../upstream/client";
+import { getUpstreamReadFailure, UpstreamError, type UpstreamReadClient } from "../upstream/client";
 import { currentUpstreamRequestProfile } from "../upstream/request-profile";
 import { UpstreamReadTrace, runWithUpstreamReadTrace, runWithUpstreamReadContext, recordUpstreamReadBoundaryFailure, type UpstreamReadGroupId, type UpstreamReadTraceSnapshot } from "../upstream/read-trace";
 import { toBeijingDate } from "../upstream/date";
@@ -558,7 +558,7 @@ export interface OperatingModernSources {
 }
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
-  constructor(private readonly client: Pick<UpstreamClient, "get">, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number; readTraceEnabled?: boolean; operatingSnapshotReadTimeoutMs?: number } = {}) {}
+  constructor(private readonly client: UpstreamReadClient, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number; readTraceEnabled?: boolean; operatingSnapshotReadTimeoutMs?: number } = {}) {}
   async execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
     if (query.projection !== "operating_snapshot") return this.executeSources(query, consumerSignal);
     const timeoutMs = this.options.operatingSnapshotReadTimeoutMs ?? OPERATING_SNAPSHOT_READ_TIMEOUT_MS;
@@ -620,7 +620,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       payment: Promise.withResolvers<void>(),
       channel: Promise.withResolvers<void>()
     } : {};
-    const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: Pick<UpstreamClient, "get">) => Promise<T>): Promise<T> => {
+    const readSource = async <T>(sourceId: SourceReadDiagnostics["sourceId"], read: (client: UpstreamReadClient) => Promise<T>): Promise<T> => {
       const startedAt = performance.now();
       const scope = {};
       let closed = false;
@@ -676,7 +676,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       };
       try {
         return await runWithReadDeliveryBoundary(runUnit,
-          () => runWithUpstreamReadContext({ sourceId }, () => read({ get: async (...args) => {
+          () => runWithUpstreamReadContext({ sourceId }, () => read({
+          getCached: (path, params) => this.client.getCached?.(path, params),
+          get: async (...args) => {
           let started = false;
           try {
             const result = await runUnit(() => {
@@ -854,15 +856,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
       source.metricDays.forEach(day => biV1MetricDays.set(day.date, day));
     }) : readSource("metrics", async (client) => {
       const requests = dailyDashboardMetricQueries(query);
-      const readGroup = async (request: BiV1MetricQuery) => {
-        const groupId = metricReadGroup(request);
+      const readMetricWindow = async (request: BiV1MetricQuery, groupId: UpstreamReadGroupId, coveringDates?: Pick<BiV1MetricQuery, "startDate" | "endDate">) => {
         try {
-          // The full-range new-user batch can occupy the serial slot for much of
-          // the snapshot window. Give independent groups and needed fallbacks
-          // their turns first, while keeping the same new-user request.
-          const secondary = Boolean(deadline) && groupId === "new";
-          const result = await secondarySnapshotRead.run(secondary, () =>
-            runWithUpstreamReadContext({ groupId }, () => readBiV1MetricDays(client, request)));
+          const result = await runWithUpstreamReadContext({ groupId }, () => readBiV1MetricDays(client, request, coveringDates));
           for (const day of result.days) {
             const existing = biV1MetricDays.get(day.date) ?? { date: day.date, metrics: {} };
             Object.assign(existing.metrics, day.metrics);
@@ -871,8 +867,9 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         } catch (error) {
           runWithUpstreamReadContext({ groupId }, () => noteReadBoundaryFailure(error));
           // Each filter group is independent. Missing or failed slices cannot
-          // borrow the overall value or overwrite another group's healthy result.
+          // borrow the overall value or overwrite a healthy window.
           for (const date of dates) {
+            if (date < request.startDate || date > request.endDate) continue;
             const existing = biV1MetricDays.get(date) ?? { date, metrics: {} };
             for (const code of request.metricCodes) {
               for (const key of biV1MetricRequestKeys(code, request)) existing.metrics[key] = failedBiV1MetricRead(code, error);
@@ -880,6 +877,20 @@ export class DailyDashboardService implements DailyDashboardExecutor {
             biV1MetricDays.set(date, existing);
           }
         }
+      };
+      const readGroup = (request: BiV1MetricQuery) => {
+        const groupId = metricReadGroup(request);
+        const secondary = Boolean(deadline) && groupId === "new";
+        if (!secondary) return readMetricWindow(request, groupId);
+        // Only the three projected business dates are used. Read the most
+        // recent contiguous days first and settle each window independently.
+        const [previousWeek, previousDay, currentDay] = dates;
+        return secondarySnapshotRead.run(true, async () => {
+          await Promise.all([
+            readMetricWindow({ ...request, startDate: previousDay, endDate: currentDay }, groupId, request),
+            readMetricWindow({ ...request, startDate: previousWeek, endDate: previousWeek }, groupId, request)
+          ]);
+        });
       };
       let next = 0;
       // Register every operating group before legacy dependencies inspect its

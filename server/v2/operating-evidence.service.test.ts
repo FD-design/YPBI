@@ -38,7 +38,8 @@ function fixture(request: OperatingEvidenceQuery, mode: Mode = "ready", held = f
       const filters = JSON.parse(params.dimensionFilters ?? "{}") as Record<string, string>;
       if (params.granularity === "summary") return envelope([{ metricCode: "M018", dimensions: { pid: request.pid }, value: 42, numerator: 42,
         denominator: 0, unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "monthly-fixture-v1" }]);
-      return envelope(dates.flatMap(date => params.metricCodes.split(",").flatMap(metricCode => {
+      const requestDates = dates.filter(date => date >= params.startDate && date < params.endDate);
+      return envelope(requestDates.flatMap(date => params.metricCodes.split(",").flatMap(metricCode => {
         if (mode === "missing_scope" && filters.clientPlatform === "ios" && date === request.date) return [];
         const ratio = ratios.has(metricCode) || metricCode === "M110", zero = date === "2026-10-05";
         const value = zero ? 0 : ratio ? 0.5 : metricCode === "M058" ? 12.34 : metricCode === "M102" ? 7200 : 2;
@@ -54,7 +55,7 @@ function fixture(request: OperatingEvidenceQuery, mode: Mode = "ready", held = f
         if (["processing", "range_processing"].includes(mode) && metricCode === "M016") {
           Object.assign(row, { dataStatus: "PROCESSING", value: null, numerator: 999 });
           if (mode === "range_processing") {
-            if (date !== dates[0]) return [];
+            if (date !== params.startDate) return [];
             delete row.businessDate;
           }
         }
@@ -149,9 +150,9 @@ describe("operating evidence authoritative service integration", () => {
       expect(evidence.boundary).toEqual(OPERATING_EVIDENCE_BOUNDARY);
       expect(source.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
         .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
-      expect(source.reads).toHaveLength(15);
+      expect(source.reads).toHaveLength(16);
       expect(source.reads.every(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path))).toBe(true);
-      expect(evidence.calls).toHaveLength(15);
+      expect(evidence.calls).toHaveLength(16);
       expect(evidence.projection.data.series).toHaveLength(93);
       expect(evidence.calls.every(call => call.httpStatus === null && call.cacheHit === null)).toBe(true);
     });
@@ -178,8 +179,8 @@ describe("operating evidence authoritative service integration", () => {
       expect(observed.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })))
         .toEqual(baseline.reads.map(({ path, params, inboundToken }) => ({ path, params, inboundToken })));
       if (view === "snapshot") {
-        expect(observed.reads).toHaveLength({ ready: 15, processing: 15, incomplete: 20, wrong_rule: 15,
-          missing_scope: 16, scope_conflict: 15, legacy: 23, network_failure: 23 }[mode]);
+        expect(observed.reads).toHaveLength({ ready: 16, processing: 16, incomplete: 21, wrong_rule: 16,
+          missing_scope: 17, scope_conflict: 16, legacy: 24, network_failure: 24 }[mode]);
         expect(evidence.projection.data.series.map(item => item.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
         expect(evidence.projection.data.series.every(item => item.points.map(point => point.date).join() === operatingSnapshotDates(query.dateRange).join())).toBe(true);
       } else {
@@ -199,15 +200,21 @@ describe("operating evidence authoritative service integration", () => {
         expect(call.state).toBe(mode === "network_failure" ? "rejected" : "fulfilled");
         expect(call.errorCode).toBe(mode === "network_failure" ? "UPSTREAM_NETWORK_ERROR" : null);
         if (mode === "network_failure") expect(call.response).toBeNull();
-        if (actual.params.granularity === "day") {
+        if (actual.params.granularity === "day" && (view === "day" || call.params.dimensionFilters?.userCohort !== "new")) {
           expect(call.params.startDate).toBe(query.dateRange[0]);
           expect(call.params.endDate).toBe(shift(request.date, 1));
         }
         expect(actual.params.metricCodes.split(",")).toEqual(actual.params.metricCodes.split(",").sort());
       }
       if (view === "snapshot") {
-        expect(evidence.calls).toHaveLength(15);
-        expect(evidence.calls.filter(call => call.path === BI_V1_METRICS_API && call.params.granularity === "day")).toHaveLength(13);
+        expect(evidence.calls).toHaveLength(16);
+        const metricDays = evidence.calls.filter(call => call.path === BI_V1_METRICS_API && call.params.granularity === "day");
+        expect(metricDays).toHaveLength(14);
+        const [previousWeek, previousDay, currentDay] = operatingSnapshotDates(query.dateRange);
+        expect(metricDays.filter(call => call.params.dimensionFilters?.userCohort === "new")
+          .map(({ params }) => [params.startDate, params.endDate])).toEqual([
+          [previousDay, shift(currentDay, 1)], [previousWeek, shift(previousWeek, 1)]
+        ]);
       }
       for (const { value, before } of observed.payloads) {
         expect(JSON.stringify(value)).toBe(before);
@@ -258,12 +265,26 @@ describe("operating evidence authoritative service integration", () => {
     const range = await readOperatingEvidence(rangeSource.client, input, options());
     const dated = await readOperatingEvidence(datedSource.client, input, options());
     expect(normalize(range.projection)).toEqual(normalize(dated.projection));
-    const rows = (evidence: typeof range) => evidence.calls.flatMap(call => call.response?.rows ?? [])
-      .filter((row): row is OperatingEvidenceBusinessRow => row.scope === "in_scope" && row.metricCode === "M016");
-    expect(rows(range).length).toBeGreaterThan(0);
-    expect(rows(range).every(row => row.dateScope === "undated" && row.businessDate === undefined && row.dataStatus === "PROCESSING" && row.numerator === 999)).toBe(true);
-    expect(rows(dated).length).toBe(rows(range).length * 8);
-    expect(rows(dated).every(row => row.dateScope === "dated" && row.businessDate !== undefined && row.dataStatus === "PROCESSING" && row.numerator === 999)).toBe(true);
+    const metricCalls = (evidence: typeof range) => evidence.calls.filter(call => call.params.metricCodes?.split(",").includes("M016"));
+    const metricRows = (call: ReturnType<typeof metricCalls>[number]) => call.response?.rows
+      .filter((row): row is OperatingEvidenceBusinessRow => row.scope === "in_scope" && row.metricCode === "M016") ?? [];
+    const rangeCalls = metricCalls(range);
+    expect(rangeCalls.length).toBeGreaterThan(0);
+    for (const call of rangeCalls) {
+      const rows = metricRows(call);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ dateScope: "undated", dataStatus: "PROCESSING", numerator: 999 });
+      expect(rows[0].businessDate).toBeUndefined();
+    }
+    const datedCalls = metricCalls(dated);
+    expect(datedCalls).toHaveLength(rangeCalls.length);
+    for (const call of datedCalls) {
+      const { startDate, endDate } = call.params;
+      const requestDays = (Date.parse(endDate!) - Date.parse(startDate!)) / 86_400_000;
+      const rows = metricRows(call);
+      expect(rows.map(row => row.businessDate)).toEqual(Array.from({ length: requestDays }, (_, index) => shift(startDate!, index)));
+      expect(rows.every(row => row.dateScope === "dated" && row.dataStatus === "PROCESSING" && row.numerator === 999)).toBe(true);
+    }
     expect(series(range.projection, "M016").points.every(point => point.value === null && point.sourceStatus === "PROCESSING" && point.inputs.every(item => item.value === null))).toBe(true);
   });
 
@@ -297,9 +318,9 @@ describe("operating evidence authoritative service integration", () => {
     const evidence = await successful;
     const baseline = await new DailyDashboardService(fixture(input).client, now).execute(queryFor(input));
     expect(normalize(evidence.projection)).toEqual(normalize(baseline));
-    expect(evidence.calls).toHaveLength(15);
+    expect(evidence.calls).toHaveLength(16);
     expect(evidence.calls.every(call => call.state === "fulfilled" && call.errorCode === null && call.response?.truncated === false)).toBe(true);
-    expect(evidence.calls.map(call => call.sequence)).toEqual(Array.from({ length: 15 }, (_, index) => index + 1));
+    expect(evidence.calls.map(call => call.sequence)).toEqual(Array.from({ length: 16 }, (_, index) => index + 1));
     expect(getEventListeners(healthy.signal, "abort")).toHaveLength(0);
   });
 });

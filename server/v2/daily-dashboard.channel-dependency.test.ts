@@ -95,7 +95,8 @@ function fixture(options: {
         await options.beforeMetricRead?.(params);
         if (options.metricsFailure) throw new UpstreamError("UPSTREAM_NETWORK_ERROR", "fixture unavailable");
       } else await options.playbackGate;
-      const dates = params.granularity === "summary" ? [""] : allDates;
+      const dates = params.granularity === "summary" ? [""]
+        : allDates.filter(date => date >= params.startDate && date < params.endDate);
       return envelope(dates.flatMap(date => params.metricCodes.split(",").flatMap(code => {
         const status = path === BI_V1_PLAYBACK_API ? "READY" : options.status?.(code, date, filters) ?? "READY";
         if (status === "empty") return [];

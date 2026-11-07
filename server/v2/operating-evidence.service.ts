@@ -2,7 +2,7 @@ import type { DailyDashboardQuery } from "../../contracts/daily-dashboard";
 import { dailyDashboardQuerySchema, dailyDashboardV2SuccessSchema, dailyDashboardMatchesQuery } from "../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS } from "../../contracts/operating-detail-projection";
 import { OPERATING_EVIDENCE_BOUNDARY, OPERATING_EVIDENCE_VERSION, type OperatingEvidenceQuery } from "../../contracts/operating-evidence";
-import { UpstreamError, type UpstreamClient } from "../upstream/client";
+import { UpstreamError, type UpstreamClient, type UpstreamReadClient } from "../upstream/client";
 import { toBeijingDate } from "../upstream/date";
 import { dailyDashboardCatalog, dailyDashboardMatchesMapping, DailyDashboardService } from "./daily-dashboard.service";
 import { createOperatingEvidenceCollector } from "./operating-evidence-collector";
@@ -10,7 +10,7 @@ import { createOperatingEvidenceReadDiagnostics } from "./operating-evidence-rea
 
 /** Runs the authoritative reader without changing its requests or projection. */
 export async function readOperatingEvidence(
-  client: Pick<UpstreamClient, "get" | "isProtectedDiagnosticText">,
+  client: UpstreamReadClient & Pick<UpstreamClient, "isProtectedDiagnosticText">,
   input: OperatingEvidenceQuery,
   options: { sourceReadTimeoutMs: number; signal: AbortSignal; now?: () => Date }
 ) {

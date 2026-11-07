@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { biQueryJobUnitResultSchema } from "../../contracts/query-jobs";
-import { getUpstreamReadFailure, UpstreamError, type UpstreamClient } from "./client";
+import { getUpstreamReadFailure, UpstreamError, type UpstreamClient, type UpstreamReadClient } from "./client";
 import { canIsolateBiV1Request } from "./bi-v1.request-isolation";
 import { recordUpstreamReadBoundaryFailure } from "./read-trace";
 import { currentReadDeliveryExpiryScope, deliverUpstreamRead } from "./read-delivery";
@@ -449,12 +449,11 @@ function dimensionMetricKeysByCode(keys: Iterable<string>) {
   return indexed;
 }
 
-export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery, signal?: AbortSignal) {
-  const metricCodes = [...new Set(query.metricCodes)];
+function metricRequestParams(query: BiV1MetricQuery, metricCodes = [...new Set(query.metricCodes)]) {
   if (!metricCodes.length) throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 指标列表不能为空", 422);
   const scopeDimensions = queryDimensions(query);
   queryRuleVersions(query);
-  const payload = await client.get(BI_V1_METRICS_API, {
+  return {
     pid: query.pid,
     startDate: query.startDate,
     endDate: nextDate(query.endDate),
@@ -463,13 +462,21 @@ export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, quer
     includeIncomplete: "true",
     ...(query.dimensionFilters !== undefined ? { dimensionFilters: JSON.stringify(scopeDimensions.filters) } : {}),
     ...(scopeDimensions.dimensions.length ? { dimensions: scopeDimensions.dimensions.join(",") } : {})
-  }, undefined, signal);
+  };
+}
+
+function decodeMetricResponse(payload: unknown, query: BiV1MetricQuery) {
   // Scope checks precede value validation so a malformed value cannot turn a
   // cross-PID, date or metric conflict into a recoverable schema error.
+  const scope = scopeEnvelopeSchema.safeParse(payload);
+  assertMetricScope(scope.success ? scope.data.msg.rows : [], query);
+  return parseEnvelope(payload, query);
+}
+
+export async function queryBiV1Metrics(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery, signal?: AbortSignal) {
+  const payload = await client.get(BI_V1_METRICS_API, metricRequestParams(query), undefined, signal);
   try {
-    const scope = scopeEnvelopeSchema.safeParse(payload);
-    assertMetricScope(scope.success ? scope.data.msg.rows : [], query);
-    return parseEnvelope(payload, query);
+    return decodeMetricResponse(payload, query);
   } catch (error) {
     recordUpstreamReadBoundaryFailure({ code: error instanceof UpstreamError ? error.code : undefined, failure: getUpstreamReadFailure(error) ?? { origin: "validation" } });
     throw error;
@@ -616,10 +623,31 @@ export function aggregateBiV1MetricDays(
   return days;
 }
 
-export async function readBiV1MetricDays(client: Pick<UpstreamClient, "get">, query: BiV1MetricQuery) {
+export async function readBiV1MetricDays(
+  client: UpstreamReadClient,
+  query: BiV1MetricQuery,
+  coveringDates?: Pick<BiV1MetricQuery, "startDate" | "endDate">
+) {
   const metricCodes = [...new Set(query.metricCodes)];
   try {
     return await deliverUpstreamRead(async () => {
+      if (coveringDates && client.getCached) {
+        const covering = { ...query, startDate: coveringDates.startDate, endDate: coveringDates.endDate };
+        const cached = client.getCached(BI_V1_METRICS_API, metricRequestParams(covering, metricCodes));
+        if (cached) {
+          try {
+            const full = decodeMetricResponse(cached.value, covering);
+            const withinWindow = ({ businessDate }: { businessDate?: string }) =>
+              !businessDate || businessDate >= query.startDate && businessDate <= query.endDate;
+            const message = { ...full, rows: full.rows.filter(withinWindow), dimensionConflicts: full.dimensionConflicts?.filter(withinWindow) };
+            return { message, days: aggregateBiV1MetricDays(message, query) };
+          } catch (error) {
+            if (!(error instanceof UpstreamError)) throw error;
+            // HTTP success can be cached before adapter validation. An invalid
+            // covering envelope cannot stand in for either exact window.
+          }
+        }
+      }
       const message = await queryBiV1Metrics(client, { ...query, metricCodes });
       return { message, days: aggregateBiV1MetricDays(message, query) };
     });

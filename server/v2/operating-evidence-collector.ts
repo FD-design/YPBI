@@ -3,7 +3,7 @@ import { z } from "zod";
 import { monthlyMetricMetadataSchema } from "../../contracts/monthly-query-scope";
 import { BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
 import { BI_V1_AD_TYPE_VALUES, BI_V1_RETENTION_DAYS, BI_V1_METRICS_API, biV1MetricCodeSchema } from "../upstream/bi-v1.metrics-adapter";
-import type { UpstreamClient } from "../upstream/client";
+import type { UpstreamReadClient } from "../upstream/client";
 import { sourceReadErrorCode } from "./source-read-diagnostics";
 
 export const OPERATING_EVIDENCE_MAX_CALLS = 160;
@@ -168,8 +168,8 @@ function deepFreeze<T>(value: T): T {
 }
 
 /** A request-local observer of business fields returned by UpstreamClient, before adapter parsing. */
-export function createOperatingEvidenceCollector(client: Pick<UpstreamClient, "get">, options: OperatingEvidenceCollectorOptions = {}): {
-  client: Pick<UpstreamClient, "get">;
+export function createOperatingEvidenceCollector(client: UpstreamReadClient, options: OperatingEvidenceCollectorOptions = {}): {
+  client: UpstreamReadClient;
   finish(): OperatingEvidenceSnapshot;
 } {
   type MutableCall = Omit<OperatingEvidenceCall, "state" | "response" | "errorCode"> & {
@@ -350,22 +350,31 @@ export function createOperatingEvidenceCollector(client: Pick<UpstreamClient, "g
       return call;
     } catch { omittedCallCount++; return undefined; }
   };
+  const recordResponse = (call: MutableCall | undefined, payload: unknown) => {
+    if (!call || finished) return;
+    call.state = "fulfilled";
+    try { call.response = projectResponse(payload, call.params); }
+    catch { call.errorCode = "unknown"; }
+  };
   return {
-    client: { get: async (path, params, inboundToken, consumerSignal) => {
-      const call = safeCall(path, params);
-      let payload: unknown;
-      try { payload = await client.get(path, params, inboundToken, consumerSignal); }
-      catch (error) {
-        if (call && !finished) { call.state = "rejected"; call.errorCode = sourceReadErrorCode(error); }
-        throw error;
+    client: {
+      getCached: (path, params) => {
+        const cached = client.getCached?.(path, params);
+        if (cached) recordResponse(safeCall(path, params), cached.value);
+        return cached;
+      },
+      get: async (path, params, inboundToken, consumerSignal) => {
+        const call = safeCall(path, params);
+        let payload: unknown;
+        try { payload = await client.get(path, params, inboundToken, consumerSignal); }
+        catch (error) {
+          if (call && !finished) { call.state = "rejected"; call.errorCode = sourceReadErrorCode(error); }
+          throw error;
+        }
+        recordResponse(call, payload);
+        return payload;
       }
-      if (call && !finished) {
-        call.state = "fulfilled";
-        try { call.response = projectResponse(payload, call.params); }
-        catch { call.errorCode = "unknown"; }
-      }
-      return payload;
-    } },
+    },
     finish() {
       if (!finished) {
         // Only objects created above are frozen; the upstream payload is never retained or mutated.

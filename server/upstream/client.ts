@@ -9,6 +9,7 @@ import { RequestWorkQueue } from "./request-work-queue";
 import { getUpstreamReadFailure, rememberUpstreamReadFailure, type UpstreamReadFailure } from "./read-failure";
 import { captureUpstreamReadObserver, PhysicalReadTrace } from "./read-trace";
 export { getUpstreamReadFailure } from "./read-failure";
+export type UpstreamReadClient = Pick<UpstreamClient, "get"> & Partial<Pick<UpstreamClient, "getCached">>;
 import {
   queryJobCreateRequestSchema, queryJobTaskIdSchema,
   type QueryJobContext, type QueryJobOperation
@@ -213,11 +214,7 @@ export class UpstreamClient {
     return this.credentialStatus().find((item) => item.site === site)!;
   }
 
-  async get(path: string, params: Record<string, string>, inboundToken?: string, consumerSignal?: AbortSignal): Promise<unknown> {
-    const observer = captureUpstreamReadObserver();
-    let failed = false;
-    try {
-    if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, { origin: "consumer_cancelled" });
+  private getRequest(path: string, params: Record<string, string>, inboundToken?: string) {
     const requestProfile = currentUpstreamRequestProfile();
     const profile = this.selectProfile(params.pid);
     const token = requestProfile?.token ?? inboundToken ?? profile.token;
@@ -230,7 +227,26 @@ export class UpstreamClient {
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
     const partition = requestProfile?.cachePartition
       ?? `production:${createHash("sha256").update(`${userName ?? ""}\u0000${token}`).digest("hex")}`;
-    const cacheKey = `${partition}\u0000${url.toString()}`;
+    return { url, token, userName, cacheKey: `${partition}\u0000${url.toString()}` };
+  }
+
+  /** Read an exact, unexpired response in the current credential partition without sending HTTP. */
+  getCached(path: string, params: Record<string, string>): { value: unknown } | undefined {
+    const { cacheKey } = this.getRequest(path, params);
+    const cached = this.responseCache.get(cacheKey);
+    if (!cached || cached.expiresAt <= Date.now()) return;
+    const observer = captureUpstreamReadObserver();
+    observer?.cacheHit();
+    observer?.settle();
+    return { value: cached.value };
+  }
+
+  async get(path: string, params: Record<string, string>, inboundToken?: string, consumerSignal?: AbortSignal): Promise<unknown> {
+    const observer = captureUpstreamReadObserver();
+    let failed = false;
+    try {
+    if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, { origin: "consumer_cancelled" });
+    const { url, token, userName, cacheKey } = this.getRequest(path, params, inboundToken);
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) { observer?.cacheHit(); return cached.value; }
     if (cached) this.responseCache.delete(cacheKey);

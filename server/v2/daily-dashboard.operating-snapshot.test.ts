@@ -27,7 +27,8 @@ function fixture(mode: Mode) {
       const filters = JSON.parse(params.dimensionFilters ?? "{}") as Record<string, string>;
       if (params.granularity === "summary") return envelope([{ metricCode: "M018", dimensions: { pid: query.pid }, value: 42, numerator: 42, denominator: 0,
         unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "monthly-fixture-v1" }]);
-      return envelope(dates.flatMap(date => params.metricCodes.split(",").flatMap<unknown>(code => {
+      const requestDates = dates.filter(date => date >= params.startDate && date < params.endDate);
+      return envelope(requestDates.flatMap(date => params.metricCodes.split(",").flatMap<unknown>(code => {
         if (mode === "missing_scope" && filters.clientPlatform === "ios" && date === query.dateRange[1]) return [];
         const ratio = ratios.has(code) || code === "M110", zero = date === query.dateRange[0];
         const value = zero ? 0 : ratio ? 0.5 : code === "M058" ? 12.34 : code === "M102" ? 7200 : 2;
@@ -159,10 +160,10 @@ describe("operating snapshot service", () => {
       const watchFallbackDays = mode === "legacy" || mode === "network_failure" ? dates.length : 0;
       expect(full.reads.filter(read => read.path.endsWith("pRealDayLine"))).toHaveLength(watchFallbackDays);
       expect(full.reads).toHaveLength(39 + watchFallbackDays);
-      expect(sparse.reads).toHaveLength({ ready: 15, legacy: 23, processing: 15, incomplete: 20,
-        missing_scope: 16, scope_conflict: 15, wrong_rule: 15, network_failure: 23 }[mode]);
+      expect(sparse.reads).toHaveLength({ ready: 16, legacy: 24, processing: 16, incomplete: 21,
+        missing_scope: 17, scope_conflict: 16, wrong_rule: 16, network_failure: 24 }[mode]);
       const metricDays = sparse.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day");
-      expect(metricDays).toHaveLength(13);
+      expect(metricDays).toHaveLength(14);
       expect(metricDays.filter(read => read.params.metricCodes === "M115")).toEqual([expect.objectContaining({
         params: expect.objectContaining({ dimensions: "retentionDay" })
       })]);
@@ -172,8 +173,12 @@ describe("operating snapshot service", () => {
         const needed = ["legacy", "network_failure"].includes(mode) || path === CHANNEL_V2_API && mode === "incomplete";
         expect(selected).toEqual(needed ? operatingSnapshotDates(query.dateRange) : []);
       }
-      expect(sparse.reads.filter(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path) && read.params.granularity === "day")
-        .every(read => read.params.startDate === dates[0] && read.params.endDate === shift(dates.at(-1)!, 1))).toBe(true);
+      const dayReads = sparse.reads.filter(read => [BI_V1_METRICS_API, BI_V1_PLAYBACK_API].includes(read.path) && read.params.granularity === "day");
+      const newCohortFilter = JSON.stringify({ userCohort: "new" });
+      expect(dayReads.filter(read => read.params.dimensionFilters === newCohortFilter).map(({ params }) => [params.startDate, params.endDate]))
+        .toEqual([[dates[6], shift(dates[7], 1)], [dates[0], dates[1]]]);
+      expect(dayReads.filter(read => read.params.dimensionFilters !== newCohortFilter)
+        .every(read => read.params.startDate === dates[0] && read.params.endDate === shift(dates[7], 1))).toBe(true);
       if (mode === "ready") {
         expect(point(snapshot, "M055.ads", dates[0])).toMatchObject({ state: "available", value: 0, sourceStatus: "READY" });
         expect(point(snapshot, "M055.new")).toMatchObject({ state: "available", value: 2, sourceStatus: "READY" });

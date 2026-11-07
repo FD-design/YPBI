@@ -18,6 +18,7 @@ const ratios = new Set(["M005", "M006", "M007", "M020", "M021", "M022", "M023", 
 
 function fixture(invalidRetention = false, holdReads = false, options: {
   beforeRead?: (read: { path: string; params: Record<string, string> }, signal?: AbortSignal | null) => Promise<void>;
+  outOfScopeFullNewCohort?: boolean;
 } = {}) {
   const reads: { path: string; params: Record<string, string> }[] = [];
   const heldReads: (() => void)[] = [];
@@ -58,6 +59,10 @@ function fixture(invalidRetention = false, holdReads = false, options: {
             ruleVersion: `retention-${retentionDay.toLowerCase()}-v1`
           })) : [row];
         }));
+        if (options.outOfScopeFullNewCohort && url.pathname === BI_V1_METRICS_API && filters.userCohort === "new"
+          && params.startDate === query.dateRange[0] && params.endDate === "2026-10-13") {
+          rows[0].businessDate = "2026-10-04";
+        }
         // The playback numerator has its independent count projection.
         if (url.pathname === BI_V1_PLAYBACK_API) rows.filter(row => row.metricCode === "M034").forEach(row => {
           row.numerator = 1; row.value = 1;
@@ -118,9 +123,14 @@ describe("经营快照与整板同源查询复用", () => {
     const [actual, expected] = await Promise.all([result, baseline.service.execute(snapshotQuery)]);
     expect(actual.data.series).toEqual(expected.data.series);
     expect(actual.data.series.map(series => series.metric.id)).toEqual([...OPERATING_METRIC_IDS]);
-    expect(delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day")).toHaveLength(13);
+    const metricDays = delayed.reads.filter(read => read.path === BI_V1_METRICS_API && read.params.granularity === "day");
+    expect(metricDays).toHaveLength(14);
+    const newCohortWindows = metricDays.filter(read => read.params.dimensionFilters === '{"userCohort":"new"}');
+    expect(newCohortWindows.map(({ params }) => [params.startDate, params.endDate])).toEqual([
+      ["2026-10-11", "2026-10-13"], ["2026-10-05", "2026-10-06"]
+    ]);
     expect(delayed.reads.map(readKey).sort()).toEqual(baseline.reads.map(readKey).sort());
-    expect(delayed.reads).toHaveLength(15); // 13 formal metric groups, playback and natural-month summary
+    expect(delayed.reads).toHaveLength(16); // 14 daily metric reads, playback and natural-month summary
     expect(delayed.peakReads()).toBe(1);
   });
 
@@ -140,7 +150,7 @@ describe("经营快照与整板同源查询复用", () => {
     }
     expect(finished).toBe(true);
     const actual = await results;
-    expect(delayed.reads).toHaveLength(20 * 15);
+    expect(delayed.reads).toHaveLength(20 * 16);
     const baseline = fixture();
     const expected = await Promise.all(platforms.map(platform => baseline.service.execute({ ...snapshotQuery, pid: platform.pid })));
     expect(delayed.reads.map(readKey).sort()).toEqual(baseline.reads.map(readKey).sort());
@@ -237,6 +247,28 @@ describe("经营快照与整板同源查询复用", () => {
       expect(series.points).toEqual(original.points.filter(point => operatingSnapshotDates(query.dateRange).includes(point.date)));
     }
     for (const result of [full, snapshot]) expect(dailyDashboardSuccessSchema.safeParse(result).success).toBe(true);
+  });
+
+  test("整板新用户缓存含越界行时，快照读取两个窄窗口并恢复三期结果", async () => {
+    const { client, reads, service } = fixture(false, false, { outOfScopeFullNewCohort: true });
+    const newCohortReads = () => reads.filter(read => read.path === BI_V1_METRICS_API
+      && read.params.dimensionFilters === '{"userCohort":"new"}');
+    const full = await service.execute(query);
+    expect(full.data.series.find(series => series.metric.id === "M016.new")!.points[0])
+      .toMatchObject({ state: "source_failure", value: null });
+    expect(newCohortReads()).toHaveLength(1);
+    const [fullRead] = newCohortReads();
+    expect(client.getCached(fullRead.path, fullRead.params)).toBeDefined();
+
+    const snapshot = await service.execute(snapshotQuery);
+    expect(newCohortReads().map(({ params }) => [params.startDate, params.endDate, params.metricCodes])).toEqual([
+      ["2026-10-05", "2026-10-13", fullRead.params.metricCodes],
+      ["2026-10-11", "2026-10-13", fullRead.params.metricCodes],
+      ["2026-10-05", "2026-10-06", fullRead.params.metricCodes]
+    ]);
+    expect(snapshot.data.series.find(series => series.metric.id === "M016.new")!.points).toMatchObject(
+      operatingSnapshotDates(query.dateRange).map(date => ({ date, state: "available", value: 2, sourceStatus: "READY" }))
+    );
   });
 
   test("注册留存率异常不覆盖独立M115四周期人数", async () => {

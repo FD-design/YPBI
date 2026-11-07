@@ -118,13 +118,15 @@ test("modern READY snapshot does not start unnecessary legacy requests and retai
     paths.push(path);
     if (!path.endsWith("/metrics")) return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: now().toISOString(), watermark: null, rows: [] } };
     const dimensions = { pid: params.pid, ...JSON.parse(params.dimensionFilters ?? "{}") };
+    const dates = Array.from({ length: 8 }, (_, index) => `2020-01-${String(index + 1).padStart(2, "0")}`)
+      .filter(date => date >= params.startDate && date < params.endDate);
     const rows = params.metricCodes.split(",").flatMap(metricCode => {
       const unit = ratio.has(metricCode) ? "ratio" : metricCode === "M058" ? "currency" : metricCode === "M102" ? "seconds" : metricCode === "M110" ? "count_per_user" : "count";
       const ratioValue = unit === "ratio" || unit === "count_per_user";
       const row = { metricCode, dimensions, value: ratioValue ? 0.5 : 7,
         numerator: ratioValue ? 1 : 7, denominator: ratioValue ? 2 : 0, unit, dataStatus: "READY", metricVersion: "bi-v1",
         ruleVersion: metricCode === "M058" ? "paid-order-value-rmb-v2" : metricCode === "M102" ? "foreground-watch-duration-v1" : "synthetic-v1" };
-      return params.granularity === "summary" ? [row] : Array.from({ length: 8 }, (_, index) => ({ ...row, businessDate: `2020-01-${String(index + 1).padStart(2, "0")}` }));
+      return params.granularity === "summary" ? [row] : dates.map(businessDate => ({ ...row, businessDate }));
     });
     return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: now().toISOString(), watermark: null, rows } };
   } };
