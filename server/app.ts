@@ -26,7 +26,13 @@ import { createWorkspaceStore } from "./persistence/workspace.store";
 import { SpecialAdapter } from "./upstream/special.adapter";
 import { MetadataAdapter } from "./upstream/metadata.adapter";
 import { ContentAdapter } from "./upstream/content.adapter";
-import { MaintenanceAuth, type MaintenanceSecurityContext } from "./security/maintenance-auth";
+import {
+  MaintenanceAuth,
+  MaintenanceOrdinarySessionRequiredError,
+  MaintenanceSessionStoreError,
+  type MaintenanceSecurityContext,
+  type PersistentMaintenanceOptions
+} from "./security/maintenance-auth";
 import { DataPreviewSessions } from "./security/data-preview-session";
 import type { IdentityProvider, Principal } from "./identity/identity-provider";
 import { UnavailableIdentityProvider } from "./identity/identity-provider";
@@ -192,7 +198,6 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   const special = new SpecialAdapter(upstream);
   const metadata = new MetadataAdapter(upstream);
   const content = new ContentAdapter(upstream);
-  const maintenanceAuth = new MaintenanceAuth(env.TOKEN_MAINTENANCE_KEY);
   const dataPreviewSessions = new DataPreviewSessions();
   const sessionCookie: BiSessionCookieConfiguration = env.NODE_ENV === "production"
     ? PRODUCTION_BI_SESSION_COOKIE
@@ -210,6 +215,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   let identityProvider = dependencies.identityProvider;
   let authHealthCheck = dependencies.authHealthCheck;
   let closeAuthModule: (() => Promise<void>) | undefined;
+  let persistentMaintenance: PersistentMaintenanceOptions | undefined;
   if (!authService && !identityProvider && env.BI_IDENTITY_MODE === "local") {
     if (!env.BI_AUTH_DATABASE_URL || !env.BI_AUTH_CSRF_SECRET) {
       throw new Error("BI_IDENTITY_MODE=local 时必须配置 BI_AUTH_DATABASE_URL 与 BI_AUTH_CSRF_SECRET");
@@ -223,6 +229,14 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     identityProvider = authModule.identityProvider;
     authHealthCheck = authModule.health;
     closeAuthModule = authModule.close;
+    persistentMaintenance = { repository: authModule.maintenanceSessions, keyTagSecret: env.BI_AUTH_CSRF_SECRET };
+  }
+  const maintenanceAuth = new MaintenanceAuth(env.TOKEN_MAINTENANCE_KEY, Date.now, persistentMaintenance);
+  try {
+    await maintenanceAuth.initialize();
+  } catch (error) {
+    await Promise.allSettled([workspaceStore.close(), closeAuthModule?.()]);
+    throw error;
   }
   if (authService && !identityProvider) identityProvider = new SessionIdentityProvider(authService, sessionCookie);
   identityProvider ??= new UnavailableIdentityProvider();
@@ -315,14 +329,32 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   });
 
   app.get("/api/bi/health", async () => ({ success: true, data: { status: "ok", mode: env.UPSTREAM_API_BASE_URL ? "real" : "unconfigured" } }));
-  const requireMaintenanceSession = (request: FastifyRequest, reply: FastifyReply) => {
+  const maintenanceStoreUnavailable = (request: FastifyRequest, reply: FastifyReply) => {
+    request.log.warn({ requestId: request.id }, "BI maintenance session storage unavailable");
+    return reply.code(503).send({
+      success: false,
+      error: { code: "MAINTENANCE_SESSION_STORE_UNAVAILABLE", message: "维护会话暂时不可用，请稍后重试", requestId: request.id }
+    });
+  };
+  const requireMaintenanceSession = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     const principal = adminPrincipals.get(request);
-    if (!principal) return reply.code(503).send({ success: false, error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "登录服务当前不可用", requestId: request.id } });
-    const securityContext = maintenanceSecurityContext(principal);
-    if (!securityContext) return reply.code(503).send({ success: false, error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "账号安全状态当前不可用", requestId: request.id } });
-    if (!maintenanceAuth.enabled()) return reply.code(503).send({ success: false, error: { code: "MAINTENANCE_DISABLED", message: "数据源维护功能尚未启用" } });
-    if (!maintenanceAuth.authenticate(request.ip, securityContext, request.headers.cookie)) return reply.code(401).send({ success: false, error: { code: "MAINTENANCE_LOGIN_REQUIRED", message: "维护登录已失效，请重新登录" } });
-    return null;
+    const securityContext = principal && maintenanceSecurityContext(principal);
+    if (!securityContext) {
+      reply.code(503).send({ success: false, error: { code: "IDENTITY_PROVIDER_UNAVAILABLE", message: "账号安全状态当前不可用", requestId: request.id } });
+      return false;
+    }
+    if (!maintenanceAuth.enabled()) {
+      reply.code(503).send({ success: false, error: { code: "MAINTENANCE_DISABLED", message: "数据源维护功能尚未启用" } });
+      return false;
+    }
+    try {
+      if (await maintenanceAuth.authenticate(request.ip, securityContext, requestCookieHeader(request), browserSessionId(request))) return true;
+      reply.code(401).send({ success: false, error: { code: "MAINTENANCE_LOGIN_REQUIRED", message: "维护登录已失效，请重新登录" } });
+    } catch (error) {
+      if (!(error instanceof MaintenanceSessionStoreError)) throw error;
+      maintenanceStoreUnavailable(request, reply);
+    }
+    return false;
   };
   const credentialSchema = z.object({
     site: z.enum(["primary", "secondary"]),
@@ -336,31 +368,43 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     const parsed = z.object({ password: z.string().min(12).max(256) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_MAINTENANCE_PASSWORD", message: "维护密码格式不合法" } });
     try {
-      const session = maintenanceAuth.login(request.ip, securityContext, parsed.data.password);
+      const session = await maintenanceAuth.login(request.ip, securityContext, parsed.data.password, browserSessionId(request));
       reply.header("set-cookie", maintenanceAuth.sessionCookie(session.token));
       reply.header("cache-control", "no-store");
       return { success: true, data: { expiresAt: new Date(session.expiresAt).toISOString() } };
     } catch (error) {
+      if (error instanceof MaintenanceSessionStoreError) return maintenanceStoreUnavailable(request, reply);
+      if (error instanceof MaintenanceOrdinarySessionRequiredError) {
+        return reply.code(401).send({ success: false, error: { code: "AUTHENTICATION_REQUIRED", message: error.message } });
+      }
       const message = error instanceof Error ? error.message : "维护密码验证失败";
       const status = message.includes("尚未启用") ? 503 : message.includes("过多") ? 429 : 401;
       return reply.code(status).send({ success: false, error: { code: status === 429 ? "MAINTENANCE_LOCKED" : "INVALID_MAINTENANCE_PASSWORD", message } });
     }
   });
   app.post("/api/bi/admin/auth/logout", async (request, reply) => {
-    maintenanceAuth.logout(request.headers.cookie);
+    try {
+      await maintenanceAuth.logout(requestCookieHeader(request), browserSessionId(request));
+    } catch (error) {
+      if (error instanceof MaintenanceSessionStoreError) return maintenanceStoreUnavailable(request, reply);
+      if (error instanceof MaintenanceOrdinarySessionRequiredError) {
+        return reply.code(401).send({ success: false, error: { code: "AUTHENTICATION_REQUIRED", message: error.message } });
+      }
+      throw error;
+    }
     reply.header("set-cookie", maintenanceAuth.clearCookie());
     reply.header("cache-control", "no-store");
     return { success: true, data: { loggedOut: true } };
   });
   app.get("/api/bi/admin/data-sources/status", async (request, reply) => {
-    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!await requireMaintenanceSession(request, reply)) return reply;
     reply.header("cache-control", "no-store");
     return { success: true, data: upstream.credentialStatus() };
   });
   const evidenceStarts = new Map<string, number>();
   let evidenceActive = 0;
   app.get("/api/bi/admin/data-sources/operating-evidence", { exposeHeadRoute: false }, async (request, reply) => {
-    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!await requireMaintenanceSession(request, reply)) return reply;
     const fail = (status: number, code: string, message: string) => reply.code(status).send({
       success: false, error: { code, message, requestId: request.id }
     });
@@ -418,7 +462,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     }
   });
   app.post("/api/bi/admin/data-sources/test", async (request, reply) => {
-    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!await requireMaintenanceSession(request, reply)) return reply;
     reply.header("cache-control", "no-store");
     const parsed = credentialSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点、后台用户名或 Token 格式不合法" } });
@@ -427,7 +471,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     catch (error) { if (error instanceof UpstreamError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } }); throw error; }
   });
   app.put("/api/bi/admin/data-sources/token", async (request, reply) => {
-    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!await requireMaintenanceSession(request, reply)) return reply;
     reply.header("cache-control", "no-store");
     const parsed = credentialSchema.extend({ token: z.string().trim().min(16).max(4096) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "站点、后台用户名或 Token 格式不合法" } });
@@ -441,7 +485,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     && env.UPSTREAM_TEST_USER_NAME
   );
   app.get("/api/bi/admin/data-preview/status", async (request, reply) => {
-    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!await requireMaintenanceSession(request, reply)) return reply;
     const principal = adminPrincipals.get(request)!;
     const securityContext = maintenanceSecurityContext(principal);
     const ordinarySession = browserSessionId(request);
@@ -465,7 +509,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     };
   });
   app.post("/api/bi/admin/data-preview/activate", async (request, reply) => {
-    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!await requireMaintenanceSession(request, reply)) return reply;
     if (!previewEnabled) return reply.code(503).send({ success: false, error: { code: "DATA_PREVIEW_DISABLED", message: "测试数据模式尚未启用" } });
     const parsed = previewTokenSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "测试 Token 格式不合法" } });
@@ -503,7 +547,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     }
   });
   app.post("/api/bi/admin/data-preview/deactivate", async (request, reply) => {
-    const denied = requireMaintenanceSession(request, reply); if (denied) return denied;
+    if (!await requireMaintenanceSession(request, reply)) return reply;
     dataPreviewSessions.revoke(requestCookieHeader(request));
     reply.header("set-cookie", dataPreviewSessions.clearCookie(sessionCookie.secure));
     reply.header("cache-control", "no-store");
@@ -668,7 +712,8 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       sessionCookie,
       expectedOrigin: expectedPublicOrigin,
       onSecurityContextChanged: async (subjectId) => {
-        maintenanceAuth.revokeSubject(subjectId);
+        // The auth repository revokes persistent grants with ordinary logout.
+        if (!persistentMaintenance) maintenanceAuth.revokeSubject(subjectId);
         dataPreviewSessions.revokeSubject(subjectId);
       }
     });

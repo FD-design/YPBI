@@ -4,6 +4,7 @@ import {
   resolveSessionCookieConfiguration
 } from "./cookies";
 import { PostgresAuthRepository } from "./postgres-auth.repository";
+import { PostgresMaintenanceSessionRepository } from "./postgres-maintenance-session.repository";
 import { BiAccountAdminService, BiAuthService, type AuthServiceOptions } from "./service";
 import { SessionIdentityProvider } from "./session-identity-provider";
 import { createAuthMaintenanceDatabase, createAuthRuntimeDatabase } from "./database";
@@ -27,6 +28,7 @@ export async function createPostgresAuthModule(databaseUrl: string, options: Pos
     const authService = await BiAuthService.create(repository, authServiceOptions);
     return {
       authService,
+      maintenanceSessions: new PostgresMaintenanceSessionRepository(sql),
       identityProvider: new SessionIdentityProvider(authService, cookieConfiguration),
       authPluginOptions: { authService, sessionCookie: cookieConfiguration },
       accountAdminService: new BiAccountAdminService(repository, authServiceOptions.scryptParameters),

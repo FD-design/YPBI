@@ -9,7 +9,8 @@ interface Migration {
 }
 
 export const authMigrations: readonly Migration[] = [
-  { version: 1, name: "auth_users_sessions", source: new URL("./001_auth_users_sessions.sql", import.meta.url) }
+  { version: 1, name: "auth_users_sessions", source: new URL("./001_auth_users_sessions.sql", import.meta.url) },
+  { version: 2, name: "maintenance_sessions", source: new URL("./002_maintenance_sessions.sql", import.meta.url) }
 ];
 
 const migrationLockId = 1_572_024_908;

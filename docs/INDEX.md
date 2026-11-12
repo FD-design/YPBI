@@ -1,5 +1,9 @@
 # 配置驱动 BI 项目索引
 
+## 生产维护二次会话持久化（2026-11-12）
+
+生产维护会话跨 API 重启保留，以当前普通登录和安全上下文有效为前提。已通过完整发布校验及独立 PostgreSQL 重启、回退验证，切换和回退见[部署模块](modules/deployment.md#生产维护二次会话持久化)。
+
 ## 临时测试数据源切换（2026-11-12）
 
 测试预览默认 API 地址、独立账号、运行配置优先级及复验步骤见[部署模块](modules/deployment.md#临时测试数据源切换)。
@@ -28,7 +32,7 @@
 
 技术联调只通过独立受保护深链使用，日常数据源维护页及菜单不提供入口；双权限、原维护认证及正常凭据维护保持。1e0d47f真实两站创建与轮询正常，但任务均FAILED／DEADLINE_EXCEEDED、0/14，未取得异步结果，普通正式保持同步；本批隔离与发布状态见[记录](modules/deployment.md#2026-10-23-技术验收入口隔离)。93列、指标口径、Google表和后台数据未改。
 
-> 本文件是所有修改的第一阅读入口。最后更新：2026-10-23。
+> 本文件是所有修改的第一阅读入口。最后更新：2026-11-12。
 
 ## 当前修复（2026-10-12）
 
@@ -67,7 +71,7 @@
 
 - 生产入口为 `https://187.77.129.207.nip.io`；向 `FD-design/YPBI` 的 `main` 推送会自动执行发布校验、内测构建、部署和公网健康检查。
 - 管理员可在 `/admin/accounts` 创建和维护团队账号；普通账号无管理入口，账号数据继续保存在独立 PostgreSQL 账号库。
-- 2.49 临时测试数据会话有效期为24小时：生产 BI 默认继续读取正式数据，维护者可在当前登录会话内临时验证测试 Token；Token 不写入正式凭据文件，测试查询与正式缓存隔离。
+- 生产 BI 默认读取正式数据。独立临时测试数据会话有效期为 24 小时，API 重启后需重新验证测试 Token，测试查询与正式缓存隔离。
 
 ## 项目概况
 
@@ -107,12 +111,12 @@
 | 看板与前端工作区 | 11 张官方看板、功能目录和指标 / 事件中心；共享标题、查询、阅读与导出 | `src/v2/design`、`src/v2/features`、`src/components` | [前端模块](./modules/frontend.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md) | 经营93列与关联专题已复核；月活、获客导出与比较修复已随f351291发布；未登记聚合保持接入边界 | 2026-10-12：全看板收尾复核及发布后复验 |
 | 卡片与模板配置 | 遗留经典版曾提供分析卡片创建与管理、模板编辑、发布、排序和宽度调整；仅用于迁移核对，不代表目标产品能力 | `src/legacyApp.tsx`、`contracts/card.ts` | [前端模块](./modules/frontend.md) | 遗留本地可用；公网 V2 不开放，待按总 PRD 迁移后退役 | 2026-09-08：明确遗留能力边界 |
 | 分析引擎 | V2 以独立 M016 source / query service 保留真实 0、无记录、空值、部分数据与未知水位；旧聚合、阶段量、固定 PID 和高级图表仅作迁移事实 | `server/v2`、`src/v2`、`src/analytics`、`server/analytics` | [分析模块](./modules/analytics.md) | V2 的 M016 单 PID 日序列本地代码完成；当前权威源升级后旧映射过期，既有正式指标查询保持关闭；本地日看板独立读取待验数结果；遗留分析不代表目标 V1 准入 | 2026-09-11：验证过期映射继续阻断查询 |
-| BI 后端 API | 受保护的 `/api/bi/v2` 已包含自有账号、完整指标定义目录、平台目录和日看板读取；身份查询与 migration 有界超时，遗留 workspace 写入冻结 | `server/app.ts`、`contracts/bi-auth.ts`、`contracts/bi-v2.ts`、`contracts/daily-dashboard.ts`、`server/auth`、`server/identity`、`server/v2` | [后端 API](./modules/backend-api.md) | 测试／正式请求隔离；通用 bi-v1 READY 覆盖、未就绪回退、状态显示和按指标故障隔离已部署。发布校验与公网健康通过，测试会话真实指标仍待重新验证 Token 后复验 | 2026-09-23：bi-v1 按指标故障隔离已部署 |
+| BI 后端 API | 受保护的 `/api/bi/v2` 已包含自有账号、完整指标定义目录、平台目录和日看板读取；身份查询与 migration 有界超时，遗留 workspace 写入冻结 | `server/app.ts`、`contracts/bi-auth.ts`、`contracts/bi-v2.ts`、`contracts/daily-dashboard.ts`、`server/auth`、`server/identity`、`server/v2` | [后端 API](./modules/backend-api.md) | 测试／正式请求隔离；通用 bi-v1 READY 覆盖、未就绪回退、状态显示和按指标故障隔离已部署。测试会话真实指标仍待重新验证 Token 后复验。维护二次会话持久化待本地验证及部署 | 2026-11-12：维护二次会话持久化 |
 | 上游接口接入 | 旧后台接口登记、双后台按 PID 路由、Token 安全热更新、Adapter 归一化、超时与错误映射；新增播放专用与通用 `bi-v1` 适配 | `server/upstream` | [数据与平台](./modules/data-platform.md) | M110 人均单位和支付正式字段兼容已发布；原故障隔离、范围校验和旧源规则保留，真实数据按指标独立验收 | 2026-10-09：单位与支付分组发布 |
 | 平台目录 | 版本化 JSON 统一维护现有 20 个平台的稳定 ID、PID、名称、启用状态、顺序和双站归属；V2、遗留兼容与上游路由从同一来源派生 | `server/platforms/platform-catalog.v1.json`、`server/platforms/registry.ts` | [数据与平台](./modules/data-platform.md) | 本地可用；当前仍为受控人工维护，未知/停用 PID 联网前失败 | 2026-09-08：收敛平台与双站路由单一来源 |
 | 工作区持久化 | 遗留经典版模板和卡片资产可保存到 PostgreSQL 或磁盘；目标 V2 尚未实现 Owner、revision 和对象级写入 | `server/persistence` | [后端 API](./modules/backend-api.md) | 遗留本地可用，仅迁移核对；公网 V2 写入已冻结，待新模型迁移后退役 | 2026-09-08：明确遗留保存不可作为 V1 正式能力 |
 | 部署与运行 | Caddy 作为唯一公网 80/443 入口并直接提供生产 `dist`，loopback Nginx 执行 API 白名单与限流，Fastify 仅监听 `127.0.0.1:3000`，systemd 使用专用最小权限账号 | `deploy`、`package.json` | [部署运维](./modules/deployment.md) | 本地5173/3000/55432隔离链路可用；登录超时已通过单独重启3000恢复，平台切换与刷新实测通过，底层原因仍未确定；VPS未按新拓扑部署，公网黑盒待目标主机验证 | 2026-09-12：本地登录超时运行恢复与刷新复核 |
-| 产品需求治理 | 一份总 PRD 维护产品目标，一份调整方案维护实现差异与验收 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 2.43、调整方案 2.49、UI 规范 1.42；临时测试数据与正式数据隔离 | 2026-09-23：测试数据会话延长至24小时 |
+| 产品需求治理 | 一份总 PRD 维护产品目标，一份调整方案维护实现差异与验收 | `docs/requirements` | [需求入口](./requirements/README.md)、[产品需求文档](./requirements/BI-产品需求文档.md)、[现有平台调整方案](./requirements/BI-现有平台调整方案.md) | 总 PRD 2.52、调整方案 2.54、UI 规范 1.42。生产维护二次会话持久化待验证和部署 | 2026-11-12：维护二次会话跨重启 |
 | 文档治理与版本管理 | 长期工程规则覆盖权威源、影响面、模块边界、高风险确认、迁移可靠性、可观测性、分级验证与交付；UI 任务额外读取已确认问题清单 | `AGENTS.md`、`.gitignore`、`docs` | 本文件、[现有平台调整方案](./requirements/BI-现有平台调整方案.md)、[UI 防回归规则](./UI-已确认问题与防回归规则.md)、[部署运维](./modules/deployment.md) | 强制执行；不为单个功能重复建文档 | 2026-09-08：长期工程规则与架构风险纳入完成门槛 |
 
 ## 当前代码分析模型（现状，不代表目标产品分类）

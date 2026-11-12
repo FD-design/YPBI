@@ -12,7 +12,7 @@ import type { OperatingQueryJobService } from "./v2/operating-query-jobs.service
 interface AdminOperatingQueryJobsOptions {
   enabled: boolean;
   service?: Pick<OperatingQueryJobService, "create" | "status" | "result">;
-  requireMaintenanceSession(request: FastifyRequest, reply: FastifyReply): unknown;
+  requireMaintenanceSession(request: FastifyRequest, reply: FastifyReply): Promise<boolean>;
   principalFor(request: FastifyRequest): Principal | undefined;
 }
 
@@ -31,9 +31,9 @@ export function registerAdminOperatingQueryJobs(app: FastifyInstance, options: A
     request.log.warn({ errorCode: "admin_operating_query_job_route_failure" }, "BI production validation route failed");
     return fail(request, reply, 502, "QUERY_JOB_RESULT_INVALID", "查询任务请求未完成");
   };
-  const authorize = (request: FastifyRequest, reply: FastifyReply): Principal | null => {
+  const authorize = async (request: FastifyRequest, reply: FastifyReply): Promise<Principal | null> => {
     reply.header("cache-control", "no-store");
-    if (options.requireMaintenanceSession(request, reply)) return null;
+    if (!await options.requireMaintenanceSession(request, reply)) return null;
     const principal = options.principalFor(request);
     if (!principal || !principal.permissions.includes("bi:read")) {
       fail(request, reply, 403, "BI_READ_ACCESS_DENIED", "当前账号没有BI数据读取权限");
@@ -49,7 +49,7 @@ export function registerAdminOperatingQueryJobs(app: FastifyInstance, options: A
   };
 
   app.get(`${OPERATING_QUERY_VALIDATION_PATH}/capabilities`, { exposeHeadRoute: false, errorHandler }, async (request, reply) => {
-    const principal = authorize(request, reply);
+    const principal = await authorize(request, reply);
     if (!principal) return;
     const bySite = new Map<PlatformSiteId, string[]>();
     if (enabled) for (const platform of platformRegistry) {
@@ -62,7 +62,7 @@ export function registerAdminOperatingQueryJobs(app: FastifyInstance, options: A
   });
 
   const handler = (operation: "create" | "status" | "result") => async (request: FastifyRequest, reply: FastifyReply) => {
-    const principal = authorize(request, reply);
+    const principal = await authorize(request, reply);
     if (!principal) return;
     if (!enabled || !options.service) return fail(request, reply, 422, "QUERY_JOBS_DISABLED", "当前环境尚未启用正式异步验收");
     const parsedHandle = operation === "create" ? null : biQueryJobHandleSchema.safeParse((request.params as { handle?: unknown }).handle);

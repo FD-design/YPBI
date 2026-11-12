@@ -119,14 +119,14 @@
 
 ## 3. 普通会话与 CSRF
 
-- 登录签发 32 字节随机、不透明的服务端会话，默认有效期 12 小时；数据库只保存 SHA-256 Token 哈希。
+- 登录签发 32 字节随机、不透明的服务端会话，默认绝对有效期为 15 天。数据库只保存 SHA-256 Token 哈希。
 - 生产 Cookie 固定为 `__Host-ypbi_session`，属性为 `Path=/; HttpOnly; Secure; SameSite=Strict`，不设置 Domain。
 - 本地开发必须显式使用独立的 `ypbi_session` 非 Secure Cookie；不能为了本地 HTTP 调试降低生产 Cookie 属性。
 - CSRF Token 由服务端使用独立 secret 对原始会话 Token 做 HMAC 派生，不进入数据库。登录、读取会话和成功改密响应会返回当前 CSRF Token；退出和改密请求必须通过 `X-CSRF-Token` 回传。
 - 生产环境为 auth 插件配置唯一 `BI_PUBLIC_ORIGIN`。登录、退出和改密的 POST / PUT 请求必须携带与其完全一致的 Origin；缺失、带路径或跨源均返回 `403 ORIGIN_VALIDATION_FAILED`。
 - 生产环境的全部数据源维护 POST / PUT 同时校验普通会话的 CSRF Token 和严格 Origin；维护密码与维护 Cookie 不能替代普通会话 CSRF。缺失或错误 CSRF 返回 `403 CSRF_VALIDATION_FAILED`，且不会执行维护操作。
 - 普通退出立即撤销服务端会话并清除 Cookie。账号重置密码、实际停用、重新启用、角色变化、用户改密、会话过期或 `credential_version` 不一致都会使旧会话失效；同角色或同状态的幂等操作不无故踢下线。
-- 普通退出和用户改密成功后，应用还会撤销同一 `subjectId` 的内存维护会话。
+- 维护二次会话的绑定及撤销见[第 5 节](#5-数据源维护的二次认证)。
 - 所有 auth 响应均设置 `Cache-Control: no-store`；日志不记录密码、Cookie、原始 Token、CSRF Token 或请求正文。
 
 ## 4. Auth API
@@ -135,7 +135,7 @@
 
 | 方法 | 路径 | 请求与结果 | 主要拒绝 |
 |---|---|---|---|
-| POST | `/api/bi/v2/auth/login` | `username + password`；成功建立 12 小时会话 | 400 格式错误；401 凭据无效；403 Origin；429 代理限流；503 账号服务不可用 |
+| POST | `/api/bi/v2/auth/login` | `username + password`；成功建立普通登录会话 | 400 格式错误；401 凭据无效；403 Origin；429 代理限流；503 账号服务不可用 |
 | GET | `/api/bi/v2/auth/session` | 返回当前完整会话数据；无效时清 Cookie | 401 未登录；503 账号服务不可用 |
 | POST | `/api/bi/v2/auth/logout` | 需要会话、Origin 和 CSRF；成功返回 `loggedOut=true` | 401 会话失效；403 Origin / CSRF；503 撤销未完成 |
 | PUT | `/api/bi/v2/auth/password` | `currentPassword + newPassword`，需要会话、Origin 和 CSRF；成功轮换会话 | 400 格式错误或当前密码错误；401 会话失效；403 Origin / CSRF；429 代理限流；503 容量、事务或依赖不可用 |
@@ -153,21 +153,22 @@
 
 通过普通身份门禁后，用户还需使用`TOKEN_MAINTENANCE_KEY`完成二次认证。Token为两站各自的全站共享凭据，保存确认说明对所有查询生效。维护会话：
 
-- 有效期 30 分钟，保存在当前 API 进程内存；API 重启后全部失效。
-- 激活前分别验证站1、站2代表 PID；同一标签页重新验证后旧测试会话立即撤销，内存会话总量有固定上限。
-- 同时绑定普通账号 `subjectId`、角色、权限、`credential_version` 和可信代理解析出的真实客户端 IP；任一安全上下文变化都要求重新认证。身份源无法提供安全版本时，维护功能失败关闭。
+- 生产会话通过 `bi_auth_maintenance_sessions` 存入现有账号 PostgreSQL。表中保存随机不透明凭据的 SHA-256 哈希及绑定信息。自签发起固定 15 天到期，API 重启、刷新或访问均不续期。
+- 绑定签发时的普通登录会话、账号 `subjectId`、角色、权限、`credential_version`、可信代理解析出的客户端 IP 及当前维护密码配置。当前普通登录到期或换新时须重新认证。身份源缺少安全版本时，维护功能失败关闭。
 - 使用独立 `bi_maintenance_session` Cookie，限定 `Path=/api/bi/admin`，并设置 `HttpOnly、Secure、SameSite=Strict`。
 - 维护密码连续错误 5 次后，当前来源 IP 锁定 15 分钟；公网登录还受 Nginx 单 IP 和全局限流。
-- 普通账号退出或用户改密后，关联维护会话立即撤销。CLI 重置、停用、重新启用或修改角色会升级 `credential_version`；即使账号随后恢复 maintainer 权限，旧维护会话也不能复用。
+- 退出维护撤销当前维护会话。普通账号退出撤销该账号的所有维护会话。用户改密、CLI 或团队管理重置密码、停用、重新启用或修改角色均使旧维护会话失效。启动时清理过期记录、已失效普通会话的维护记录及维护密码或账号库认证密钥派生标记不匹配的记录。
 - 生产环境每个维护写请求还必须携带当前普通账号会话对应的 CSRF Token，并通过 `BI_PUBLIC_ORIGIN` 严格同源校验；二次认证只增加敏感操作门槛，不削弱第一层会话保护。
 
 维护密码可使用服务端支持的 `sha256:<hex>` 形式保存，但不能进入前端、仓库、文档、截图或日志。维护会话不代替普通账号，也不能用于访问 V2 数据 API。
 
 ### 维护 API
 
+维护会话缺失或失效时，受保护操作返回 `401 MAINTENANCE_LOGIN_REQUIRED`。维护会话库不可用时返回 `503 MAINTENANCE_SESSION_STORE_UNAVAILABLE`。
+
 | 方法 | 路径 | 功能 |
 |---|---|---|
-| POST | `/api/bi/admin/auth/login` | maintainer 使用维护密码建立二次会话 |
+| POST | `/api/bi/admin/auth/login` | 有维护权限且已完成首次改密的普通账号使用维护密码建立二次会话 |
 | POST | `/api/bi/admin/auth/logout` | 清除当前二次会话 |
 | GET | `/api/bi/admin/data-sources/status` | 返回站点配置状态、脱敏提示和更新时间，不返回 Token |
 | POST | `/api/bi/admin/data-sources/test` | 使用当前整对凭据或候选用户名与Token验证连接，不保存候选值 |
@@ -175,6 +176,8 @@
 | GET | `/api/bi/admin/data-preview/status` | 返回临时测试数据功能和当前会话状态，不返回 Token |
 | POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的24小时内存会话 |
 | POST | `/api/bi/admin/data-preview/deactivate` | 删除当前服务端测试会话并清除预览 Cookie |
+
+临时测试数据会话独立于维护二次会话。激活前验证站 1、站 2 代表 PID，同一标签页重新验证后撤销旧测试会话。测试 Token 及会话存于有容量上限的 API 进程内存，服务重启后需重新验证测试 Token。
 
 维护请求保留`site`和`token`，兼容增加可选`userName`（去除首尾空白，1～256字符，禁止控制字符）。省略用户名时沿用同站实际生效用户名；修改用户名必须同时提供对应Token，不允许只改用户名后复用旧Token。`status.userName`展示实际生效账号，不再固定展示环境初始值。测试当前连接仅提交`site`，不受候选草稿影响；测试环境旁路仍使用独立固定测试账号。
 
@@ -262,7 +265,7 @@ create 默认角色为 reader；创建和重置后的密码都要求用户首次
 - `server/persistence/migrations`：账号库有序 migration 与 runner。
 - `server/scripts/manage-bi-user.ts`：安全交互式账号维护 CLI。
 - `contracts/bi-v2.ts`、`server/identity`、`server/v2`：V2 只读目录和查询边界。
-- `server/security/maintenance-auth.ts`：绑定普通账号与 IP 的维护二次会话。
+- `server/security/maintenance-auth.ts`：维护二次会话签发和校验。生产存储结构见 `server/persistence/migrations/002_maintenance_sessions.sql`。
 - `server/app.ts`：生产 HTTPS / 可信代理门禁、维护角色门禁、遗留写入冻结和模块组装。
 
 2026-09-09 当前本地复核：Bun 1.4.2 完整 `npm test` 为 363/363；`npm run verify:release` 全链通过，包括指标生成器 33/33、M016 离线验数 27/27、发布准入 4/4、导航 3/3、主题 4/4、卡片 / 页面模型 / tooltip 25/25、服务端准入 / 周期 14/14、查询控制器 10/10、公共合同 6/6，以及快照检查、类型检查、前后端构建和生产样板隔离扫描。新增运行时响应生命周期反例覆盖中文拒绝响应只发送一次且不进入后续处理；维护测试按名称校验单值 / 多值 Cookie。没有为测试修改业务认证、Cookie 或权限实现。

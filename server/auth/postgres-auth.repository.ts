@@ -221,11 +221,28 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async revokeSession(tokenHash: string, now: Date) {
-    await this.sql`
-      update bi_auth_sessions
-      set revoked_at = coalesce(revoked_at, ${now})
-      where token_hash = ${tokenHash}
-    `;
+    await this.sql.begin("isolation level read committed", async (transaction) => {
+      // Serialize ordinary logout with maintenance grant creation for this account.
+      const users = await transaction<{ user_id: string }[]>`
+        select u.user_id
+        from bi_auth_users u
+        join bi_auth_sessions s on s.user_id = u.user_id
+        where s.token_hash = ${tokenHash}
+        for update of u
+      `;
+      const user = users[0];
+      if (!user) return;
+      await transaction`
+        update bi_auth_sessions
+        set revoked_at = coalesce(revoked_at, ${now})
+        where token_hash = ${tokenHash}
+      `;
+      await transaction`
+        delete from bi_auth_maintenance_sessions m
+        using bi_auth_sessions s
+        where m.ordinary_session_id = s.session_id and s.user_id = ${user.user_id}
+      `;
+    });
   }
 
   async resetPasswordAndRevokeSessions(userId: string, expectedCredentialVersion: number, passwordHash: string, now: Date) {
