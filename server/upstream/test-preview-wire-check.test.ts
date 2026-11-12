@@ -50,10 +50,36 @@ describe("测试预览请求头对照", () => {
     }
     expect(result).toEqual({
       bunVersion: process.versions.bun,
-      proxyEnvironment: { http: expect.any(Boolean), https: expect.any(Boolean), all: expect.any(Boolean) },
+      proxyEnvironment: { http: expect.any(Boolean), https: expect.any(Boolean), all: expect.any(Boolean), noProxy: expect.any(Boolean) },
       legacy: { outcome: "response", httpStatus: 200, responseFormat: "json", businessCode: 2002, denialKind: "upstream_auth" },
       current: { outcome: "response", httpStatus: 403, responseFormat: "html", denialKind: "unclassified", cloudflareRayId: rayId }
     });
+  });
+
+  test("Bun 仅报告非空的代理变量，诊断不会返回配置值", () => {
+    const checkInSubprocess = `
+      import { readDefaultTestPreviewWireCheck } from ${JSON.stringify(import.meta.resolve("./test-preview-wire-check.ts"))};
+      const result = await readDefaultTestPreviewWireCheck(async () => Response.json(null), "fixture-user", "fixture-agent");
+      console.log(JSON.stringify(result.proxyEnvironment));
+    `;
+    for (const { env, expected } of [
+      {
+        env: {},
+        expected: { http: false, https: false, all: false, noProxy: false }
+      },
+      {
+        env: { HTTP_PROXY: "", https_proxy: "http://fixture.invalid:3128", all_proxy: "", NO_PROXY: "fixture.invalid" },
+        expected: { http: false, https: true, all: false, noProxy: true }
+      },
+      {
+        env: { http_proxy: "http://fixture.invalid:3128", HTTPS_PROXY: "", ALL_PROXY: "http://fixture.invalid:3128", no_proxy: "" },
+        expected: { http: true, https: false, all: true, noProxy: false }
+      }
+    ]) {
+      const child = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", "-e", checkInSubprocess], env });
+      expect(child.exitCode).toBe(0);
+      expect(JSON.parse(child.stdout.toString())).toEqual(expected);
+    }
   });
 
   test("校验固定业务码和 Cloudflare 拒绝，并且不返回任意正文或标头", async () => {
@@ -85,6 +111,22 @@ describe("测试预览请求头对照", () => {
       const result = await readDefaultTestPreviewWireCheck(async () => json(body), userName, userAgent);
       expect(result.legacy).toEqual({ outcome: "response", httpStatus: 200, responseFormat: "json" });
     }
+  });
+
+  test("识别 Nginx 标准 403 页，只输出模板标记并保留拒绝来源未确认", async () => {
+    const page = [
+      "<html>", "<head><title>403 Forbidden</title></head>", "<body>",
+      "<center><h1>403 Forbidden</h1></center>", "<hr><center>nginx/1.28.0</center>",
+      "</body>", "</html>", "<!-- a padding to disable MSIE and Chrome friendly error page -->"
+    ].join("\r\n");
+    const headers = { "content-type": "text/html", server: "cloudflare", "cf-ray": rayId };
+    let count = 0;
+    const result = await readDefaultTestPreviewWireCheck(async () => new Response(
+      count++ === 0 ? page : page.replace("nginx/1.28.0", "nginx private fixture"), { status: 403, headers }
+    ), userName, userAgent);
+    const expected = { outcome: "response", httpStatus: 403, responseFormat: "html", denialKind: "unclassified", cloudflareRayId: rayId } as const;
+    expect(result.legacy).toEqual({ ...expected, denialTemplate: "nginx_default_403" });
+    expect(result.current).toEqual(expected);
   });
 
   test("超出 8 KiB 的响应立即取消，只保留已收到的响应状态和格式", async () => {

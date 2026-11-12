@@ -10,7 +10,7 @@ type EdgeDenialCode = typeof edgeDenialCodes[number];
 export type TestPreviewDeniedResponse =
   | { readonly kind: "cloudflare_edge"; readonly code: EdgeDenialCode; readonly rayId: string }
   | { readonly kind: "upstream_auth" | "upstream_ip_restricted"; readonly code: 2002; readonly rayId?: string }
-  | { readonly kind: "unclassified"; readonly rayId?: string };
+  | { readonly kind: "unclassified"; readonly rayId?: string; readonly denialTemplate?: "nginx_default_403" };
 
 async function readBoundedText(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<string | undefined> {
   const reader = body.getReader();
@@ -110,6 +110,14 @@ function isAppErrorMessage(value: unknown): value is string {
   return typeof value === "string" && value.length <= maxAppErrorMessageLength && value.trim().length > 0;
 }
 
+function isNginxForbiddenPage(html: string): boolean {
+  const page = html.trim().replace(/>\s+</g, "><");
+  const prefix = "<html><head><title>403 Forbidden</title></head><body><center><h1>403 Forbidden</h1></center><hr>";
+  if (!page.startsWith(prefix)) return false;
+  const footer = page.slice(prefix.length);
+  return /^<center>nginx(?:\/[0-9]+(?:\.[0-9]+)*)?<\/center><\/body><\/html>(?:<!-- a padding to disable MSIE and Chrome friendly error page -->)*$/.test(footer);
+}
+
 /** Project fixed provenance for this response without retaining the body. */
 export async function inspectTestPreviewDeniedResponse(
   response: Response,
@@ -136,7 +144,8 @@ export async function inspectTestPreviewDeniedResponse(
     if (readSignal.aborted || body === undefined) return unclassified;
     if (htmlResponse && rayId) {
       const code = readCloudflareHtmlCode(body, rayId, response.url);
-      return code === undefined ? unclassified : { kind: "cloudflare_edge", code, rayId };
+      if (code !== undefined) return { kind: "cloudflare_edge", code, rayId };
+      return isNginxForbiddenPage(body) ? { ...unclassified, denialTemplate: "nginx_default_403" } : unclassified;
     }
 
     const payload = JSON.parse(body) as unknown;

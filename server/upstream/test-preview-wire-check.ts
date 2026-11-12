@@ -18,11 +18,12 @@ export interface TestPreviewWireResult {
   readonly denialKind?: TestPreviewDeniedResponse["kind"];
   readonly cloudflareErrorCode?: number;
   readonly cloudflareRayId?: string;
+  readonly denialTemplate?: "nginx_default_403";
 }
 
 export interface TestPreviewWireCheck {
   readonly bunVersion?: string;
-  readonly proxyEnvironment: { readonly http: boolean; readonly https: boolean; readonly all: boolean };
+  readonly proxyEnvironment: { readonly http: boolean; readonly https: boolean; readonly all: boolean; readonly noProxy: boolean };
   readonly legacy: TestPreviewWireResult;
   readonly current: TestPreviewWireResult;
 }
@@ -117,6 +118,7 @@ async function runWireRequest(fetcher: WireFetcher, url: string, headers: Record
           ...result,
           denialKind: denial.kind,
           ...(denial.rayId ? { cloudflareRayId: denial.rayId } : {}),
+          ...(denial.kind === "unclassified" && denial.denialTemplate ? { denialTemplate: denial.denialTemplate } : {}),
           ...(denial.kind === "cloudflare_edge" ? { cloudflareErrorCode: denial.code }
             : denial.kind === "upstream_auth" || denial.kind === "upstream_ip_restricted" ? { businessCode: denial.code } : {})
         };
@@ -142,8 +144,8 @@ async function runWireRequest(fetcher: WireFetcher, url: string, headers: Record
   }
 }
 
-function hasProxyEnvironment(name: "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY") {
-  return Object.hasOwn(process.env, name) || Object.hasOwn(process.env, name.toLowerCase());
+function hasProxyEnvironment(name: "HTTP_PROXY" | "HTTPS_PROXY" | "ALL_PROXY" | "NO_PROXY") {
+  return Boolean(process.env[name] || process.env[name.toLowerCase()]);
 }
 
 /** Compare the legacy and current header policies on the same runtime using one non-secret fixture. */
@@ -165,7 +167,8 @@ export async function readDefaultTestPreviewWireCheck(
     proxyEnvironment: {
       http: hasProxyEnvironment("HTTP_PROXY"),
       https: hasProxyEnvironment("HTTPS_PROXY"),
-      all: hasProxyEnvironment("ALL_PROXY")
+      all: hasProxyEnvironment("ALL_PROXY"),
+      noProxy: hasProxyEnvironment("NO_PROXY")
     },
     legacy,
     current
