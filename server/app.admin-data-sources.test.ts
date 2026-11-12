@@ -975,7 +975,7 @@ describe("生产环境配置", () => {
     expect(env.UPSTREAM_SECONDARY_X_TOKEN).toBeUndefined();
     expect(env.BI_TEST_DATA_PREVIEW_ENABLED).toBe(true);
     expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://zq-admin-api.ypdev.cc");
-    expect(env.UPSTREAM_TEST_USER_NAME).toBe("primary-user");
+    expect(env.UPSTREAM_TEST_USER_NAME).toBe("xcq");
   });
 
   test("生产测试数据入口可以由环境开关立即停用", () => {

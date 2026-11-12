@@ -53,7 +53,7 @@ function productionSourceWithReadingDefaults(source: NodeJS.ProcessEnv) {
       || String(authorizedDeployment && productionDashboardReadingDefaults.operatingAsyncEnabled),
     BI_TEST_DATA_PREVIEW_ENABLED: source.BI_TEST_DATA_PREVIEW_ENABLED?.trim() || String(productionDataPreviewDefaults.enabled),
     UPSTREAM_TEST_API_BASE_URL: source.UPSTREAM_TEST_API_BASE_URL?.trim() || productionDataPreviewDefaults.baseUrl,
-    UPSTREAM_TEST_USER_NAME: source.UPSTREAM_TEST_USER_NAME?.trim() || source.UPSTREAM_USER_NAME.trim()
+    UPSTREAM_TEST_USER_NAME: source.UPSTREAM_TEST_USER_NAME?.trim() || productionDataPreviewDefaults.userName
   };
 }
 

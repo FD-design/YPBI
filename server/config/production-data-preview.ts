@@ -1,9 +1,10 @@
 /**
  * Non-secret defaults for this repository's single production BI deployment.
- * The request user name follows the configured primary upstream user; tokens
- * are never stored here and remain scoped to an authenticated preview session.
+ * The address and username identify the test backend. Tokens belong to the
+ * authenticated preview session.
  */
 export const productionDataPreviewDefaults = {
   enabled: true,
-  baseUrl: "https://zq-admin-api.ypdev.cc"
+  baseUrl: "https://zq-admin-api.ypdev.cc",
+  userName: "xcq"
 } as const;

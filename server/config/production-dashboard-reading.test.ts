@@ -67,16 +67,28 @@ describe("正式日看板读取配置", () => {
     }
   });
 
-  test("生产部署默认使用新的测试 API 域名并保持正式来源隔离", () => {
+  test("生产部署使用独立的测试 API 地址与账号", () => {
     const env = loadEnv(productionSource);
     expect(env.BI_TEST_DATA_PREVIEW_ENABLED).toBe(true);
     expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://zq-admin-api.ypdev.cc");
-    expect(env.UPSTREAM_TEST_USER_NAME).toBe("fake-primary-user");
+    expect(env.UPSTREAM_TEST_USER_NAME).toBe("xcq");
+    expect(env.UPSTREAM_USER_NAME).toBe(productionSource.UPSTREAM_USER_NAME);
+    expect(env.UPSTREAM_SECONDARY_USER_NAME).toBe(productionSource.UPSTREAM_SECONDARY_USER_NAME);
     expect(env.UPSTREAM_API_BASE_URL).toBe(productionSource.UPSTREAM_API_BASE_URL);
     expect(env.UPSTREAM_SECONDARY_API_BASE_URL).toBe(productionSource.UPSTREAM_SECONDARY_API_BASE_URL);
     const disabled = loadEnv({ ...productionSource, BI_TEST_DATA_PREVIEW_ENABLED: "false" });
     expect(disabled.BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(true);
     expect(disabled.BI_TEST_DATA_PREVIEW_ENABLED).toBe(false);
+  });
+
+  test("生产测试 API 地址与账号支持显式运行配置覆盖", () => {
+    const env = loadEnv({
+      ...productionSource,
+      UPSTREAM_TEST_API_BASE_URL: " https://test.example.test ",
+      UPSTREAM_TEST_USER_NAME: " override-test-user "
+    });
+    expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://test.example.test");
+    expect(env.UPSTREAM_TEST_USER_NAME).toBe("override-test-user");
   });
 
   test("本地读取继续只允许非生产环境的 loopback 监听", () => {
