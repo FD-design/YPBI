@@ -348,9 +348,10 @@ describe("UpstreamClient business errors", () => {
     });
     await client.get("/api/test", { pid: "PH" });
 
-    expect(requests[0]).toMatchObject({ url: "https://test.example.com/api/test?pid=PH", headers: { "x-token": "temporary-test-token", name: "temporary-test-user" } });
-    expect(requests[1]).toMatchObject({ url: "https://test.example.com/api/test?pid=TJD", headers: { "x-token": "temporary-test-token", name: "temporary-test-user" } });
-    expect(requests[2]).toMatchObject({ url: "https://example.com/api/test?pid=PH", headers: { "x-token": "test-token", name: "primary-user" } });
+    const previewHeaders = { "x-token": "temporary-test-token", name: "temporary-test-user", "user-agent": "YPBI-Test-Preview/1.0", accept: "application/json" };
+    expect(requests[0]).toEqual({ url: "https://test.example.com/api/test?pid=PH", headers: previewHeaders });
+    expect(requests[1]).toEqual({ url: "https://test.example.com/api/test?pid=TJD", headers: previewHeaders });
+    expect(requests[2]).toEqual({ url: "https://example.com/api/test?pid=PH", headers: { "x-token": "test-token", name: "primary-user" } });
   });
 
   test("正式与测试请求缓存严格分区，不会复用另一环境的返回值", async () => {

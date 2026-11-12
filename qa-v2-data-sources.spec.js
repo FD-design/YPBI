@@ -545,15 +545,17 @@ test("测试会话激活失败退出确认中并保留草稿，后续仅只读�
   expect(fixture.requests.filter(request => request.method !== "GET").map(request => request.pathname)).toEqual(["/api/bi/admin/data-preview/activate"]);
 });
 
-for (const width of [1280, 1024, 390]) test(`测试会话启用失败展示 PID 探针结果和 Cloudflare 验证（${width}px）`, async ({ page }, info) => {
+for (const width of [1280, 1024, 390]) test(`测试会话启用失败展示 PID 探针结果和 Cloudflare 诊断（${width}px）`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 800 });
   const configuredOriginMatchesDefault = width !== 390;
+  const cloudflareChallenge = width === 1280;
   await installMaintenanceFixtures(page, {
     authorized: true,
     rejectPreviewActivation: true,
     previewDiagnostics: [
       { pid: "PH", outcome: "accepted", configuredOriginMatchesDefault, upstreamHttpStatus: 200, responseFormat: "json", cloudflareChallenge: false },
-      { pid: "FBI", outcome: "rejected", configuredOriginMatchesDefault, upstreamHttpStatus: 403, responseFormat: "html", cloudflareChallenge: true }
+      { pid: "FBI", outcome: "rejected", configuredOriginMatchesDefault, upstreamHttpStatus: 403, responseFormat: "html", cloudflareChallenge,
+        ...(cloudflareChallenge ? {} : { cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG" }) }
     ]
   });
   await page.goto(`${baseUrl}/admin/data-sources`);
@@ -566,7 +568,9 @@ for (const width of [1280, 1024, 390]) test(`测试会话启用失败展示 PID 
   const notice = preview.getByRole("alert");
   await expect(notice).toContainText("测试后台探针未全部通过");
   await expect(notice).toContainText("PID PH 探针通过 · HTTP 200");
-  await expect(notice).toContainText("PID FBI 探针失败 · HTTP 403 · 上游要求通过 Cloudflare 验证");
+  await expect(notice).toContainText(cloudflareChallenge
+    ? "PID FBI 探针失败 · HTTP 403 · 上游要求通过 Cloudflare 验证"
+    : "PID FBI 探针失败 · HTTP 403 · Cloudflare 错误码 1010 · Ray ID abc0123456789def-HKG");
   await expect(notice).toContainText("请求 ID：qa-preview-activation-rejected");
   await expect(notice).not.toContainText("测试后台拒绝候选凭据");
   await expect(notice.getByText("测试 API 来源与默认配置不同", { exact: true })).toHaveCount(configuredOriginMatchesDefault ? 0 : 1);

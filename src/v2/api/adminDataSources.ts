@@ -43,7 +43,9 @@ const previewDiagnosticsSchema = z.array(z.object({
   configuredOriginMatchesDefault: z.boolean().optional(),
   upstreamHttpStatus: z.number().int().min(100).max(599).optional(),
   upstreamBusinessCode: z.literal(2002).optional(),
-  cloudflareChallenge: z.boolean().optional()
+  cloudflareChallenge: z.boolean().optional(),
+  cloudflareErrorCode: z.literal([1006, 1007, 1008, 1009, 1010, 1012, 1020, 1106]).optional().catch(undefined),
+  cloudflareRayId: z.string().regex(/^[0-9a-fA-F]{16}-[A-Z]{3}$/).optional().catch(undefined)
 })).max(2);
 
 const statusResponseSchema = z.object({

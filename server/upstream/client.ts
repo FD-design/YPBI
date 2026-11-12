@@ -9,6 +9,7 @@ import { currentUpstreamRequestProfile } from "./request-profile";
 import { RequestWorkQueue } from "./request-work-queue";
 import { getUpstreamReadFailure, rememberUpstreamReadFailure, UPSTREAM_READ_ERROR_CODES, type UpstreamReadFailure } from "./read-failure";
 import { captureUpstreamReadObserver, PhysicalReadTrace } from "./read-trace";
+import { readTestPreviewEdgeRejection } from "./test-preview-edge";
 export { getUpstreamReadFailure } from "./read-failure";
 export type UpstreamReadClient = Pick<UpstreamClient, "get"> & Partial<Pick<UpstreamClient, "getCached">>;
 import {
@@ -19,7 +20,7 @@ import {
 export type CredentialSite = PlatformSiteId;
 interface StoredCredential { token: string; userName?: string; updatedAt: string }
 interface PersistedCredentials { primary?: StoredCredential; secondary?: StoredCredential }
-interface CredentialProfile { baseUrl: string; token?: string; userName?: string }
+interface CredentialProfile { baseUrl: string; token?: string; userName?: string; testPreview?: true }
 function validUserName(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
 }
@@ -52,6 +53,8 @@ interface PreviewProbeResponse {
   responseFormat?: "json" | "html" | "other";
   cloudflareChallenge?: boolean;
   responseOriginMatchesConfigured?: boolean;
+  cloudflareErrorCode?: number;
+  cloudflareRayId?: string;
 }
 
 export interface PreviewProbeResult extends PreviewProbeResponse {
@@ -68,6 +71,7 @@ interface PhysicalReadDeadline {
   timerExpired?: boolean;
   upstreamHttpStatus?: number;
   upstreamBusinessCode?: number;
+  testPreview?: boolean;
   previewProbeResponse?: PreviewProbeResponse;
 }
 function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: AbortSignal) {
@@ -79,6 +83,7 @@ function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: Abor
 }
 
 const PREVIEW_DIAGNOSTIC_GRACE_MS = 750;
+const TEST_PREVIEW_USER_AGENT = "YPBI-Test-Preview/1.0";
 
 export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
@@ -182,10 +187,11 @@ export class UpstreamClient {
         .filter((pid): pid is string => Boolean(pid))
     )];
     if (!probePids.length) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "当前没有可用于测试的业务 PID", 503);
-    const profile = {
+    const profile: CredentialProfile = {
       baseUrl: this.env.UPSTREAM_TEST_API_BASE_URL,
       userName: this.env.UPSTREAM_TEST_USER_NAME,
-      token
+      token,
+      testPreview: true
     };
     const configuredOriginMatchesDefault = usesDefaultTestPreviewOrigin(profile.baseUrl);
     const report = (result: PreviewProbeResult) => {
@@ -240,8 +246,8 @@ export class UpstreamClient {
     const url = new URL("/api/admin/statistics/pDaySum", profile.baseUrl);
     const params = { page: "1", count: "1", pid, sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`, sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59` };
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    const deadline = previewProbeResponse
-      ? { expiresAt: performance.now() + this.env.REQUEST_TIMEOUT_MS, previewProbeResponse }
+    const deadline = profile.testPreview
+      ? { expiresAt: performance.now() + this.env.REQUEST_TIMEOUT_MS, testPreview: true, previewProbeResponse }
       : undefined;
     try { await this.fetchJson(url, profile.token, profile.userName, undefined, undefined, undefined, undefined, deadline); }
     catch (error) {
@@ -295,7 +301,7 @@ export class UpstreamClient {
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
     const partition = requestProfile?.cachePartition
       ?? `production:${createHash("sha256").update(`${userName ?? ""}\u0000${token}`).digest("hex")}`;
-    return { url, token, userName, cacheKey: `${partition}\u0000${url.toString()}` };
+    return { url, token, userName, testPreview: requestProfile?.environment === "test", cacheKey: `${partition}\u0000${url.toString()}` };
   }
 
   /** Read an exact, unexpired response in the current credential partition without sending HTTP. */
@@ -314,7 +320,7 @@ export class UpstreamClient {
     let failed = false;
     try {
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "后台来源读取超时", 504, { origin: "consumer_cancelled" });
-    const { url, token, userName, cacheKey } = this.getRequest(path, params, inboundToken);
+    const { url, token, userName, testPreview, cacheKey } = this.getRequest(path, params, inboundToken);
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) { observer?.cacheHit(); return cached.value; }
     if (cached) this.responseCache.delete(cacheKey);
@@ -353,7 +359,7 @@ export class UpstreamClient {
     const request = this.requestWorkQueue.run(
       remainingMs => {
         physicalRead?.markStarted();
-        deadline = { expiresAt: performance.now() + remainingMs };
+        deadline = { expiresAt: performance.now() + remainingMs, testPreview };
         return this.fetchJson(url, token, userName, remainingMs, requestController.signal, undefined, physicalRead, deadline);
       },
       this.env.REQUEST_TIMEOUT_MS,
@@ -428,7 +434,7 @@ export class UpstreamClient {
     let deadline: PhysicalReadDeadline | undefined;
     return this.requestWorkQueue.run(
       remainingMs => {
-        deadline = { expiresAt: performance.now() + remainingMs };
+        deadline = { expiresAt: performance.now() + remainingMs, testPreview: context.environment === "test" };
         return this.fetchJson(url, profile.token, profile.userName, remainingMs, signal, { queryJob: true, body }, undefined, deadline);
       },
       this.env.REQUEST_TIMEOUT_MS,
@@ -516,6 +522,11 @@ export class UpstreamClient {
       const headers: Record<string, string> = {};
       if (token) headers["x-token"] = token;
       if (userName) headers.name = userName;
+      if (deadline.testPreview) {
+        // Identify our own service and request the documented machine-readable format.
+        headers["user-agent"] = TEST_PREVIEW_USER_AGENT;
+        headers.accept = "application/json";
+      }
       if (operation?.body !== undefined) headers["content-type"] = "application/json";
       const receivedResponse = await this.fetcher(url, {
         headers,
@@ -537,7 +548,19 @@ export class UpstreamClient {
       }
       physicalRead?.markHeaders(response.status);
       checkDeadline();
-      if (response.status === 401 || response.status === 403) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
+      if (response.status === 401 || response.status === 403) {
+        const probe = deadline.previewProbeResponse;
+        if (response.status === 403 && probe && !probe.cloudflareChallenge) {
+          const edge = await readTestPreviewEdgeRejection(response, controller.signal);
+          checkDeadline();
+          if (edge) {
+            probe.cloudflareErrorCode = edge.code;
+            probe.cloudflareRayId = edge.rayId;
+            throw new UpstreamError("UPSTREAM_AUTH_FAILED", "测试后台网关拒绝 BI 服务访问", response.status);
+          }
+        }
+        throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
+      }
       if (response.status === 429) throw new UpstreamError("UPSTREAM_RATE_LIMITED", "后台接口请求过于频繁", 429);
       if (!response.ok && !(operation ? [400, 404, 409, 500] : [400, 422]).includes(response.status)) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
       const payload = await response.json().catch((error: unknown) => {

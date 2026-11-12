@@ -558,11 +558,14 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
         // An open page can still be running the previous strict response schema.
         // Keep that shape and its in-memory credential draft usable across a release.
         const summary = diagnostics.map(result => {
-          const outcome = result.outcome === "accepted" ? "通过" : result.cloudflareChallenge ? "Cloudflare 验证" : "失败";
+          const outcome = result.outcome === "accepted" ? "通过"
+            : result.cloudflareErrorCode !== undefined ? `Cloudflare ${result.cloudflareErrorCode}`
+            : result.cloudflareChallenge ? "Cloudflare 验证" : "失败";
           const status = result.upstreamHttpStatus === undefined ? "" : ` HTTP ${result.upstreamHttpStatus}`;
           const business = result.upstreamBusinessCode === undefined ? "" : ` 业务码 ${result.upstreamBusinessCode}`;
+          const ray = result.cloudflareRayId === undefined ? "" : ` Ray ${result.cloudflareRayId}`;
           const origin = result.configuredOriginMatchesDefault ? "" : "（使用非默认测试地址）";
-          return `${result.pid} ${outcome}${status}${business}${origin}`;
+          return `${result.pid} ${outcome}${status}${business}${ray}${origin}`;
         }).join("、");
         return reply.code(error.statusCode).send({
           success: false,

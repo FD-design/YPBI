@@ -706,13 +706,13 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 
 测试后台网页登录使用 `https://zq-admin.ypdev.cc/`，BI 取数使用 [服务端测试 API 默认配置](../../server/config/production-data-preview.ts)。部署保留 `.env.local`；显式配置的测试 API 地址和用户名各自优先。更换测试后台时同步检查两项配置，测试用户名须与后台 Token 所属账号一致。
 
-在维护页重新验证测试 Token。BI 服务器使用 `GET /api/admin/statistics/pDaySum` 分别验证 PH、FBI，两项通过后建立当前浏览器的临时测试会话。分别复测两个 PID 的测试查询，再切回正式数据核对各站来源。
+在维护页重新验证测试 Token。BI 服务器使用 `GET /api/admin/statistics/pDaySum` 分别验证 PH、FBI，两项通过后建立当前浏览器的临时测试会话。测试凭据探针、取数与查询任务通过 `User-Agent: YPBI-Test-Preview/1.0` 标识 BI 服务并请求 JSON。分别复测两个 PID 的测试查询，再切回正式数据核对各站来源。
 
 通过受控运维入口的 `logs` 命令查看 API 日志。测试预览启用时，应用启动会记录 `BI test data preview configuration checked`，用 `configuredOriginMatchesDefault` 核对运行配置与默认 API 的来源是否一致。
 
 测试 Token 验证遇到上游错误时，维护页的失败提示显示本次请求 ID 和已完成的 PH／FBI 脱敏探针结果。首个失败后最多等待另一探针 750 毫秒，页面展示响应发出时已有的结果。
 
-在 API 日志中按页面请求 ID 查找 `BI test data preview credential probe completed`，核对 PH、FBI 各自的 `outcome`。稍后完成的探针也使用同一请求 ID 记录。收到上游响应时，核对 HTTP 状态、响应格式、`cloudflareChallenge` 及 `responseOriginMatchesConfigured`，最后一项标记最终响应的来源是否与运行配置一致。鉴权业务码 2002、错误分类和失败阶段可用于进一步定位。页面详情和诊断日志均采用脱敏字段白名单。
+在 API 日志中按页面请求 ID 查找 `BI test data preview credential probe completed`，核对 PH、FBI 各自的 `outcome`。稍后完成的探针也使用同一请求 ID 记录。收到上游响应时，核对 HTTP 状态、响应格式、`cloudflareChallenge` 及 `responseOriginMatchesConfigured`，最后一项标记最终响应的来源是否与运行配置一致。经校验的 Cloudflare 拒绝可按页面错误码和 Ray 编号定位。鉴权业务码 2002、错误分类和失败阶段可用于进一步定位。页面详情和诊断日志均采用脱敏字段白名单。
 
 ## 5. 数据与备份
 

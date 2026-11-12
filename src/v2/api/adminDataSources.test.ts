@@ -248,7 +248,8 @@ describe("V2 数据源维护客户端", () => {
         code: "UPSTREAM_AUTH_FAILED", message: "后台登录状态无效", requestId: "fixture-preview-diagnostics",
         previewDiagnostics: [
           { pid: "PH", outcome: "accepted", upstreamHttpStatus: 200, configuredOriginMatchesDefault: true },
-          { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: true, configuredOriginMatchesDefault: false, responseFormat: "html", token: "fake-raw-token-never-render" }
+          { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: false, configuredOriginMatchesDefault: false,
+            cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG", responseFormat: "html", token: "fake-raw-token-never-render" }
         ]
       }
     }, 403)) as typeof fetch;
@@ -258,8 +259,26 @@ describe("V2 数据源维护客户端", () => {
     expect(error).toMatchObject({ kind: "upstream", code: "UPSTREAM_AUTH_FAILED", status: 403, requestId: "fixture-preview-diagnostics" });
     expect((error as AdminRequestError).previewDiagnostics).toEqual([
       { pid: "PH", outcome: "accepted", upstreamHttpStatus: 200, configuredOriginMatchesDefault: true },
-      { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: true, configuredOriginMatchesDefault: false }
+      { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: false, configuredOriginMatchesDefault: false,
+        cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG" }
     ]);
+  });
+
+  test("忽略未知 Cloudflare 错误码和无效 Ray ID，并保留原探针结果", async () => {
+    for (const cloudflareRayId of ["abc0123456789def", "abc0123456789def-hkg", "<raw-upstream-content>"]) {
+      globalThis.fetch = (async () => jsonResponse({
+        success: false,
+        error: {
+          code: "UPSTREAM_AUTH_FAILED", message: "测试后台网关拒绝 BI 服务访问", requestId: "fixture-preview-edge-rejected",
+          previewDiagnostics: [{ pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareErrorCode: 1999, cloudflareRayId }]
+        }
+      }, 403)) as typeof fetch;
+
+      await expect(activateDataPreview("temporary-test-token-0001", CSRF_TOKEN)).rejects.toMatchObject({
+        requestId: "fixture-preview-edge-rejected",
+        previewDiagnostics: [{ pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareErrorCode: undefined, cloudflareRayId: undefined }]
+      });
+    }
   });
 
   test("缺失或无效的探针诊断不覆盖维护接口错误与请求 ID", async () => {

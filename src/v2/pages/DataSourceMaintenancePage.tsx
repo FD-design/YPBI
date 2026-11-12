@@ -469,7 +469,7 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
       setPreviewVerification("unknown");
       if (problem.kind === "login_required") handleAccessError(problem);
       else {
-        const message = problem.previewDiagnostics?.some(result => result.cloudflareChallenge)
+        const message = problem.previewDiagnostics?.some(result => result.cloudflareChallenge || result.cloudflareErrorCode !== undefined)
           ? "测试后台探针未全部通过"
           : problem.message;
         setPreviewNotice({
@@ -660,6 +660,8 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
               {result.upstreamHttpStatus !== undefined && ` · HTTP ${result.upstreamHttpStatus}`}
               {result.upstreamBusinessCode !== undefined && ` · 业务码 ${result.upstreamBusinessCode}`}
               {result.cloudflareChallenge && " · 上游要求通过 Cloudflare 验证"}
+              {result.cloudflareErrorCode !== undefined && ` · Cloudflare 错误码 ${result.cloudflareErrorCode}`}
+              {result.cloudflareRayId && ` · Ray ID ${result.cloudflareRayId}`}
             </small>)}
             {previewNotice.previewDiagnostics?.some(result => result.configuredOriginMatchesDefault === false) && <small>测试 API 来源与默认配置不同</small>}
           </span>

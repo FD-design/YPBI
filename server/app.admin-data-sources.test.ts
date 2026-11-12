@@ -42,6 +42,8 @@ interface ObservedUpstreamRequest {
   url: string;
   token: string | null;
   userName: string | null;
+  clientUserAgent: string | null;
+  accept: string | null;
 }
 
 afterEach(async () => {
@@ -67,7 +69,9 @@ async function createHarness(options: {
     const request = {
       url: input.toString(),
       token: headers.get("x-token"),
-      userName: headers.get("name")
+      userName: headers.get("name"),
+      clientUserAgent: headers.get("user-agent"),
+      accept: headers.get("accept")
     };
     observedRequests.push(request);
     return options.upstreamResponse?.(request)
@@ -271,6 +275,10 @@ describe("数据源维护管理接口", () => {
     expect(activation.json().data).toMatchObject({ mode: "test", userName: "test-preview-user" });
     expect(observedRequests).toHaveLength(2);
     expect(observedRequests.every((request) => request.token === CANDIDATE_PRIMARY_TOKEN && request.userName === "test-preview-user")).toBe(true);
+    expect(observedRequests.map(({ clientUserAgent, accept }) => ({ clientUserAgent, accept }))).toEqual([
+      { clientUserAgent: "YPBI-Test-Preview/1.0", accept: "application/json" },
+      { clientUserAgent: "YPBI-Test-Preview/1.0", accept: "application/json" }
+    ]);
     expect(observedRequests.every((request) => request.url.startsWith("https://test-upstream.example.test/api/admin/statistics/pDaySum"))).toBe(true);
     expect(observedRequests.some((request) => request.url.includes("pid=PH"))).toBe(true);
     expect(observedRequests.some((request) => request.url.includes("pid=FBI"))).toBe(true);
@@ -346,6 +354,34 @@ describe("数据源维护管理接口", () => {
     expect(legacy.json().error.message).toContain("PH 通过 HTTP 200");
     expect(legacy.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
     expect(legacy.headers["set-cookie"]).toBeUndefined();
+  });
+
+  test("真实网关 403 分类仅回传固定 Cloudflare 错误码和 Ray", async () => {
+    const ray = "a1234567890bcdef-SIN";
+    const { app } = await createHarness({
+      envOverrides: {
+        BI_TEST_DATA_PREVIEW_ENABLED: true,
+        UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+        UPSTREAM_TEST_USER_NAME: "test-preview-user"
+      },
+      upstreamResponse: request => new Response(JSON.stringify({
+        cloudflare_error: true, error_code: 1010, ray_id: ray.split("-")[0], detail: `${request.token} ${request.userName}`
+      }), { status: 403, headers: { server: "cloudflare", "cf-ray": ray, "content-type": "application/json" } })
+    });
+    const cookie = `${await login(app)}; ypbi_session=${NORMAL_SESSION_TOKEN}`;
+    const request = { method: "POST" as const, url: "/api/bi/admin/data-preview/activate", payload: { token: CANDIDATE_PRIMARY_TOKEN } };
+    const response = await app.inject({ ...request, headers: { cookie, "x-bi-preview-diagnostics": "1" } });
+    expect(response.statusCode).toBe(403);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect(response.json().error.message).toBe("测试后台网关拒绝 BI 服务访问");
+    expect(response.json().error.previewDiagnostics.map((row: { cloudflareErrorCode: number; cloudflareRayId: string }) =>
+      [row.cloudflareErrorCode, row.cloudflareRayId])).toEqual([[1010, ray], [1010, ray]]);
+    expect(response.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
+    expect(response.body).not.toContain("test-preview-user");
+
+    const legacy = await app.inject({ ...request, headers: { cookie } });
+    expect(legacy.json().error.message).toContain(`Cloudflare 1010 HTTP 403 Ray ${ray}`);
+    expect(legacy.json().error).not.toHaveProperty("previewDiagnostics");
   });
 
   test("测试会话绑定普通登录 Cookie，缺失或更换后绝不回退到正式数据", async () => {
