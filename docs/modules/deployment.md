@@ -684,7 +684,7 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 | `UPSTREAM_X_TOKEN` | 可选的主上游初始 Token，敏感；允许省略并在维护页首次录入，运行时保存值优先 |
 | `UPSTREAM_SECONDARY_X_TOKEN` | 可选的第二上游初始 Token，敏感；不能脱离对应地址和用户名单独配置，运行时保存值优先 |
 | `BI_TEST_DATA_PREVIEW_ENABLED` | 临时测试数据模式开关。本地和通用环境默认 `false`；当前唯一生产目标由仓库内非密配置开启，设为 `false` 可立即停用 |
-| `UPSTREAM_TEST_API_BASE_URL`、`UPSTREAM_TEST_USER_NAME` | 可覆盖生产发布默认值；默认测试地址为已确认的 HTTPS 后台，用户名复用站1配置。Token 不写环境变量或仓库，由用户在维护页临时验证 |
+| `UPSTREAM_TEST_API_BASE_URL`、`UPSTREAM_TEST_USER_NAME` | 覆盖临时测试数据配置。默认 API 地址为 `https://zq-admin-api.ypdev.cc`，测试用户名默认使用站1的启动配置。Token 由用户在维护页临时验证 |
 | `UPSTREAM_CREDENTIALS_FILE` | 运行时人工轮换凭据文件，生产放在受保护的 `data` 下 |
 | `WORKSPACE_FILE` | 遗留工作区文件；未配置旧 `DATABASE_URL` 时使用 |
 | `DATABASE_URL` | 仅供遗留 workspace PostgreSQL；与账号库分离，可不配置 |
@@ -695,6 +695,12 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 不得在仓库、Markdown、截图、浏览器存储、命令历史、工单或普通日志中填写真实数据库连接串、Token、密码、Cookie 或 CSRF secret。发布包必须排除 `.env.local` 和 `data/`。
 
 首次部署由服务器安全配置提供两个上游的 HTTPS 地址、对应用户名及维护二次密码；平台、PID、启用状态和站点归属读取随版本发布的 `server/platforms/platform-catalog.v1.json`，不再配置 PID 环境变量。没有 Token 时应用仍以登录必需、业务数据源未配置的失败关闭状态启动。维护者完成普通登录与维护二次认证后，在页面验证并保存首个 Token。已经通过受控环境预置初始 Token 的部署也可直接启动，后续轮换仍写入受保护的凭据文件。修改平台目录须先校验稳定 ID、PID、顺序和站点归属，随版本发布并重启；当前 20 项不是固定产品上限，未来可由同一 Provider 接入正式上游目录。
+
+### 临时测试数据源切换
+
+测试后台网页登录使用 `https://zq-admin.ypdev.cc/`，BI 取数使用 [服务端测试 API 默认配置](../../server/config/production-data-preview.ts)。部署保留 `.env.local`；如已显式配置测试 API 地址，须同步更新或移除该覆盖值。测试用户名须与后台 Token 所属账号一致。
+
+从 BI 服务器确认测试 API 的 HTTPS 连通性后，在维护页重新验证测试 Token。BI 使用 `GET /api/admin/statistics/pDaySum` 验证 PH、FBI，通过后建立当前浏览器的临时测试会话。分别复测两个 PID 的测试查询，并检查切回正式数据后各站仍走原有来源。切换只作用于临时测试数据。
 
 ## 5. 数据与备份
 

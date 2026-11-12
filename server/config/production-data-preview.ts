@@ -5,5 +5,5 @@
  */
 export const productionDataPreviewDefaults = {
   enabled: true,
-  baseUrl: "https://douyin.yah96.com"
+  baseUrl: "https://zq-admin-api.ypdev.cc"
 } as const;

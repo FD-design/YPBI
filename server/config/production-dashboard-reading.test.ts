@@ -67,11 +67,13 @@ describe("正式日看板读取配置", () => {
     }
   });
 
-  test("正式读取默认值保持既有测试预览的地址、用户名与默认状态", () => {
+  test("生产部署默认使用新的测试 API 域名并保持正式来源隔离", () => {
     const env = loadEnv(productionSource);
     expect(env.BI_TEST_DATA_PREVIEW_ENABLED).toBe(true);
-    expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://douyin.yah96.com");
+    expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://zq-admin-api.ypdev.cc");
     expect(env.UPSTREAM_TEST_USER_NAME).toBe("fake-primary-user");
+    expect(env.UPSTREAM_API_BASE_URL).toBe(productionSource.UPSTREAM_API_BASE_URL);
+    expect(env.UPSTREAM_SECONDARY_API_BASE_URL).toBe(productionSource.UPSTREAM_SECONDARY_API_BASE_URL);
     const disabled = loadEnv({ ...productionSource, BI_TEST_DATA_PREVIEW_ENABLED: "false" });
     expect(disabled.BI_PRODUCTION_DASHBOARD_READING_ENABLED).toBe(true);
     expect(disabled.BI_TEST_DATA_PREVIEW_ENABLED).toBe(false);

@@ -974,7 +974,7 @@ describe("生产环境配置", () => {
     expect(env.UPSTREAM_X_TOKEN).toBeUndefined();
     expect(env.UPSTREAM_SECONDARY_X_TOKEN).toBeUndefined();
     expect(env.BI_TEST_DATA_PREVIEW_ENABLED).toBe(true);
-    expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://douyin.yah96.com");
+    expect(env.UPSTREAM_TEST_API_BASE_URL).toBe("https://zq-admin-api.ypdev.cc");
     expect(env.UPSTREAM_TEST_USER_NAME).toBe("primary-user");
   });
 
