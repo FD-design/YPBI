@@ -706,7 +706,11 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 
 测试后台网页登录使用 `https://zq-admin.ypdev.cc/`，BI 取数使用 [服务端测试 API 默认配置](../../server/config/production-data-preview.ts)。部署保留 `.env.local`；显式配置的测试 API 地址和用户名各自优先。更换测试后台时同步检查两项配置，测试用户名须与后台 Token 所属账号一致。
 
-从 BI 服务器确认测试 API 的 HTTPS 连通性后，在维护页重新验证测试 Token。BI 使用 `GET /api/admin/statistics/pDaySum` 验证 PH、FBI，通过后建立当前浏览器的临时测试会话。分别复测两个 PID 的测试查询，并检查切回正式数据后各站仍走原有来源。切换只作用于临时测试数据。
+在维护页重新验证测试 Token。BI 服务器使用 `GET /api/admin/statistics/pDaySum` 分别验证 PH、FBI，两项通过后建立当前浏览器的临时测试会话。分别复测两个 PID 的测试查询，再切回正式数据核对各站来源。
+
+通过受控运维入口的 `logs` 命令查看 API 日志。测试预览启用时，应用启动会记录 `BI test data preview configuration checked`，用 `configuredOriginMatchesDefault` 核对运行配置与默认 API 的来源是否一致。
+
+需要定位验证失败时，按验证时间查找 `BI test data preview credential probe completed`，按同一 `requestId` 核对 PH、FBI 各自的 `outcome`。如已收到响应，检查上游 HTTP 状态、响应格式、`cloudflareChallenge` 及 `responseOriginMatchesConfigured`，后者标记最终响应的来源是否与运行配置一致。结合固定的鉴权业务码 2002、错误分类和失败阶段判断原因。诊断日志使用字段白名单。
 
 ## 5. 数据与备份
 

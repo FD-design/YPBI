@@ -8,6 +8,7 @@ import { validateAnalyticsQuery, validateCardConfig } from "./analytics/capabili
 import { metrics, funnelEvents } from "./analytics/registry";
 import { QueryOrchestrator, QueryValidationError } from "./analytics/query-orchestrator";
 import type { AppEnv } from "./config/env";
+import { usesDefaultTestPreviewOrigin } from "./config/production-data-preview";
 import { UpstreamClient, UpstreamError } from "./upstream/client";
 import { OverviewAdapter } from "./upstream/overview.adapter";
 import { EventAdapter } from "./upstream/event.adapter";
@@ -484,6 +485,11 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     && env.UPSTREAM_TEST_API_BASE_URL
     && env.UPSTREAM_TEST_USER_NAME
   );
+  if (previewEnabled && env.UPSTREAM_TEST_API_BASE_URL) {
+    app.log.info({
+      configuredOriginMatchesDefault: usesDefaultTestPreviewOrigin(env.UPSTREAM_TEST_API_BASE_URL)
+    }, "BI test data preview configuration checked");
+  }
   app.get("/api/bi/admin/data-preview/status", async (request, reply) => {
     if (!await requireMaintenanceSession(request, reply)) return reply;
     const principal = adminPrincipals.get(request)!;
@@ -520,7 +526,9 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       return reply.code(401).send({ success: false, error: { code: "AUTHENTICATION_REQUIRED", message: "普通登录会话已失效，请重新登录" } });
     }
     try {
-      const verified = await upstream.verifyPreviewCredential(parsed.data.token);
+      const verified = await upstream.verifyPreviewCredential(parsed.data.token, result => {
+        request.log.info({ requestId: request.id, ...result }, "BI test data preview credential probe completed");
+      });
       dataPreviewSessions.revoke(requestCookieHeader(request));
       const session = dataPreviewSessions.create({
         ip: request.ip,

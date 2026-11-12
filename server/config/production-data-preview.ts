@@ -8,3 +8,7 @@ export const productionDataPreviewDefaults = {
   baseUrl: "https://zq-admin-api.ypdev.cc",
   userName: "xcq"
 } as const;
+
+export function usesDefaultTestPreviewOrigin(baseUrl: string) {
+  return new URL(baseUrl).origin === new URL(productionDataPreviewDefaults.baseUrl).origin;
+}

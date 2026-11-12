@@ -187,12 +187,70 @@ describe("UpstreamClient 站点用户名与Token配对", () => {
   }));
 
   test("临时测试凭据探针同样固定化反射错误，普通数据请求保留原业务诊断", () => withFile(async file => {
-    const reflectedToken = "fake-reflected-preview-token", message = `fixture rejection ${reflectedToken}`;
+    const reflectedToken = "1234567890123456", message = `fixture rejection ${reflectedToken}`;
     const client = new UpstreamClient({ ...env, UPSTREAM_CREDENTIALS_FILE: file, BI_TEST_DATA_PREVIEW_ENABLED: true,
       UPSTREAM_TEST_API_BASE_URL: "https://preview.invalid", UPSTREAM_TEST_USER_NAME: "preview-user" }, async () =>
-      new Response(JSON.stringify({ code: 400, err: message }), { status: 200 }));
-    await expect(client.verifyPreviewCredential(reflectedToken)).rejects.toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message: "后台拒绝凭据验证请求" });
+      new Response(JSON.stringify({ code: Number(reflectedToken), err: message }), { status: 200 }));
+    const reports: unknown[] = [];
+    await expect(client.verifyPreviewCredential(reflectedToken, report => reports.push(report)))
+      .rejects.toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message: "后台拒绝凭据验证请求" });
+    expect(reports).toContainEqual(expect.objectContaining({ outcome: "rejected", failureOrigin: "business" }));
+    expect(JSON.stringify(reports)).not.toContain(reflectedToken);
     await expect(client.get("/api/data", { pid: "PH" })).rejects.toMatchObject({ code: "UPSTREAM_INVALID_REQUEST", statusCode: 422, message });
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  }));
+
+  test("临时测试凭据探针分别上报脱敏结果，首个拒绝无需等待另一站完成", () => withFile(async file => {
+    const baseUrl = "https://preview.invalid";
+    const userName = "fixture-preview-user";
+    const token = "fixture-preview-token";
+    const fixtureResponse = (body: string, init: ResponseInit, url: URL) =>
+      Object.defineProperty(new Response(body, init), "url", { value: url.href });
+    let finishFbi!: () => void;
+    let reportFbi!: () => void;
+    const fbiCanFinish = new Promise<void>(resolve => { finishFbi = resolve; });
+    const fbiReported = new Promise<void>(resolve => { reportFbi = resolve; });
+    const client = new UpstreamClient({
+      ...env, UPSTREAM_CREDENTIALS_FILE: file, BI_TEST_DATA_PREVIEW_ENABLED: true,
+      UPSTREAM_TEST_API_BASE_URL: baseUrl, UPSTREAM_TEST_USER_NAME: userName
+    }, async input => {
+      const url = new URL(input.toString());
+      if (url.searchParams.get("pid") === "PH") {
+        return fixtureResponse(`<html>${token} ${userName}</html>`, {
+          status: 403,
+          headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge", "cf-ray": "fixture-ray-id" }
+        }, url);
+      }
+      expect(url.searchParams.get("pid")).toBe("FBI");
+      await fbiCanFinish;
+      return fixtureResponse(JSON.stringify({ code: 200, data: [token, userName] }), {
+        status: 200, headers: { "content-type": "application/json" }
+      }, url);
+    });
+    const results: unknown[] = [];
+    const verification = client.verifyPreviewCredential(token, result => {
+      results.push(result);
+      if (result.pid === "FBI") reportFbi();
+    });
+    try {
+      await expect(verification).rejects.toMatchObject({
+        code: "UPSTREAM_AUTH_FAILED", statusCode: 403, message: "后台登录状态无效"
+      });
+      expect(results).toEqual([{
+        pid: "PH", outcome: "rejected", configuredOriginMatchesDefault: false,
+        upstreamHttpStatus: 403, failureOrigin: "http", errorCode: "UPSTREAM_AUTH_FAILED",
+        responseFormat: "html", cloudflareChallenge: true, responseOriginMatchesConfigured: true
+      }]);
+    } finally {
+      finishFbi();
+    }
+    await fbiReported;
+    expect(results).toHaveLength(2);
+    expect(results[1]).toEqual({
+      pid: "FBI", outcome: "accepted", configuredOriginMatchesDefault: false,
+      upstreamHttpStatus: 200,
+      responseFormat: "json", cloudflareChallenge: false, responseOriginMatchesConfigured: true
+    });
     await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   }));
 

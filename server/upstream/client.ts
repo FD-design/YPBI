@@ -1,4 +1,5 @@
 import type { AppEnv } from "../config/env";
+import { usesDefaultTestPreviewOrigin } from "../config/production-data-preview";
 import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { enabledPlatformsForSite, getEnabledPlatformByPid, type PlatformSiteId } from "../platforms/registry";
 import { currentUpstreamRequestProfile } from "./request-profile";
 import { RequestWorkQueue } from "./request-work-queue";
-import { getUpstreamReadFailure, rememberUpstreamReadFailure, type UpstreamReadFailure } from "./read-failure";
+import { getUpstreamReadFailure, rememberUpstreamReadFailure, UPSTREAM_READ_ERROR_CODES, type UpstreamReadFailure } from "./read-failure";
 import { captureUpstreamReadObserver, PhysicalReadTrace } from "./read-trace";
 export { getUpstreamReadFailure } from "./read-failure";
 export type UpstreamReadClient = Pick<UpstreamClient, "get"> & Partial<Pick<UpstreamClient, "getCached">>;
@@ -46,11 +47,28 @@ export class QueryJobBusinessError extends UpstreamError {
   }
 }
 
+interface PreviewProbeResponse {
+  upstreamHttpStatus?: number;
+  responseFormat?: "json" | "html" | "other";
+  cloudflareChallenge?: boolean;
+  responseOriginMatchesConfigured?: boolean;
+}
+
+interface PreviewProbeResult extends PreviewProbeResponse {
+  pid: string;
+  outcome: "accepted" | "rejected";
+  configuredOriginMatchesDefault: boolean;
+  upstreamBusinessCode?: 2002;
+  failureOrigin?: UpstreamReadFailure["origin"];
+  errorCode?: string;
+}
+
 interface PhysicalReadDeadline {
   expiresAt: number;
   timerExpired?: boolean;
   upstreamHttpStatus?: number;
   upstreamBusinessCode?: number;
+  previewProbeResponse?: PreviewProbeResponse;
 }
 function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: AbortSignal) {
   const origin = signal?.aborted ? "consumer_cancelled"
@@ -148,7 +166,7 @@ export class UpstreamClient {
     return { site, valid: true, checkedAt: new Date().toISOString() };
   }
 
-  async verifyPreviewCredential(token: string) {
+  async verifyPreviewCredential(token: string, onProbeResult?: (result: PreviewProbeResult) => void) {
     if (!this.env.BI_TEST_DATA_PREVIEW_ENABLED || !this.env.UPSTREAM_TEST_API_BASE_URL || !this.env.UPSTREAM_TEST_USER_NAME) {
       throw new UpstreamError("DATA_PREVIEW_DISABLED", "测试数据预览尚未启用", 503);
     }
@@ -163,11 +181,37 @@ export class UpstreamClient {
       userName: this.env.UPSTREAM_TEST_USER_NAME,
       token
     };
-    await Promise.all(probePids.map((pid) => this.verifyProfile(profile, pid)));
+    const configuredOriginMatchesDefault = usesDefaultTestPreviewOrigin(profile.baseUrl);
+    const report = (result: PreviewProbeResult) => {
+      // Diagnostics must not decide whether a credential is accepted.
+      try { onProbeResult?.(result); } catch { /* Preserve the probe result. */ }
+    };
+    await Promise.all(probePids.map(async (pid) => {
+      if (!onProbeResult) return this.verifyProfile(profile, pid);
+      const response: PreviewProbeResponse = {};
+      try {
+        await this.verifyProfile(profile, pid, response);
+        report({ pid, outcome: "accepted", configuredOriginMatchesDefault, ...response });
+      } catch (error) {
+        const failure = getUpstreamReadFailure(error);
+        const errorCode = error instanceof UpstreamError && UPSTREAM_READ_ERROR_CODES.some(code => code === error.code)
+          ? error.code : "unknown";
+        report({
+          pid,
+          outcome: "rejected",
+          configuredOriginMatchesDefault,
+          ...response,
+          failureOrigin: failure?.origin,
+          upstreamBusinessCode: failure?.upstreamBusinessCode === 2002 ? 2002 : undefined,
+          errorCode
+        });
+        throw error;
+      }
+    }));
     return { valid: true as const, checkedAt: new Date().toISOString() };
   }
 
-  private async verifyProfile(profile: CredentialProfile, pid: string) {
+  private async verifyProfile(profile: CredentialProfile, pid: string, previewProbeResponse?: PreviewProbeResponse) {
     if (!profile.token) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
     if (!validUserName(profile.userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源用户名尚未配置", 503);
     const end = new Date();
@@ -175,10 +219,13 @@ export class UpstreamClient {
     const url = new URL("/api/admin/statistics/pDaySum", profile.baseUrl);
     const params = { page: "1", count: "1", pid, sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`, sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59` };
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    try { await this.fetchJson(url, profile.token, profile.userName); }
+    const deadline = previewProbeResponse
+      ? { expiresAt: performance.now() + this.env.REQUEST_TIMEOUT_MS, previewProbeResponse }
+      : undefined;
+    try { await this.fetchJson(url, profile.token, profile.userName, undefined, undefined, undefined, undefined, deadline); }
     catch (error) {
       if (error instanceof UpstreamError && error.code === "UPSTREAM_INVALID_REQUEST") {
-        throw new UpstreamError(error.code, "后台拒绝凭据验证请求", error.statusCode);
+        throw new UpstreamError(error.code, "后台拒绝凭据验证请求", error.statusCode, getUpstreamReadFailure(error));
       }
       throw error;
     }
@@ -456,6 +503,17 @@ export class UpstreamClient {
       });
       response = receivedResponse;
       deadline.upstreamHttpStatus = response.status;
+      if (deadline.previewProbeResponse) {
+        const probe = deadline.previewProbeResponse;
+        const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+        probe.upstreamHttpStatus = response.status;
+        probe.responseFormat = mediaType === "application/json" || mediaType?.endsWith("+json") ? "json"
+          : mediaType === "text/html" || mediaType === "application/xhtml+xml" ? "html" : "other";
+        probe.cloudflareChallenge = response.headers.get("cf-mitigated") === "challenge";
+        if (response.url && URL.canParse(response.url)) {
+          probe.responseOriginMatchesConfigured = new URL(response.url).origin === url.origin;
+        }
+      }
       physicalRead?.markHeaders(response.status);
       checkDeadline();
       if (response.status === 401 || response.status === 403) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
