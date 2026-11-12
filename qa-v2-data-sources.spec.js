@@ -125,8 +125,9 @@ async function installMaintenanceFixtures(page, options = {}) {
       });
     }
     if (url.pathname.endsWith("/data-preview/activate")) {
-      if (options.rejectPreviewActivation) return route.fulfill({ status: 401, json: { success: false, error: {
-        code: "UPSTREAM_AUTH_FAILED", message: "测试后台拒绝候选凭据", requestId: "qa-preview-activation-rejected",
+      if (options.rejectPreviewActivation) return route.fulfill({ status: options.previewDiagnostics ? 403 : 401, json: { success: false, error: {
+        code: "UPSTREAM_AUTH_FAILED", message: options.previewDiagnostics ? "后台登录状态无效，请更新 Token" : "测试后台拒绝候选凭据",
+        requestId: "qa-preview-activation-rejected",
         previewDiagnostics: options.previewDiagnostics
       } } });
       previewActive = true;
@@ -548,14 +549,17 @@ test("测试会话激活失败退出确认中并保留草稿，后续仅只读�
 for (const width of [1280, 1024, 390]) test(`测试会话启用失败展示 PID 探针结果和 Cloudflare 诊断（${width}px）`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 800 });
   const configuredOriginMatchesDefault = width !== 390;
-  const cloudflareChallenge = width === 1280;
+  const diagnostics = width === 1280
+    ? { responseFormat: "html", cloudflareChallenge: true }
+    : width === 1024
+      ? { responseFormat: "html", denialKind: "cloudflare_edge", cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG" }
+      : { responseFormat: "json", denialKind: "unclassified", cloudflareRayId: "abc0123456789def-HKG" };
   await installMaintenanceFixtures(page, {
     authorized: true,
     rejectPreviewActivation: true,
     previewDiagnostics: [
       { pid: "PH", outcome: "accepted", configuredOriginMatchesDefault, upstreamHttpStatus: 200, responseFormat: "json", cloudflareChallenge: false },
-      { pid: "FBI", outcome: "rejected", configuredOriginMatchesDefault, upstreamHttpStatus: 403, responseFormat: "html", cloudflareChallenge,
-        ...(cloudflareChallenge ? {} : { cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG" }) }
+      { pid: "FBI", outcome: "rejected", configuredOriginMatchesDefault, upstreamHttpStatus: 403, ...diagnostics }
     ]
   });
   await page.goto(`${baseUrl}/admin/data-sources`);
@@ -568,11 +572,15 @@ for (const width of [1280, 1024, 390]) test(`测试会话启用失败展示 PID 
   const notice = preview.getByRole("alert");
   await expect(notice).toContainText("测试后台探针未全部通过");
   await expect(notice).toContainText("PID PH 探针通过 · HTTP 200");
-  await expect(notice).toContainText(cloudflareChallenge
-    ? "PID FBI 探针失败 · HTTP 403 · 上游要求通过 Cloudflare 验证"
-    : "PID FBI 探针失败 · HTTP 403 · Cloudflare 错误码 1010 · Ray ID abc0123456789def-HKG");
+  await expect(notice).toContainText("PID FBI 探针失败 · HTTP 403");
+  const diagnosisText = {
+    1280: "上游要求通过 Cloudflare 验证",
+    1024: "Cloudflare 网关拒绝 · 错误码 1010 · Ray ID abc0123456789def-HKG",
+    390: "未识别拒绝来源 · JSON 响应 · Ray ID abc0123456789def-HKG"
+  };
+  await expect(notice).toContainText(diagnosisText[width]);
   await expect(notice).toContainText("请求 ID：qa-preview-activation-rejected");
-  await expect(notice).not.toContainText("测试后台拒绝候选凭据");
+  await expect(notice).not.toContainText("后台登录状态无效，请更新 Token");
   await expect(notice.getByText("测试 API 来源与默认配置不同", { exact: true })).toHaveCount(configuredOriginMatchesDefault ? 0 : 1);
   await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
   await expect(token).toHaveValue("fake-rejected-preview-draft");

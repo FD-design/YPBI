@@ -249,7 +249,7 @@ describe("V2 数据源维护客户端", () => {
         previewDiagnostics: [
           { pid: "PH", outcome: "accepted", upstreamHttpStatus: 200, configuredOriginMatchesDefault: true },
           { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: false, configuredOriginMatchesDefault: false,
-            cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG", responseFormat: "html", token: "fake-raw-token-never-render" }
+            denialKind: "cloudflare_edge", responseFormat: "html", cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG", token: "fake-raw-token-never-render" }
         ]
       }
     }, 403)) as typeof fetch;
@@ -260,7 +260,27 @@ describe("V2 数据源维护客户端", () => {
     expect((error as AdminRequestError).previewDiagnostics).toEqual([
       { pid: "PH", outcome: "accepted", upstreamHttpStatus: 200, configuredOriginMatchesDefault: true },
       { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: false, configuredOriginMatchesDefault: false,
-        cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG" }
+        denialKind: "cloudflare_edge", responseFormat: "html", cloudflareErrorCode: 1010, cloudflareRayId: "abc0123456789def-HKG" }
+    ]);
+  });
+
+  test("保留可识别的拒绝分类和格式，忽略未知诊断值及原始响应", async () => {
+    globalThis.fetch = (async () => jsonResponse({
+      success: false,
+      error: {
+        code: "UPSTREAM_AUTH_FAILED", message: "测试后台拒绝请求", requestId: "fixture-preview-denial",
+        previewDiagnostics: [
+          { pid: "PH", outcome: "rejected", upstreamHttpStatus: 403, denialKind: "unclassified", responseFormat: "json", body: "raw response" },
+          { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, denialKind: "invalid", responseFormat: "raw response" }
+        ]
+      }
+    }, 403)) as typeof fetch;
+
+    const error = await activateDataPreview("temporary-test-token-0001", CSRF_TOKEN).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(AdminRequestError);
+    expect((error as AdminRequestError).previewDiagnostics).toEqual([
+      { pid: "PH", outcome: "rejected", upstreamHttpStatus: 403, denialKind: "unclassified", responseFormat: "json" },
+      { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, denialKind: undefined, responseFormat: undefined }
     ]);
   });
 

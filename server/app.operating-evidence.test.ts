@@ -210,6 +210,9 @@ async function createHarness(options: {
     const observed = { url, token: headers.get("x-token"), userName: headers.get("name") };
     observedRequests.push(observed);
     if (!["primary.example.test", "secondary.example.test", "preview.example.test"].includes(url.hostname)) throw new Error("Unexpected fake upstream origin");
+    if (url.hostname === "preview.example.test" && (init?.method ?? "GET") === "GET" && url.pathname === "/api/admin/statistics/reletionsStatPlus/getDays") {
+      return Response.json({ code: 200, data: [] });
+    }
     return options.response?.(observed) ?? new Response(JSON.stringify(rawBusinessPayload(url)), { headers: { "content-type": "application/json" } });
   }) as typeof fetch;
   const env: AppEnv = {

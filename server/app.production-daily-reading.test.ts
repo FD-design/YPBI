@@ -60,6 +60,9 @@ async function createHarness(options: { env?: Partial<AppEnv>; identityProvider?
     if (!["primary.example.test", "secondary.example.test", "preview.example.test"].includes(url.hostname)) {
       throw new Error("Unexpected fake upstream origin");
     }
+    if (url.hostname === "preview.example.test" && (init?.method ?? "GET") === "GET" && url.pathname === "/api/admin/statistics/reletionsStatPlus/getDays") {
+      return Response.json({ code: 200, data: [] });
+    }
     if (url.pathname.startsWith("/api/admin/bi/v1/queryJobs")) {
       const taskId = url.hostname === "secondary.example.test" ? "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         : url.hostname === "preview.example.test" ? "cccccccccccccccccccccccccccccccc" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

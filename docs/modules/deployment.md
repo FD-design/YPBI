@@ -704,9 +704,11 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 
 ### 临时测试数据源切换
 
-测试后台网页登录使用 `https://zq-admin.ypdev.cc/`，BI 取数使用 [服务端测试 API 默认配置](../../server/config/production-data-preview.ts)。部署保留 `.env.local`；显式配置的测试 API 地址和用户名各自优先。更换测试后台时同步检查两项配置，测试用户名须与后台 Token 所属账号一致。
+测试后台网页登录使用 `https://zq-admin.ypdev.cc/`，留存接口路径在该域名下返回网页入口 HTML。测试后台留存页向 `https://zq-admin-api.ypdev.cc` 发起留存查询，BI 默认使用同一 API 来源。部署保留 `.env.local`，显式配置的测试 API 地址和用户名各自优先。更换测试后台时同步检查两项配置，测试用户名须与后台 Token 所属账号一致。见[服务端测试 API 默认配置](../../server/config/production-data-preview.ts)。
 
-在维护页重新验证测试 Token。BI 服务器使用 `GET /api/admin/statistics/pDaySum` 分别验证 PH、FBI，两项通过后建立当前浏览器的临时测试会话。测试凭据探针、取数与查询任务通过 `User-Agent: YPBI-Test-Preview/1.0` 标识 BI 服务并请求 JSON。分别复测两个 PID 的测试查询，再切回正式数据核对各站来源。
+在维护页重新验证测试 Token。BI 服务器向 `GET /api/admin/statistics/reletionsStatPlus/getDays` 分别传入 PH、FBI 的 `pid`，并通过 `registerDate`、`registerEdDate` 查询同一个已结束业务日。每项均须返回明确的业务码 `200` 和数组型 `data`，空数组属于有效结果。两个 PID 均通过后建立当前浏览器的临时测试会话。正式两站凭据验证沿用 `pDaySum`。
+
+测试凭据探针、取数与查询任务通过 `User-Agent: YPBI-Test-Preview/1.0` 标识 BI 服务并请求 JSON。分别复测两个 PID 的测试查询，再切回正式数据核对各站来源。
 
 通过受控运维入口的 `logs` 命令查看 API 日志。测试预览启用时，应用启动会记录 `BI test data preview configuration checked`，用 `configuredOriginMatchesDefault` 核对运行配置与默认 API 的来源是否一致。
 

@@ -177,13 +177,15 @@
 | POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的24小时内存会话 |
 | POST | `/api/bi/admin/data-preview/deactivate` | 删除当前服务端测试会话并清除预览 Cookie |
 
-临时测试数据会话独立于维护二次会话。站 1、站 2 代表 PID 均通过验证后签发测试会话，同一标签页重新验证成功后撤销旧测试会话。测试 Token 及会话存于有容量上限的 API 进程内存，服务重启后需重新验证测试 Token。
+临时测试数据会话独立于维护二次会话。`activate` 使用测试后台留存接口 `GET /api/admin/statistics/reletionsStatPlus/getDays`，以 `pid`、`registerDate`、`registerEdDate` 分别查询 PH、FBI 的同一个已结束业务日。两个 PID 均须实际返回明确的业务码 `200` 和数组型 `data`，包括空数组。其他业务码按错误处理，常规数据读取的旧无数据归一化规则仅用于数据查询。两项验证通过后签发测试会话，同一标签页重新验证成功后撤销旧测试会话。测试 Token 及会话存于有容量上限的 API 进程内存，服务重启后需重新验证测试 Token。
 
 通过维护会话门禁的 `activate` 请求遇到 `UpstreamError` 时，HTTP 状态和 `error.code` 由首个上游错误决定，响应附带 `error.requestId`。请求头 `x-bi-preview-diagnostics: 1` 启用 `error.previewDiagnostics`，只包含本次激活请求内已完成的脱敏 PID 探针结果。旧页面沿用原有错误结构，在 `error.message` 中显示脱敏摘要。排查步骤见[临时测试数据源切换](deployment.md#临时测试数据源切换)。
 
+上游 HTTP 403 的探针诊断可附带 `denialKind`，包括 `cloudflare_edge`（已确认网关拒绝）、`upstream_auth`（后台鉴权拒绝）、`upstream_ip_restricted`（后台限制来源 IP）和 `unclassified`（拒绝来源未确认）。`cloudflareRayId` 仅用于关联请求记录。
+
 维护请求保留`site`和`token`，兼容增加可选`userName`（去除首尾空白，1～256字符，禁止控制字符）。省略用户名时沿用同站实际生效用户名；修改用户名必须同时提供对应Token，不允许只改用户名后复用旧Token。`status.userName`展示实际生效账号，不再固定展示环境初始值。测试当前连接仅提交`site`，不受候选草稿影响；测试环境旁路仍使用独立固定测试账号。
 
-候选验证失败不覆盖旧整对凭据。凭据文件使用`0600`、独立临时文件和原子替换；两站并发更新在服务端串行化，验证和保存使用同一个冻结配对。新记录保存`userName/token/updatedAt`；旧Token-only记录绑定原同站环境用户名。新记录整对生效，不分别回退；成功后清上游缓存，缓存分区继续包含实际用户名与Token的摘要。只回退应用不足以安全回退新账号，须同时恢复受保护的发布前凭据文件及匹配配置；备份不得进入仓库或导出。当前探针只证明从指定站点目录中选出的首个启用PID与`pDaySum`可用，不等于该站全部PID、接口和指标完成验数。此扩展的测试与部署状态见[用户名配对维护](deployment.md#2026-10-20-共享用户名与token配对维护)。
+候选验证失败不覆盖旧整对凭据。凭据文件使用`0600`、独立临时文件和原子替换；两站并发更新在服务端串行化，验证和保存使用同一个冻结配对。新记录保存`userName/token/updatedAt`；旧Token-only记录绑定原同站环境用户名。新记录整对生效，不分别回退；成功后清上游缓存，缓存分区继续包含实际用户名与Token的摘要。只回退应用不足以安全回退新账号，须同时恢复受保护的发布前凭据文件及匹配配置；备份不得进入仓库或导出。正式凭据探针验证指定站点目录中首个启用 PID 的 `pDaySum` 连接能力。此扩展的测试与部署状态见[用户名配对维护](deployment.md#2026-10-20-共享用户名与token配对维护)。
 
 ## 6. V2 只读 API
 

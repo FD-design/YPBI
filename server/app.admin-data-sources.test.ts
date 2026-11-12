@@ -75,7 +75,8 @@ async function createHarness(options: {
     };
     observedRequests.push(request);
     return options.upstreamResponse?.(request)
-      ?? new Response(JSON.stringify({ code: 200, msg: { pageData: [] } }), {
+      ?? new Response(JSON.stringify(new URL(request.url).pathname === "/api/admin/statistics/reletionsStatPlus/getDays"
+        ? { code: 200, data: [] } : { code: 200, msg: { pageData: [] } }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -279,7 +280,15 @@ describe("数据源维护管理接口", () => {
       { clientUserAgent: "YPBI-Test-Preview/1.0", accept: "application/json" },
       { clientUserAgent: "YPBI-Test-Preview/1.0", accept: "application/json" }
     ]);
-    expect(observedRequests.every((request) => request.url.startsWith("https://test-upstream.example.test/api/admin/statistics/pDaySum"))).toBe(true);
+    for (const request of observedRequests) {
+      const url = new URL(request.url);
+      expect(url.origin).toBe("https://test-upstream.example.test");
+      expect(url.pathname).toBe("/api/admin/statistics/reletionsStatPlus/getDays");
+      expect([...url.searchParams.keys()]).toEqual(["pid", "registerDate", "registerEdDate"]);
+      const start = url.searchParams.get("registerDate") ?? "";
+      expect(start).toMatch(/^\d{4}-\d{2}-\d{2} 00:00:00$/);
+      expect(url.searchParams.get("registerEdDate")).toBe(`${start.slice(0, 10)} 23:59:59`);
+    }
     expect(observedRequests.some((request) => request.url.includes("pid=PH"))).toBe(true);
     expect(observedRequests.some((request) => request.url.includes("pid=FBI"))).toBe(true);
     expect(existsSync(credentialsFile)).toBe(false);
@@ -305,7 +314,7 @@ describe("数据源维护管理接口", () => {
           });
         }
         await new Promise<void>(resolve => setTimeout(resolve, 20));
-        return new Response(JSON.stringify({ code: 200, msg: { pageData: [] } }), {
+        return new Response(JSON.stringify({ code: 200, data: [{ pid: "PH" }] }), {
           status: 200, headers: { "content-type": "application/json" }
         });
       }
@@ -383,6 +392,29 @@ describe("数据源维护管理接口", () => {
     expect(legacy.json().error.message).toContain(`Cloudflare 1010 HTTP 403 Ray ${ray}`);
     expect(legacy.json().error).not.toHaveProperty("previewDiagnostics");
   });
+
+  for (const [name, payload] of [
+    ["无业务码", { data: [] }],
+    ["无数据列表", { code: 200, msg: { pageData: [] } }],
+    ["其他 PID 的记录", { code: 200, data: [{ pid: "TT" }] }],
+    ["旧无数据兼容错误", { code: 400, err: "没有该平台当日数据" }]
+  ] as const) {
+    test(`测试探针拒绝${name}，不创建临时会话`, async () => {
+      const { app } = await createHarness({
+        envOverrides: {
+          BI_TEST_DATA_PREVIEW_ENABLED: true,
+          UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+          UPSTREAM_TEST_USER_NAME: "test-preview-user"
+        },
+        upstreamResponse: () => Response.json(payload)
+      });
+      const cookie = `${await login(app)}; ypbi_session=${NORMAL_SESSION_TOKEN}`;
+      const activation = await app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate", headers: { cookie }, payload: { token: CANDIDATE_PRIMARY_TOKEN } });
+      expect(activation.statusCode).not.toBe(200);
+      expect(activation.headers["set-cookie"]).toBeUndefined();
+      expect((await app.inject({ method: "GET", url: "/api/bi/admin/data-preview/status", headers: { cookie } })).json().data.active).toBe(false);
+    });
+  }
 
   test("测试会话绑定普通登录 Cookie，缺失或更换后绝不回退到正式数据", async () => {
     const { app } = await createHarness({ envOverrides: {

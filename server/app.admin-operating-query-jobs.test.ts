@@ -48,6 +48,9 @@ async function harness(options: { env?: Partial<AppEnv>; principal?: Principal; 
     const headers = new Headers(init?.headers);
     const body = init?.body ? JSON.parse(String(init.body)) as QueryJobCreateRequest : undefined;
     observed.push({ url, method: init?.method ?? "GET", token: headers.get("x-token"), userName: headers.get("name"), ...(body ? { body } : {}) });
+    if (url.hostname === "preview.example.test" && (init?.method ?? "GET") === "GET" && url.pathname === "/api/admin/statistics/reletionsStatPlus/getDays") {
+      return Response.json({ code: 200, data: [] });
+    }
     if (url.pathname.startsWith("/api/admin/bi/v1/queryJobs")) {
       if (options.failure) return options.failure();
       if (init?.method === "POST") {

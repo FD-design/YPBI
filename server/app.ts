@@ -564,8 +564,9 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
           const status = result.upstreamHttpStatus === undefined ? "" : ` HTTP ${result.upstreamHttpStatus}`;
           const business = result.upstreamBusinessCode === undefined ? "" : ` 业务码 ${result.upstreamBusinessCode}`;
           const ray = result.cloudflareRayId === undefined ? "" : ` Ray ${result.cloudflareRayId}`;
+          const format = result.denialKind === "unclassified" && result.responseFormat !== undefined ? ` ${result.responseFormat.toUpperCase()} 响应` : "";
           const origin = result.configuredOriginMatchesDefault ? "" : "（使用非默认测试地址）";
-          return `${result.pid} ${outcome}${status}${business}${ray}${origin}`;
+          return `${result.pid} ${outcome}${status}${business}${format}${ray}${origin}`;
         }).join("、");
         return reply.code(error.statusCode).send({
           success: false,

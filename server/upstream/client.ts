@@ -9,7 +9,8 @@ import { currentUpstreamRequestProfile } from "./request-profile";
 import { RequestWorkQueue } from "./request-work-queue";
 import { getUpstreamReadFailure, rememberUpstreamReadFailure, UPSTREAM_READ_ERROR_CODES, type UpstreamReadFailure } from "./read-failure";
 import { captureUpstreamReadObserver, PhysicalReadTrace } from "./read-trace";
-import { readTestPreviewEdgeRejection } from "./test-preview-edge";
+import { RETENTION_PLUS_API } from "./retention.adapter";
+import { inspectTestPreviewDeniedResponse, type TestPreviewDeniedResponse } from "./test-preview-edge";
 export { getUpstreamReadFailure } from "./read-failure";
 export type UpstreamReadClient = Pick<UpstreamClient, "get"> & Partial<Pick<UpstreamClient, "getCached">>;
 import {
@@ -55,6 +56,7 @@ interface PreviewProbeResponse {
   responseOriginMatchesConfigured?: boolean;
   cloudflareErrorCode?: number;
   cloudflareRayId?: string;
+  denialKind?: TestPreviewDeniedResponse["kind"];
 }
 
 export interface PreviewProbeResult extends PreviewProbeResponse {
@@ -72,6 +74,7 @@ interface PhysicalReadDeadline {
   upstreamHttpStatus?: number;
   upstreamBusinessCode?: number;
   testPreview?: boolean;
+  previewCredentialPid?: string;
   previewProbeResponse?: PreviewProbeResponse;
 }
 function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: AbortSignal) {
@@ -241,21 +244,29 @@ export class UpstreamClient {
   private async verifyProfile(profile: CredentialProfile, pid: string, previewProbeResponse?: PreviewProbeResponse) {
     if (!profile.token) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
     if (!validUserName(profile.userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源用户名尚未配置", 503);
+    if (profile.testPreview) {
+      // Match the current test portal's authenticated retention request for one completed business day.
+      const day = new Date(Date.now() + (8 - 24) * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const url = new URL(RETENTION_PLUS_API, profile.baseUrl);
+      url.search = new URLSearchParams({ pid, registerDate: `${day} 00:00:00`, registerEdDate: `${day} 23:59:59` }).toString();
+      const deadline = { expiresAt: performance.now() + this.env.REQUEST_TIMEOUT_MS, testPreview: true, previewCredentialPid: pid, previewProbeResponse };
+      try { await this.fetchJson(url, profile.token, profile.userName, undefined, undefined, undefined, undefined, deadline); }
+      catch (error) { throw this.safeCredentialProbeError(error); }
+      return;
+    }
     const end = new Date();
     const start = new Date(end); start.setDate(end.getDate() - 1);
     const url = new URL("/api/admin/statistics/pDaySum", profile.baseUrl);
     const params = { page: "1", count: "1", pid, sumDateStart: `${start.toISOString().slice(0, 10)} 00:00:00`, sumDateEnd: `${end.toISOString().slice(0, 10)} 23:59:59` };
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    const deadline = profile.testPreview
-      ? { expiresAt: performance.now() + this.env.REQUEST_TIMEOUT_MS, testPreview: true, previewProbeResponse }
-      : undefined;
-    try { await this.fetchJson(url, profile.token, profile.userName, undefined, undefined, undefined, undefined, deadline); }
-    catch (error) {
-      if (error instanceof UpstreamError && error.code === "UPSTREAM_INVALID_REQUEST") {
-        throw new UpstreamError(error.code, "后台拒绝凭据验证请求", error.statusCode, getUpstreamReadFailure(error));
-      }
-      throw error;
-    }
+    try { await this.fetchJson(url, profile.token, profile.userName); }
+    catch (error) { throw this.safeCredentialProbeError(error); }
+  }
+
+  private safeCredentialProbeError(error: unknown) {
+    return error instanceof UpstreamError && error.code === "UPSTREAM_INVALID_REQUEST"
+      ? new UpstreamError(error.code, "后台拒绝凭据验证请求", error.statusCode, getUpstreamReadFailure(error))
+      : error;
   }
 
   updateCredential(site: CredentialSite, token: string, userName?: string) {
@@ -531,6 +542,7 @@ export class UpstreamClient {
       const receivedResponse = await this.fetcher(url, {
         headers,
         signal: controller.signal,
+        ...(deadline.previewCredentialPid ? { redirect: "error" as const } : {}),
         ...(operation ? { method: operation.body === undefined ? "GET" : "POST", body: operation.body, cache: "no-store" as const, redirect: "error" as const } : {})
       });
       response = receivedResponse;
@@ -551,13 +563,23 @@ export class UpstreamClient {
       if (response.status === 401 || response.status === 403) {
         const probe = deadline.previewProbeResponse;
         if (response.status === 403 && probe && !probe.cloudflareChallenge) {
-          const edge = await readTestPreviewEdgeRejection(response, controller.signal);
+          const denial = await inspectTestPreviewDeniedResponse(response, controller.signal);
           checkDeadline();
-          if (edge) {
-            probe.cloudflareErrorCode = edge.code;
-            probe.cloudflareRayId = edge.rayId;
+          probe.denialKind = denial.kind;
+          if (denial.rayId !== undefined) probe.cloudflareRayId = denial.rayId;
+          if (denial.kind === "cloudflare_edge") {
+            probe.cloudflareErrorCode = denial.code;
             throw new UpstreamError("UPSTREAM_AUTH_FAILED", "测试后台网关拒绝 BI 服务访问", response.status);
           }
+          if (denial.kind === "upstream_auth" || denial.kind === "upstream_ip_restricted") {
+            deadline.upstreamBusinessCode = 2002;
+            businessAuthenticationRejected = true;
+            if (denial.kind === "upstream_ip_restricted") {
+              throw new UpstreamError("UPSTREAM_IP_RESTRICTED", "BI 服务器出口 IP 未获测试后台放行", response.status);
+            }
+            throw new UpstreamError("UPSTREAM_AUTH_FAILED", "测试后台拒绝了当前账号或 Token", response.status);
+          }
+          throw new UpstreamError("UPSTREAM_AUTH_FAILED", "测试后台返回 HTTP 403，拒绝来源未确认", response.status);
         }
         throw new UpstreamError("UPSTREAM_AUTH_FAILED", "后台登录状态无效", response.status);
       }
@@ -599,11 +621,17 @@ export class UpstreamClient {
           : Array.isArray(rawMessage) && rawMessage.length > 0 && rawMessage.every(value => typeof value === "string" && value.trim().length > 0);
         if (![400, 422].includes(rawCode) || !validMessage) throw new UpstreamError("UPSTREAM_FAILED", `后台接口返回 ${response.status}`);
       }
-      if (response.ok && businessCode !== "200" && /reletionsStat(?:Plus)?\/getDays/.test(url.pathname) && /没有该平台当日数据/.test(message)) {
+      if (!deadline.previewCredentialPid && response.ok && businessCode !== "200" && /reletionsStat(?:Plus)?\/getDays/.test(url.pathname) && /没有该平台当日数据/.test(message)) {
         checkDeadline();
         return { code: 200, data: [] };
       }
       if (businessCode !== "200") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", message, 422);
+      if (deadline.previewCredentialPid) {
+        const rows = payload && typeof payload === "object" ? Reflect.get(payload, "data") : undefined;
+        if (!response.ok || !hasCode || !Array.isArray(rows) || rows.some(row => !row || typeof row !== "object" || row.pid !== deadline.previewCredentialPid)) {
+          throw new UpstreamError("UPSTREAM_INVALID_RESPONSE", "测试后台未返回有效的凭据验证结果", 502);
+        }
+      }
       checkDeadline();
       return payload;
     } catch (error) {

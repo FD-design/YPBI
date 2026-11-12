@@ -61,6 +61,14 @@ interface PreviewNotice extends SiteNotice {
   previewDiagnostics?: DataPreviewDiagnostics;
 }
 
+const PREVIEW_DENIAL_LABELS = {
+  cloudflare_edge: "Cloudflare 网关拒绝",
+  upstream_auth: "上游认证拒绝",
+  upstream_ip_restricted: "上游 IP 访问受限",
+  unclassified: "未识别拒绝来源"
+};
+const PREVIEW_RESPONSE_FORMAT_LABELS = { json: "JSON 响应", html: "HTML 响应", other: "其他格式响应" };
+
 const SITES: CredentialSite[] = ["primary", "secondary"];
 const INITIAL_NOTICES: Record<CredentialSite, SiteNotice> = {
   primary: { tone: "neutral", message: "本次维护会话尚未检测" },
@@ -469,7 +477,9 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
       setPreviewVerification("unknown");
       if (problem.kind === "login_required") handleAccessError(problem);
       else {
-        const message = problem.previewDiagnostics?.some(result => result.cloudflareChallenge || result.cloudflareErrorCode !== undefined)
+        const denied = problem.status === 403 && problem.code === "UPSTREAM_AUTH_FAILED";
+        const message = denied || problem.previewDiagnostics?.some(result =>
+          result.denialKind !== undefined || result.cloudflareChallenge || result.cloudflareErrorCode !== undefined)
           ? "测试后台探针未全部通过"
           : problem.message;
         setPreviewNotice({
@@ -659,8 +669,10 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
               {`PID ${result.pid} ${result.outcome === "accepted" ? "探针通过" : "探针失败"}`}
               {result.upstreamHttpStatus !== undefined && ` · HTTP ${result.upstreamHttpStatus}`}
               {result.upstreamBusinessCode !== undefined && ` · 业务码 ${result.upstreamBusinessCode}`}
+              {result.denialKind && ` · ${PREVIEW_DENIAL_LABELS[result.denialKind]}`}
+              {result.denialKind === "unclassified" && result.responseFormat && ` · ${PREVIEW_RESPONSE_FORMAT_LABELS[result.responseFormat]}`}
               {result.cloudflareChallenge && " · 上游要求通过 Cloudflare 验证"}
-              {result.cloudflareErrorCode !== undefined && ` · Cloudflare 错误码 ${result.cloudflareErrorCode}`}
+              {result.cloudflareErrorCode !== undefined && ` · ${result.denialKind === "cloudflare_edge" ? "错误码" : "Cloudflare 错误码"} ${result.cloudflareErrorCode}`}
               {result.cloudflareRayId && ` · Ray ID ${result.cloudflareRayId}`}
             </small>)}
             {previewNotice.previewDiagnostics?.some(result => result.configuredOriginMatchesDefault === false) && <small>测试 API 来源与默认配置不同</small>}

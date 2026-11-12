@@ -223,7 +223,7 @@ describe("UpstreamClient 站点用户名与Token配对", () => {
       }
       expect(url.searchParams.get("pid")).toBe("FBI");
       await fbiCanFinish;
-      return fixtureResponse(JSON.stringify({ code: 200, data: [token, userName] }), {
+      return fixtureResponse(JSON.stringify({ code: 200, data: [{ pid: "FBI", ignored: [token, userName] }] }), {
         status: 200, headers: { "content-type": "application/json" }
       }, url);
     });
