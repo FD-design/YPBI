@@ -54,7 +54,7 @@ interface PreviewProbeResponse {
   responseOriginMatchesConfigured?: boolean;
 }
 
-interface PreviewProbeResult extends PreviewProbeResponse {
+export interface PreviewProbeResult extends PreviewProbeResponse {
   pid: string;
   outcome: "accepted" | "rejected";
   configuredOriginMatchesDefault: boolean;
@@ -77,6 +77,8 @@ function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: Abor
     origin, upstreamHttpStatus: deadline.upstreamHttpStatus, upstreamBusinessCode: deadline.upstreamBusinessCode
   }) : undefined;
 }
+
+const PREVIEW_DIAGNOSTIC_GRACE_MS = 750;
 
 export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
@@ -166,7 +168,11 @@ export class UpstreamClient {
     return { site, valid: true, checkedAt: new Date().toISOString() };
   }
 
-  async verifyPreviewCredential(token: string, onProbeResult?: (result: PreviewProbeResult) => void) {
+  async verifyPreviewCredential(
+    token: string,
+    onProbeResult?: (result: PreviewProbeResult) => void,
+    collectFailureDetails = false
+  ) {
     if (!this.env.BI_TEST_DATA_PREVIEW_ENABLED || !this.env.UPSTREAM_TEST_API_BASE_URL || !this.env.UPSTREAM_TEST_USER_NAME) {
       throw new UpstreamError("DATA_PREVIEW_DISABLED", "测试数据预览尚未启用", 503);
     }
@@ -186,7 +192,7 @@ export class UpstreamClient {
       // Diagnostics must not decide whether a credential is accepted.
       try { onProbeResult?.(result); } catch { /* Preserve the probe result. */ }
     };
-    await Promise.all(probePids.map(async (pid) => {
+    const probes = probePids.map(async (pid) => {
       if (!onProbeResult) return this.verifyProfile(profile, pid);
       const response: PreviewProbeResponse = {};
       try {
@@ -207,7 +213,22 @@ export class UpstreamClient {
         });
         throw error;
       }
-    }));
+    });
+    try {
+      await Promise.all(probes);
+    } catch (error) {
+      if (collectFailureDetails) {
+        // Give a fast sibling probe time to finish without waiting for its full timeout.
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        const grace = new Promise<void>(resolve => { graceTimer = setTimeout(resolve, PREVIEW_DIAGNOSTIC_GRACE_MS); });
+        try {
+          await Promise.race([Promise.allSettled(probes), grace]);
+        } finally {
+          clearTimeout(graceTimer);
+        }
+      }
+      throw error;
+    }
     return { valid: true as const, checkedAt: new Date().toISOString() };
   }
 

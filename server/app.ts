@@ -9,7 +9,7 @@ import { metrics, funnelEvents } from "./analytics/registry";
 import { QueryOrchestrator, QueryValidationError } from "./analytics/query-orchestrator";
 import type { AppEnv } from "./config/env";
 import { usesDefaultTestPreviewOrigin } from "./config/production-data-preview";
-import { UpstreamClient, UpstreamError } from "./upstream/client";
+import { UpstreamClient, UpstreamError, type PreviewProbeResult } from "./upstream/client";
 import { OverviewAdapter } from "./upstream/overview.adapter";
 import { EventAdapter } from "./upstream/event.adapter";
 import { SearchAdapter } from "./upstream/search.adapter";
@@ -516,6 +516,7 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
   });
   app.post("/api/bi/admin/data-preview/activate", async (request, reply) => {
     if (!await requireMaintenanceSession(request, reply)) return reply;
+    reply.header("cache-control", "no-store");
     if (!previewEnabled) return reply.code(503).send({ success: false, error: { code: "DATA_PREVIEW_DISABLED", message: "测试数据模式尚未启用" } });
     const parsed = previewTokenSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ success: false, error: { code: "INVALID_CREDENTIAL_INPUT", message: "测试 Token 格式不合法" } });
@@ -525,10 +526,12 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     if (!securityContext || !ordinarySession) {
       return reply.code(401).send({ success: false, error: { code: "AUTHENTICATION_REQUIRED", message: "普通登录会话已失效，请重新登录" } });
     }
+    const previewDiagnostics: PreviewProbeResult[] = [];
     try {
       const verified = await upstream.verifyPreviewCredential(parsed.data.token, result => {
+        previewDiagnostics.push(result);
         request.log.info({ requestId: request.id, ...result }, "BI test data preview credential probe completed");
-      });
+      }, true);
       dataPreviewSessions.revoke(requestCookieHeader(request));
       const session = dataPreviewSessions.create({
         ip: request.ip,
@@ -539,7 +542,6 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
         token: parsed.data.token
       });
       reply.header("set-cookie", dataPreviewSessions.sessionCookie(session.sessionId, sessionCookie.secure));
-      reply.header("cache-control", "no-store");
       return {
         success: true,
         data: {
@@ -550,7 +552,28 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
         }
       };
     } catch (error) {
-      if (error instanceof UpstreamError) return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
+      if (error instanceof UpstreamError) {
+        const diagnostics = [...previewDiagnostics];
+        const structured = request.headers["x-bi-preview-diagnostics"] === "1";
+        // An open page can still be running the previous strict response schema.
+        // Keep that shape and its in-memory credential draft usable across a release.
+        const summary = diagnostics.map(result => {
+          const outcome = result.outcome === "accepted" ? "通过" : result.cloudflareChallenge ? "Cloudflare 验证" : "失败";
+          const status = result.upstreamHttpStatus === undefined ? "" : ` HTTP ${result.upstreamHttpStatus}`;
+          const business = result.upstreamBusinessCode === undefined ? "" : ` 业务码 ${result.upstreamBusinessCode}`;
+          const origin = result.configuredOriginMatchesDefault ? "" : "（使用非默认测试地址）";
+          return `${result.pid} ${outcome}${status}${business}${origin}`;
+        }).join("、");
+        return reply.code(error.statusCode).send({
+          success: false,
+          error: {
+            code: error.code,
+            message: !structured && summary ? `${error.message}（${summary}；请求 ID：${request.id}）` : error.message,
+            requestId: request.id,
+            ...(structured ? { previewDiagnostics: diagnostics } : {})
+          }
+        });
+      }
       throw error;
     }
   });

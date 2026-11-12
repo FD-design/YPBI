@@ -24,6 +24,7 @@ import {
   testDataSource,
   updateDataSourceToken,
   type CredentialSite,
+  type DataPreviewDiagnostics,
   type DataPreviewStatus,
   type DataSourceStatus
 } from "../api/adminDataSources";
@@ -54,6 +55,10 @@ interface SiteNotice {
   checkedAt?: string;
   code?: string;
   requestId?: string;
+}
+
+interface PreviewNotice extends SiteNotice {
+  previewDiagnostics?: DataPreviewDiagnostics;
 }
 
 const SITES: CredentialSite[] = ["primary", "secondary"];
@@ -166,7 +171,7 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
   const [pageError, setPageError] = useState<AdminRequestError | null>(null);
   const [confirmingSite, setConfirmingSite] = useState<CredentialSite | null>(null);
   const [previewToken, setPreviewToken] = useState("");
-  const [previewNotice, setPreviewNotice] = useState<SiteNotice>({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" });
+  const [previewNotice, setPreviewNotice] = useState<PreviewNotice>({ tone: "neutral", message: "测试 Token 仅用于当前登录会话，不会替换正式凭据" });
   const [previewVerification, setPreviewVerification] = useState<"confirmed" | "checking" | "unknown">("checking");
   const statusGeneration = useRef(0);
   const statusController = useRef<AbortController | null>(null);
@@ -463,7 +468,18 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
       const problem = asAdminError(error, "测试数据模式开启失败");
       setPreviewVerification("unknown");
       if (problem.kind === "login_required") handleAccessError(problem);
-      else setPreviewNotice({ tone: "danger", message: `${problem.message}；未切换数据环境，正式数据保持不变` });
+      else {
+        const message = problem.previewDiagnostics?.some(result => result.cloudflareChallenge)
+          ? "测试后台探针未全部通过"
+          : problem.message;
+        setPreviewNotice({
+          tone: "danger",
+          message: `${message}；未切换数据环境，正式数据保持不变`,
+          code: problem.code,
+          requestId: problem.requestId,
+          previewDiagnostics: problem.previewDiagnostics
+        });
+      }
     } finally {
       finishOperation();
     }
@@ -635,7 +651,18 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
         </dl>
         <div className={`v2-probe-status is-${previewNotice.tone}`} role={previewNotice.tone === "danger" ? "alert" : "status"} aria-live="polite">
           {previewNotice.tone === "pending" ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : previewNotice.tone === "success" ? <CheckCircle2 aria-hidden="true" /> : previewNotice.tone === "danger" ? <AlertTriangle aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
-          <span><b>环境隔离</b>{previewNotice.message}{(previewNotice.code || previewNotice.requestId) && <small>{previewNotice.code && `错误代码：${previewNotice.code}`}{previewNotice.code && previewNotice.requestId && "；"}{previewNotice.requestId && `请求 ID：${previewNotice.requestId}`}</small>}</span>
+          <span>
+            <b>环境隔离</b>
+            {previewNotice.message}
+            {(previewNotice.code || previewNotice.requestId) && <small>{previewNotice.code && `错误代码：${previewNotice.code}`}{previewNotice.code && previewNotice.requestId && "；"}{previewNotice.requestId && `请求 ID：${previewNotice.requestId}`}</small>}
+            {previewNotice.previewDiagnostics?.map(result => <small key={result.pid}>
+              {`PID ${result.pid} ${result.outcome === "accepted" ? "探针通过" : "探针失败"}`}
+              {result.upstreamHttpStatus !== undefined && ` · HTTP ${result.upstreamHttpStatus}`}
+              {result.upstreamBusinessCode !== undefined && ` · 业务码 ${result.upstreamBusinessCode}`}
+              {result.cloudflareChallenge && " · 上游要求通过 Cloudflare 验证"}
+            </small>)}
+            {previewNotice.previewDiagnostics?.some(result => result.configuredOriginMatchesDefault === false) && <small>测试 API 来源与默认配置不同</small>}
+          </span>
         </div>
         {access.preview.active ? <div className="v2-preview-source__actions">
           {dataEnvironment.state.mode !== "test" && <button type="button" className="ui-button ui-button--primary ui-button--lg" onClick={enterExistingPreview} disabled={busy || displayedVerification === "checking"}>进入测试数据</button>}

@@ -25,14 +25,26 @@ const dataSourceStatusSchema = z.object({
   }
 });
 
+const adminErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  requestId: z.string().optional()
+}).strict();
 const errorResponseSchema = z.object({
   success: z.literal(false),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    requestId: z.string().optional()
-  }).strict()
+  error: adminErrorSchema
 }).strict();
+const previewActivationErrorResponseSchema = errorResponseSchema.extend({
+  error: adminErrorSchema.extend({ previewDiagnostics: z.unknown().optional() })
+});
+const previewDiagnosticsSchema = z.array(z.object({
+  pid: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/),
+  outcome: z.enum(["accepted", "rejected"]),
+  configuredOriginMatchesDefault: z.boolean().optional(),
+  upstreamHttpStatus: z.number().int().min(100).max(599).optional(),
+  upstreamBusinessCode: z.literal(2002).optional(),
+  cloudflareChallenge: z.boolean().optional()
+})).max(2);
 
 const statusResponseSchema = z.object({
   success: z.literal(true),
@@ -97,20 +109,29 @@ export type DataSourceStatus = z.infer<typeof dataSourceStatusSchema>;
 export type CredentialTestResult = z.infer<typeof testResponseSchema>["data"];
 export type DataPreviewStatus = z.infer<typeof previewStatusResponseSchema>["data"];
 export type DataPreviewActivation = z.infer<typeof previewActivationResponseSchema>["data"];
+export type DataPreviewDiagnostics = z.infer<typeof previewDiagnosticsSchema>;
 
 export class AdminRequestError extends Error {
   readonly kind: AdminFailureKind;
   readonly code: string;
   readonly status: number;
   readonly requestId?: string;
+  readonly previewDiagnostics?: DataPreviewDiagnostics;
 
-  constructor(message: string, options: { kind: AdminFailureKind; code: string; status: number; requestId?: string }) {
+  constructor(message: string, options: {
+    kind: AdminFailureKind;
+    code: string;
+    status: number;
+    requestId?: string;
+    previewDiagnostics?: DataPreviewDiagnostics;
+  }) {
     super(message);
     this.name = "AdminRequestError";
     this.kind = options.kind;
     this.code = options.code;
     this.status = options.status;
     this.requestId = options.requestId;
+    this.previewDiagnostics = options.previewDiagnostics;
   }
 }
 
@@ -133,7 +154,10 @@ function invalidResponse(status: number) {
   });
 }
 
-async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: RequestInit = {}, timeoutMs = ADMIN_REQUEST_TIMEOUT_MS): Promise<T> {
+async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: RequestInit = {}, options: {
+  timeoutMs?: number;
+  acceptsPreviewDiagnostics?: boolean;
+} = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("accept", "application/json");
   if (init.body !== undefined) headers.set("content-type", "application/json");
@@ -142,7 +166,7 @@ async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: R
   const forwardAbort = () => { callerAborted = true; controller.abort(); };
   if (init.signal?.aborted) forwardAbort();
   else init.signal?.addEventListener("abort", forwardAbort, { once: true });
-  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  const timer = globalThis.setTimeout(() => controller.abort(), options.timeoutMs ?? ADMIN_REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(path, {
       ...init,
@@ -164,16 +188,20 @@ async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: R
       if (!parsed.success) throw invalidResponse(response.status);
       return parsed.data;
     }
-    const problem = errorResponseSchema.safeParse(payload);
+    const errorSchema = options.acceptsPreviewDiagnostics ? previewActivationErrorResponseSchema : errorResponseSchema;
+    const problem = errorSchema.safeParse(payload);
     if (!problem.success) throw invalidResponse(response.status);
-    if (response.status === 401 && problem.data.error.code === "AUTHENTICATION_REQUIRED") {
+    const { error } = problem.data;
+    if (response.status === 401 && error.code === "AUTHENTICATION_REQUIRED") {
       notifyAuthenticationRequired();
     }
-    throw new AdminRequestError(problem.data.error.message, {
-      kind: failureKind(response.status, problem.data.error.code),
-      code: problem.data.error.code,
+    const diagnostics = "previewDiagnostics" in error ? previewDiagnosticsSchema.safeParse(error.previewDiagnostics) : undefined;
+    throw new AdminRequestError(error.message, {
+      kind: failureKind(response.status, error.code),
+      code: error.code,
       status: response.status,
-      requestId: problem.data.error.requestId
+      requestId: error.requestId,
+      previewDiagnostics: diagnostics?.data
     });
   } catch (error) {
     if (error instanceof AdminRequestError) throw error;
@@ -223,7 +251,7 @@ export async function testDataSource(site: CredentialSite, csrfToken: string, to
     method: "POST",
     headers: { "x-csrf-token": csrfToken },
     body: JSON.stringify(token === undefined ? { site } : { site, token, ...(userName === undefined ? {} : { userName }) })
-  }, CREDENTIAL_PROBE_TIMEOUT_MS);
+  }, { timeoutMs: CREDENTIAL_PROBE_TIMEOUT_MS });
   if (payload.data.site !== site) throw invalidResponse(200);
   return payload.data;
 }
@@ -246,9 +274,9 @@ export async function fetchDataPreviewStatus(signal?: AbortSignal) {
 export async function activateDataPreview(token: string, csrfToken: string) {
   const payload = await requestJson("/api/bi/admin/data-preview/activate", previewActivationResponseSchema, {
     method: "POST",
-    headers: { "x-csrf-token": csrfToken },
+    headers: { "x-csrf-token": csrfToken, "x-bi-preview-diagnostics": "1" },
     body: JSON.stringify({ token })
-  });
+  }, { timeoutMs: CREDENTIAL_PROBE_TIMEOUT_MS, acceptsPreviewDiagnostics: true });
   return payload.data;
 }
 

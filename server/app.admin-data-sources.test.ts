@@ -54,7 +54,7 @@ async function createHarness(options: {
   maintenanceEnabled?: boolean;
   nodeEnv?: AppEnv["NODE_ENV"];
   identityProvider?: IdentityProvider;
-  upstreamResponse?: (request: ObservedUpstreamRequest) => Response;
+  upstreamResponse?: (request: ObservedUpstreamRequest) => Response | Promise<Response>;
   envOverrides?: Partial<AppEnv>;
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "ypbi-admin-data-sources-"));
@@ -281,6 +281,71 @@ describe("数据源维护管理接口", () => {
     const testMode = await app.inject({ method: "GET", url: "/api/bi/v2/data-environment", headers: { cookie: `${ordinaryCookie}; ${previewCookie}`, "x-ypbi-data-environment": "test" } });
     expect(production.json().data.mode).toBe("production");
     expect(testMode.json().data).toMatchObject({ mode: "test", userName: "test-preview-user" });
+  });
+
+  test("测试验证失败返回本次两平台脱敏结果并保持正式环境", async () => {
+    const { app, observedRequests, credentialsFile } = await createHarness({
+      envOverrides: {
+        BI_TEST_DATA_PREVIEW_ENABLED: true,
+        UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+        UPSTREAM_TEST_USER_NAME: "test-preview-user"
+      },
+      upstreamResponse: async request => {
+        if (new URL(request.url).searchParams.get("pid") === "FBI") {
+          return new Response(`<html>${request.token} ${request.userName}</html>`, {
+            status: 403, headers: { "content-type": "text/html", "cf-mitigated": "challenge" }
+          });
+        }
+        await new Promise<void>(resolve => setTimeout(resolve, 20));
+        return new Response(JSON.stringify({ code: 200, msg: { pageData: [] } }), {
+          status: 200, headers: { "content-type": "application/json" }
+        });
+      }
+    });
+    const maintenanceCookie = await login(app);
+    const ordinaryCookie = `ypbi_session=${NORMAL_SESSION_TOKEN}`;
+    const cookie = `${maintenanceCookie}; ${ordinaryCookie}`;
+    const activation = await app.inject({
+      method: "POST", url: "/api/bi/admin/data-preview/activate",
+      headers: { cookie, "x-bi-preview-diagnostics": "1" }, payload: { token: CANDIDATE_PRIMARY_TOKEN }
+    });
+
+    expect(activation.statusCode).toBe(403);
+    expect(activation.headers["cache-control"]).toBe("no-store");
+    expect(activation.headers["set-cookie"]).toBeUndefined();
+    const activationBody = activation.json();
+    expect(activationBody.error.requestId).toMatch(/^req-[a-z0-9]+$/i);
+    expect(activationBody).toEqual({
+      success: false,
+      error: {
+        code: "UPSTREAM_AUTH_FAILED", message: "后台登录状态无效",
+        requestId: activationBody.error.requestId,
+        previewDiagnostics: [
+          { pid: "FBI", outcome: "rejected", configuredOriginMatchesDefault: false, upstreamHttpStatus: 403,
+            responseFormat: "html", cloudflareChallenge: true, failureOrigin: "http", errorCode: "UPSTREAM_AUTH_FAILED" },
+          { pid: "PH", outcome: "accepted", configuredOriginMatchesDefault: false, upstreamHttpStatus: 200,
+            responseFormat: "json", cloudflareChallenge: false }
+        ]
+      }
+    });
+    expect(activation.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
+    expect(activation.body).not.toContain("test-preview-user");
+    expect(activation.body).not.toContain("test-upstream.example.test");
+    expect(observedRequests).toHaveLength(2);
+    expect(existsSync(credentialsFile)).toBe(false);
+    const status = await app.inject({ method: "GET", url: "/api/bi/admin/data-preview/status", headers: { cookie } });
+    expect(status.json().data.active).toBe(false);
+
+    const legacy = await app.inject({
+      method: "POST", url: "/api/bi/admin/data-preview/activate",
+      headers: { cookie }, payload: { token: CANDIDATE_PRIMARY_TOKEN }
+    });
+    expect(legacy.statusCode).toBe(403);
+    expect(Object.keys(legacy.json().error).sort()).toEqual(["code", "message", "requestId"]);
+    expect(legacy.json().error.message).toContain("FBI Cloudflare 验证 HTTP 403");
+    expect(legacy.json().error.message).toContain("PH 通过 HTTP 200");
+    expect(legacy.body).not.toContain(CANDIDATE_PRIMARY_TOKEN);
+    expect(legacy.headers["set-cookie"]).toBeUndefined();
   });
 
   test("测试会话绑定普通登录 Cookie，缺失或更换后绝不回退到正式数据", async () => {

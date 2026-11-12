@@ -125,7 +125,10 @@ async function installMaintenanceFixtures(page, options = {}) {
       });
     }
     if (url.pathname.endsWith("/data-preview/activate")) {
-      if (options.rejectPreviewActivation) return route.fulfill({ status: 401, json: { success: false, error: { code: "UPSTREAM_AUTH_FAILED", message: "测试后台拒绝候选凭据", requestId: "qa-preview-activation-rejected" } } });
+      if (options.rejectPreviewActivation) return route.fulfill({ status: 401, json: { success: false, error: {
+        code: "UPSTREAM_AUTH_FAILED", message: "测试后台拒绝候选凭据", requestId: "qa-preview-activation-rejected",
+        previewDiagnostics: options.previewDiagnostics
+      } } });
       previewActive = true;
       return route.fulfill({
         status: 200,
@@ -530,6 +533,8 @@ test("测试会话激活失败退出确认中并保留草稿，后续仅只读�
   await token.fill("fake-rejected-preview-draft");
   await preview.getByRole("button", { name: "验证并进入测试数据" }).click();
   await expect(preview).toContainText("测试后台拒绝候选凭据");
+  await expect(preview).toContainText("错误代码：UPSTREAM_AUTH_FAILED");
+  await expect(preview).toContainText("请求 ID：qa-preview-activation-rejected");
   await expect(preview).toContainText("状态待确认");
   await expect(preview).not.toContainText("正在确认");
   await expect(token).toHaveValue("fake-rejected-preview-draft");
@@ -538,6 +543,38 @@ test("测试会话激活失败退出确认中并保留草稿，后续仅只读�
   await expect(preview.getByText("未启用", { exact: true })).toBeVisible();
   await expect(token).toHaveValue("fake-rejected-preview-draft");
   expect(fixture.requests.filter(request => request.method !== "GET").map(request => request.pathname)).toEqual(["/api/bi/admin/data-preview/activate"]);
+});
+
+for (const width of [1280, 1024, 390]) test(`测试会话启用失败展示 PID 探针结果和 Cloudflare 验证（${width}px）`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 800 });
+  const configuredOriginMatchesDefault = width !== 390;
+  await installMaintenanceFixtures(page, {
+    authorized: true,
+    rejectPreviewActivation: true,
+    previewDiagnostics: [
+      { pid: "PH", outcome: "accepted", configuredOriginMatchesDefault, upstreamHttpStatus: 200, responseFormat: "json", cloudflareChallenge: false },
+      { pid: "FBI", outcome: "rejected", configuredOriginMatchesDefault, upstreamHttpStatus: 403, responseFormat: "html", cloudflareChallenge: true }
+    ]
+  });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  const token = preview.getByLabel("测试 Token");
+  await token.fill("fake-rejected-preview-draft");
+  const activate = preview.getByRole("button", { name: "验证并进入测试数据" });
+  await activate.focus();
+  await activate.press("Enter");
+  const notice = preview.getByRole("alert");
+  await expect(notice).toContainText("测试后台探针未全部通过");
+  await expect(notice).toContainText("PID PH 探针通过 · HTTP 200");
+  await expect(notice).toContainText("PID FBI 探针失败 · HTTP 403 · 上游要求通过 Cloudflare 验证");
+  await expect(notice).toContainText("请求 ID：qa-preview-activation-rejected");
+  await expect(notice).not.toContainText("测试后台拒绝候选凭据");
+  await expect(notice.getByText("测试 API 来源与默认配置不同", { exact: true })).toHaveCount(configuredOriginMatchesDefault ? 0 : 1);
+  await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
+  await expect(token).toHaveValue("fake-rejected-preview-draft");
+  await preview.screenshot({ path: info.outputPath(`preview-activation-diagnostics-${width}.png`) });
+  await token.fill("fake-replacement-preview-draft");
+  await expect(notice).toHaveCount(0);
 });
 
 test("维护操作取消检查后认证失效，不补读旧状态恢复受保护页面", async ({ page }) => {

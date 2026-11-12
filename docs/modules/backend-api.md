@@ -177,7 +177,9 @@
 | POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的24小时内存会话 |
 | POST | `/api/bi/admin/data-preview/deactivate` | 删除当前服务端测试会话并清除预览 Cookie |
 
-临时测试数据会话独立于维护二次会话。激活前验证站 1、站 2 代表 PID，同一标签页重新验证后撤销旧测试会话。测试 Token 及会话存于有容量上限的 API 进程内存，服务重启后需重新验证测试 Token。
+临时测试数据会话独立于维护二次会话。站 1、站 2 代表 PID 均通过验证后签发测试会话，同一标签页重新验证成功后撤销旧测试会话。测试 Token 及会话存于有容量上限的 API 进程内存，服务重启后需重新验证测试 Token。
+
+通过维护会话门禁的 `activate` 请求遇到 `UpstreamError` 时，HTTP 状态和 `error.code` 由首个上游错误决定，响应附带 `error.requestId`。请求头 `x-bi-preview-diagnostics: 1` 启用 `error.previewDiagnostics`，只包含本次激活请求内已完成的脱敏 PID 探针结果。旧页面沿用原有错误结构，在 `error.message` 中显示脱敏摘要。排查步骤见[临时测试数据源切换](deployment.md#临时测试数据源切换)。
 
 维护请求保留`site`和`token`，兼容增加可选`userName`（去除首尾空白，1～256字符，禁止控制字符）。省略用户名时沿用同站实际生效用户名；修改用户名必须同时提供对应Token，不允许只改用户名后复用旧Token。`status.userName`展示实际生效账号，不再固定展示环境初始值。测试当前连接仅提交`site`，不受候选草稿影响；测试环境旁路仍使用独立固定测试账号。
 

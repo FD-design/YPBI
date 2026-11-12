@@ -123,7 +123,22 @@ describe("只读凭证探针期限与维护请求边界", () => {
       expect(clock.cleared).toHaveLength(1);
     });
 
-  test("登录、保存、状态与测试环境操作全部保留原15秒期限", async () => {
+  test("测试数据会话启用在20秒后仍可读取探针错误与请求 ID", async () => {
+    const clock = virtualClock();
+    const request = pendingFetch();
+    const previewDiagnostics = [{ pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: true }];
+    const outcome = activateDataPreview("fake-preview-token-0001", CSRF_TOKEN).catch((failure: unknown) => failure);
+    clock.advance(20_000);
+    expect(request.signal?.aborted).toBe(false);
+    request.finish(jsonResponse({ success: false, error: {
+      code: "UPSTREAM_AUTH_FAILED", message: "后台登录状态无效", requestId: "fixture-slow-preview", previewDiagnostics
+    } }, 403));
+    expect(await outcome).toMatchObject({ code: "UPSTREAM_AUTH_FAILED", requestId: "fixture-slow-preview", previewDiagnostics });
+    expect(clock.delays).toEqual([75_000]);
+    expect(clock.activeCount).toBe(0);
+  });
+
+  test("登录、保存、状态与退出测试环境保留原15秒期限", async () => {
     const clock = virtualClock();
     globalThis.fetch = (async input => {
       const path = input.toString();
@@ -132,7 +147,6 @@ describe("只读凭证探针期限与维护请求边界", () => {
       if (path === "/api/bi/admin/auth/logout") return jsonResponse({ success: true, data: { loggedOut: true } });
       if (path === "/api/bi/admin/data-sources/token") return jsonResponse({ success: true, data: statuses[0] });
       if (path === "/api/bi/admin/data-preview/status") return jsonResponse({ success: true, data: { enabled: true, active: false, userName: "fixture-test-user", expiresAt: null } });
-      if (path === "/api/bi/admin/data-preview/activate") return jsonResponse({ success: true, data: { mode: "test", userName: "fixture-test-user", expiresAt: "2026-10-15T08:00:00.000Z", checkedAt: "2026-10-14T08:00:00.000Z" } });
       if (path === "/api/bi/admin/data-preview/deactivate") return jsonResponse({ success: true, data: { mode: "production" } });
       throw new Error("Unexpected maintenance fixture operation");
     }) as typeof fetch;
@@ -141,11 +155,10 @@ describe("只读凭证探针期限与维护请求边界", () => {
     await logoutMaintenance(CSRF_TOKEN);
     await updateDataSourceToken("primary", "fake-candidate-token-0002", CSRF_TOKEN);
     await fetchDataPreviewStatus();
-    await activateDataPreview("fake-preview-token-0001", CSRF_TOKEN);
     await deactivateDataPreview(CSRF_TOKEN);
-    expect(clock.delays).toEqual(Array(7).fill(15_000));
+    expect(clock.delays).toEqual(Array(6).fill(15_000));
     expect(clock.activeCount).toBe(0);
-    expect(clock.cleared).toHaveLength(7);
+    expect(clock.cleared).toHaveLength(6);
   });
 
   test("其他维护请求在15秒仍有界失败", async () => {
@@ -207,9 +220,10 @@ const statuses = [
 
 describe("V2 数据源维护客户端", () => {
   test("测试数据会话使用独立接口，响应与浏览器请求均不回显或持久化 Token", async () => {
-    const observed: Array<{ path: string; body: string; csrfToken: string | null }> = [];
+    const observed: Array<{ path: string; body: string; csrfToken: string | null; diagnostics: string | null }> = [];
     globalThis.fetch = (async (input, init) => {
-      observed.push({ path: input.toString(), body: String(init?.body ?? ""), csrfToken: new Headers(init?.headers).get("x-csrf-token") });
+      const headers = new Headers(init?.headers);
+      observed.push({ path: input.toString(), body: String(init?.body ?? ""), csrfToken: headers.get("x-csrf-token"), diagnostics: headers.get("x-bi-preview-diagnostics") });
       if (input.toString().endsWith("/status")) return jsonResponse({ success: true, data: { enabled: true, active: false, userName: "test-user", expiresAt: null } });
       if (input.toString().endsWith("/activate")) return jsonResponse({ success: true, data: { mode: "test", userName: "test-user", expiresAt: "2026-09-08T01:30:00.000Z", checkedAt: "2026-09-08T01:00:00.000Z" } });
       return jsonResponse({ success: true, data: { mode: "production" } });
@@ -221,10 +235,45 @@ describe("V2 数据源维护客户端", () => {
 
     expect(activated).toMatchObject({ mode: "test", userName: "test-user" });
     expect(observed).toEqual([
-      { path: "/api/bi/admin/data-preview/status", body: "", csrfToken: null },
-      { path: "/api/bi/admin/data-preview/activate", body: JSON.stringify({ token: "temporary-test-token-0001" }), csrfToken: CSRF_TOKEN },
-      { path: "/api/bi/admin/data-preview/deactivate", body: "", csrfToken: CSRF_TOKEN }
+      { path: "/api/bi/admin/data-preview/status", body: "", csrfToken: null, diagnostics: null },
+      { path: "/api/bi/admin/data-preview/activate", body: JSON.stringify({ token: "temporary-test-token-0001" }), csrfToken: CSRF_TOKEN, diagnostics: "1" },
+      { path: "/api/bi/admin/data-preview/deactivate", body: "", csrfToken: CSRF_TOKEN, diagnostics: null }
     ]);
+  });
+
+  test("测试会话启用失败仅保留可展示的探针诊断字段", async () => {
+    globalThis.fetch = (async () => jsonResponse({
+      success: false,
+      error: {
+        code: "UPSTREAM_AUTH_FAILED", message: "后台登录状态无效", requestId: "fixture-preview-diagnostics",
+        previewDiagnostics: [
+          { pid: "PH", outcome: "accepted", upstreamHttpStatus: 200, configuredOriginMatchesDefault: true },
+          { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: true, configuredOriginMatchesDefault: false, responseFormat: "html", token: "fake-raw-token-never-render" }
+        ]
+      }
+    }, 403)) as typeof fetch;
+
+    const error = await activateDataPreview("temporary-test-token-0001", CSRF_TOKEN).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(AdminRequestError);
+    expect(error).toMatchObject({ kind: "upstream", code: "UPSTREAM_AUTH_FAILED", status: 403, requestId: "fixture-preview-diagnostics" });
+    expect((error as AdminRequestError).previewDiagnostics).toEqual([
+      { pid: "PH", outcome: "accepted", upstreamHttpStatus: 200, configuredOriginMatchesDefault: true },
+      { pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403, cloudflareChallenge: true, configuredOriginMatchesDefault: false }
+    ]);
+  });
+
+  test("缺失或无效的探针诊断不覆盖维护接口错误与请求 ID", async () => {
+    for (const previewDiagnostics of [undefined, [{ pid: "PH", outcome: "rejected", upstreamHttpStatus: "403" }]]) {
+      globalThis.fetch = (async () => jsonResponse({
+        success: false,
+        error: { code: "UPSTREAM_AUTH_FAILED", message: "后台登录状态无效", requestId: "fixture-preview-error", previewDiagnostics }
+      }, 401)) as typeof fetch;
+
+      await expect(activateDataPreview("temporary-test-token-0001", CSRF_TOKEN)).rejects.toMatchObject({
+        kind: "upstream", code: "UPSTREAM_AUTH_FAILED", message: "后台登录状态无效", status: 401,
+        requestId: "fixture-preview-error", previewDiagnostics: undefined
+      });
+    }
   });
 
   test("状态请求禁止缓存、携带同源会话并只接受闭合脱敏响应", async () => {
