@@ -716,6 +716,8 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 
 默认测试 API 的两个探针同时收到带 Ray 的网关 403 时，可核对错误详情中的测试域名观测出口。BI 通过同一测试域的 `/cdn-cgi/trace` 发出无凭据请求，一分钟内复用结果。观测地址只用于匹配测试域和后台的访问配置，不能替代原业务请求的 Ray 日志或证明该 IP 已放行。
 
+已进入维护会话的操作者可在 BI 同源地址打开 `/api/bi/admin/data-preview/wire-diagnostic`，从实际运行进程对照原 BI 请求头和现行服务请求头。两次请求使用同一默认测试 API、PH、同一完整业务日与固定无效测试值，不读取页面中输入的 Token；结果在一分钟内复用。代理环境字段仅说明变量是否配置，不证明请求经过代理。
+
 在 API 日志中按页面请求 ID 查找 `BI test data preview credential probe completed`，核对 PH、FBI 各自的 `outcome`。稍后完成的探针也使用同一请求 ID 记录。收到上游响应时，核对 HTTP 状态、响应格式、`cloudflareChallenge` 及 `responseOriginMatchesConfigured`，最后一项标记最终响应的来源是否与运行配置一致。经校验的 Cloudflare 拒绝（包括与响应 Ray 匹配的标准 HTML 拒绝页）可按页面错误码和 Ray 编号定位。仅有 Ray 时用于关联日志。鉴权业务码 2002、错误分类和失败阶段可用于进一步定位。页面详情和诊断日志均采用脱敏字段白名单。
 
 ## 5. 数据与备份

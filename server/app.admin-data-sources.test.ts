@@ -447,6 +447,43 @@ describe("数据源维护管理接口", () => {
     }]);
   });
 
+  test("同机请求对照只允许同源维护会话，固定测试路径且不创建测试会话", async () => {
+    const origin = productionDataPreviewDefaults.baseUrl;
+    const { app, observedRequests, credentialsFile } = await createHarness({
+      envOverrides: { BI_TEST_DATA_PREVIEW_ENABLED: true, UPSTREAM_TEST_API_BASE_URL: origin, UPSTREAM_TEST_USER_NAME: "test-preview-user" },
+      upstreamResponse: item => item.clientUserAgent
+        ? new Response("<h1>Forbidden</h1>", { status: 403, headers: { "content-type": "text/html", server: "cloudflare", "cf-ray": "a1234567890bcdef-SIN" } })
+        : Response.json({ code: 2002, err: "无效测试值", detail: `${item.token} ${item.userName}` })
+    });
+    const url = "/api/bi/admin/data-preview/wire-diagnostic";
+    const ordinaryCookie = `ypbi_session=${NORMAL_SESSION_TOKEN}`;
+    expect((await app.inject({ method: "GET", url, headers: { cookie: ordinaryCookie } })).statusCode).toBe(401);
+    const cookie = `${await login(app)}; ${ordinaryCookie}`;
+    expect((await app.inject({ method: "GET", url, headers: { cookie, "sec-fetch-site": "cross-site" } })).statusCode).toBe(403);
+    expect(observedRequests).toHaveLength(0);
+
+    const diagnostic = await app.inject({ method: "GET", url, headers: { cookie, "sec-fetch-site": "none" } });
+    expect(diagnostic.statusCode).toBe(200);
+    expect(diagnostic.headers["cache-control"]).toBe("no-store");
+    expect(diagnostic.headers["set-cookie"]).toBeUndefined();
+    expect(diagnostic.json().data).toMatchObject({
+      legacy: { outcome: "response", httpStatus: 200, responseFormat: "json", businessCode: 2002 },
+      current: { outcome: "response", httpStatus: 403, responseFormat: "html", cloudflareRayId: "a1234567890bcdef-SIN" }
+    });
+    expect(diagnostic.body).not.toContain("test-preview-user");
+    expect(observedRequests).toHaveLength(2);
+    expect(observedRequests[0].url).toBe(observedRequests[1].url);
+    expect(observedRequests[0].url).toContain(`${origin}/api/admin/statistics/reletionsStatPlus/getDays?pid=PH`);
+    const fixedValue = observedRequests[0].token!;
+    expect(observedRequests[1].token).toBe(fixedValue);
+    expect(diagnostic.body).not.toContain(fixedValue);
+    expect(observedRequests.map(item => [item.clientUserAgent, item.accept])).toEqual([[null, null], ["YPBI-Test-Preview/1.0", "application/json"]]);
+    expect((await app.inject({ method: "GET", url, headers: { cookie, "sec-fetch-site": "same-origin" } })).statusCode).toBe(200);
+    expect(observedRequests).toHaveLength(2);
+    expect((await app.inject({ method: "GET", url: "/api/bi/admin/data-preview/status", headers: { cookie } })).json().data.active).toBe(false);
+    expect(existsSync(credentialsFile)).toBe(false);
+  });
+
   for (const [name, payload] of [
     ["无业务码", { data: [] }],
     ["无数据列表", { code: 200, msg: { pageData: [] } }],

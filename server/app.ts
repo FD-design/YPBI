@@ -514,6 +514,21 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
       }
     };
   });
+  app.get("/api/bi/admin/data-preview/wire-diagnostic", { exposeHeadRoute: false }, async (request, reply) => {
+    if (!await requireMaintenanceSession(request, reply)) return reply;
+    reply.header("cache-control", "no-store");
+    const fetchSite = request.headers["sec-fetch-site"];
+    const origin = request.headers.origin;
+    if ((fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none")
+      || (env.NODE_ENV === "production" && origin !== undefined && (!expectedPublicOrigin || !requestOriginMatches(origin, expectedPublicOrigin)))) {
+      return reply.code(403).send({ success: false, error: { code: "DIAGNOSTIC_ORIGIN_REJECTED", message: "请从当前 BI 站点打开诊断", requestId: request.id } });
+    }
+    const diagnostic = await upstream.testPreviewWireDiagnostic();
+    if (!diagnostic) {
+      return reply.code(503).send({ success: false, error: { code: "TEST_WIRE_DIAGNOSTIC_UNAVAILABLE", message: "当前未配置默认测试 API", requestId: request.id } });
+    }
+    return { success: true, data: { requestId: request.id, ...diagnostic } };
+  });
   app.post("/api/bi/admin/data-preview/activate", async (request, reply) => {
     if (!await requireMaintenanceSession(request, reply)) return reply;
     reply.header("cache-control", "no-store");

@@ -9,9 +9,9 @@ import { currentUpstreamRequestProfile } from "./request-profile";
 import { RequestWorkQueue } from "./request-work-queue";
 import { getUpstreamReadFailure, rememberUpstreamReadFailure, UPSTREAM_READ_ERROR_CODES, type UpstreamReadFailure } from "./read-failure";
 import { captureUpstreamReadObserver, PhysicalReadTrace } from "./read-trace";
-import { RETENTION_PLUS_API } from "./retention.adapter";
 import { inspectTestPreviewDeniedResponse, type TestPreviewDeniedResponse } from "./test-preview-edge";
 import { readDefaultTestPreviewEgress } from "./test-preview-egress";
+import { readDefaultTestPreviewWireCheck, testPreviewCredentialProbeUrl } from "./test-preview-wire-check";
 export { getUpstreamReadFailure } from "./read-failure";
 export type UpstreamReadClient = Pick<UpstreamClient, "get"> & Partial<Pick<UpstreamClient, "getCached">>;
 import {
@@ -89,10 +89,12 @@ function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: Abor
 const PREVIEW_DIAGNOSTIC_GRACE_MS = 750;
 const TEST_PREVIEW_USER_AGENT = "YPBI-Test-Preview/1.0";
 const TEST_PREVIEW_EGRESS_REUSE_MS = 60_000;
+const TEST_PREVIEW_WIRE_CHECK_REUSE_MS = 60_000;
 
 export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
   private previewEgressCheck?: { validUntil: number; result: ReturnType<typeof readDefaultTestPreviewEgress> };
+  private previewWireCheck?: { validUntil: number; result: ReturnType<typeof readDefaultTestPreviewWireCheck> };
   private readonly responseCache = new Map<string, { expiresAt: number; value: unknown }>();
   private readonly inFlight = new Map<string, PendingRead>();
   private readonly consumerSignals = new WeakMap<AbortSignal, ConsumerSignal>();
@@ -256,14 +258,26 @@ export class UpstreamClient {
     return this.previewEgressCheck.result;
   }
 
+  /** Compare the two BI request profiles from the same process using a fixed negative control. */
+  testPreviewWireDiagnostic() {
+    const { BI_TEST_DATA_PREVIEW_ENABLED: enabled, UPSTREAM_TEST_API_BASE_URL: origin, UPSTREAM_TEST_USER_NAME: userName } = this.env;
+    if (!enabled || !origin || !usesDefaultTestPreviewOrigin(origin) || !validUserName(userName)) return;
+    const now = Date.now();
+    if (!this.previewWireCheck || this.previewWireCheck.validUntil <= now) {
+      this.previewWireCheck = {
+        validUntil: now + TEST_PREVIEW_WIRE_CHECK_REUSE_MS,
+        result: readDefaultTestPreviewWireCheck(this.fetcher, userName, TEST_PREVIEW_USER_AGENT)
+      };
+    }
+    return this.previewWireCheck.result;
+  }
+
   private async verifyProfile(profile: CredentialProfile, pid: string, previewProbeResponse?: PreviewProbeResponse) {
     if (!profile.token) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
     if (!validUserName(profile.userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源用户名尚未配置", 503);
     if (profile.testPreview) {
       // Match the current test portal's authenticated retention request for one completed business day.
-      const day = new Date(Date.now() + (8 - 24) * 60 * 60 * 1000).toISOString().slice(0, 10);
-      const url = new URL(RETENTION_PLUS_API, profile.baseUrl);
-      url.search = new URLSearchParams({ pid, registerDate: `${day} 00:00:00`, registerEdDate: `${day} 23:59:59` }).toString();
+      const url = testPreviewCredentialProbeUrl(profile.baseUrl, pid);
       const deadline = { expiresAt: performance.now() + this.env.REQUEST_TIMEOUT_MS, testPreview: true, previewCredentialPid: pid, previewProbeResponse };
       try { await this.fetchJson(url, profile.token, profile.userName, undefined, undefined, undefined, undefined, deadline); }
       catch (error) { throw this.safeCredentialProbeError(error); }

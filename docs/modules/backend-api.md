@@ -174,6 +174,7 @@
 | POST | `/api/bi/admin/data-sources/test` | 使用当前整对凭据或候选用户名与Token验证连接，不保存候选值 |
 | PUT | `/api/bi/admin/data-sources/token` | 服务端先验证候选配对，再原子替换该站共享用户名与Token |
 | GET | `/api/bi/admin/data-preview/status` | 返回临时测试数据功能和当前会话状态，不返回 Token |
+| GET | `/api/bi/admin/data-preview/wire-diagnostic` | 受维护认证保护，从同一 BI 进程核对默认测试 API 的两组请求头和运行版本；不读取用户 Token 或建立会话 |
 | POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的24小时内存会话 |
 | POST | `/api/bi/admin/data-preview/deactivate` | 删除当前服务端测试会话并清除预览 Cookie |
 
