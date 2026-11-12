@@ -34,8 +34,15 @@ const errorResponseSchema = z.object({
   success: z.literal(false),
   error: adminErrorSchema
 }).strict();
+const previewEgressSchema = z.discriminatedUnion("family", [
+  z.strictObject({ address: z.ipv4(), family: z.literal(4) }),
+  z.strictObject({ address: z.ipv6().regex(/^[0-9a-fA-F:.]+$/), family: z.literal(6) })
+]);
 const previewActivationErrorResponseSchema = errorResponseSchema.extend({
-  error: adminErrorSchema.extend({ previewDiagnostics: z.unknown().optional() })
+  error: adminErrorSchema.extend({
+    previewDiagnostics: z.unknown().optional(),
+    previewEgress: z.unknown().optional()
+  })
 });
 const previewDiagnosticsSchema = z.array(z.object({
   pid: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/),
@@ -114,6 +121,7 @@ export type CredentialTestResult = z.infer<typeof testResponseSchema>["data"];
 export type DataPreviewStatus = z.infer<typeof previewStatusResponseSchema>["data"];
 export type DataPreviewActivation = z.infer<typeof previewActivationResponseSchema>["data"];
 export type DataPreviewDiagnostics = z.infer<typeof previewDiagnosticsSchema>;
+export type DataPreviewEgress = z.infer<typeof previewEgressSchema>;
 
 export class AdminRequestError extends Error {
   readonly kind: AdminFailureKind;
@@ -121,6 +129,7 @@ export class AdminRequestError extends Error {
   readonly status: number;
   readonly requestId?: string;
   readonly previewDiagnostics?: DataPreviewDiagnostics;
+  readonly previewEgress?: DataPreviewEgress;
 
   constructor(message: string, options: {
     kind: AdminFailureKind;
@@ -128,6 +137,7 @@ export class AdminRequestError extends Error {
     status: number;
     requestId?: string;
     previewDiagnostics?: DataPreviewDiagnostics;
+    previewEgress?: DataPreviewEgress;
   }) {
     super(message);
     this.name = "AdminRequestError";
@@ -136,6 +146,7 @@ export class AdminRequestError extends Error {
     this.status = options.status;
     this.requestId = options.requestId;
     this.previewDiagnostics = options.previewDiagnostics;
+    this.previewEgress = options.previewEgress;
   }
 }
 
@@ -200,12 +211,14 @@ async function requestJson<T>(path: string, successSchema: z.ZodType<T>, init: R
       notifyAuthenticationRequired();
     }
     const diagnostics = "previewDiagnostics" in error ? previewDiagnosticsSchema.safeParse(error.previewDiagnostics) : undefined;
+    const egress = "previewEgress" in error ? previewEgressSchema.safeParse(error.previewEgress) : undefined;
     throw new AdminRequestError(error.message, {
       kind: failureKind(response.status, error.code),
       code: error.code,
       status: response.status,
       requestId: error.requestId,
-      previewDiagnostics: diagnostics?.data
+      previewDiagnostics: diagnostics?.data,
+      previewEgress: egress?.data
     });
   } catch (error) {
     if (error instanceof AdminRequestError) throw error;
@@ -278,7 +291,7 @@ export async function fetchDataPreviewStatus(signal?: AbortSignal) {
 export async function activateDataPreview(token: string, csrfToken: string) {
   const payload = await requestJson("/api/bi/admin/data-preview/activate", previewActivationResponseSchema, {
     method: "POST",
-    headers: { "x-csrf-token": csrfToken, "x-bi-preview-diagnostics": "1" },
+    headers: { "x-csrf-token": csrfToken, "x-bi-preview-diagnostics": "2" },
     body: JSON.stringify({ token })
   }, { timeoutMs: CREDENTIAL_PROBE_TIMEOUT_MS, acceptsPreviewDiagnostics: true });
   return payload.data;

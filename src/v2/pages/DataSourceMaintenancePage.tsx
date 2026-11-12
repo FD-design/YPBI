@@ -25,6 +25,7 @@ import {
   updateDataSourceToken,
   type CredentialSite,
   type DataPreviewDiagnostics,
+  type DataPreviewEgress,
   type DataPreviewStatus,
   type DataSourceStatus
 } from "../api/adminDataSources";
@@ -59,6 +60,7 @@ interface SiteNotice {
 
 interface PreviewNotice extends SiteNotice {
   previewDiagnostics?: DataPreviewDiagnostics;
+  previewEgress?: DataPreviewEgress;
 }
 
 const PREVIEW_DENIAL_LABELS = {
@@ -487,7 +489,8 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
           message: `${message}；未切换数据环境，正式数据保持不变`,
           code: problem.code,
           requestId: problem.requestId,
-          previewDiagnostics: problem.previewDiagnostics
+          previewDiagnostics: problem.previewDiagnostics,
+          previewEgress: problem.previewEgress
         });
       }
     } finally {
@@ -676,6 +679,7 @@ export function DataSourceMaintenancePage({ purpose = "credentials" }: { purpose
               {result.cloudflareRayId && ` · Ray ID ${result.cloudflareRayId}`}
             </small>)}
             {previewNotice.previewDiagnostics?.some(result => result.configuredOriginMatchesDefault === false) && <small>测试 API 来源与默认配置不同</small>}
+            {previewNotice.previewEgress && <small>测试域名观测到的 BI 出口：{previewNotice.previewEgress.address}（IPv{previewNotice.previewEgress.family}）</small>}
           </span>
         </div>
         {access.preview.active ? <div className="v2-preview-source__actions">

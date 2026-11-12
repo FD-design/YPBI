@@ -11,6 +11,7 @@ import { getUpstreamReadFailure, rememberUpstreamReadFailure, UPSTREAM_READ_ERRO
 import { captureUpstreamReadObserver, PhysicalReadTrace } from "./read-trace";
 import { RETENTION_PLUS_API } from "./retention.adapter";
 import { inspectTestPreviewDeniedResponse, type TestPreviewDeniedResponse } from "./test-preview-edge";
+import { readDefaultTestPreviewEgress } from "./test-preview-egress";
 export { getUpstreamReadFailure } from "./read-failure";
 export type UpstreamReadClient = Pick<UpstreamClient, "get"> & Partial<Pick<UpstreamClient, "getCached">>;
 import {
@@ -87,9 +88,11 @@ function physicalReadDeadlineError(deadline: PhysicalReadDeadline, signal?: Abor
 
 const PREVIEW_DIAGNOSTIC_GRACE_MS = 750;
 const TEST_PREVIEW_USER_AGENT = "YPBI-Test-Preview/1.0";
+const TEST_PREVIEW_EGRESS_REUSE_MS = 60_000;
 
 export class UpstreamClient {
   private static readonly MAX_CACHE_ENTRIES = 500;
+  private previewEgressCheck?: { validUntil: number; result: ReturnType<typeof readDefaultTestPreviewEgress> };
   private readonly responseCache = new Map<string, { expiresAt: number; value: unknown }>();
   private readonly inFlight = new Map<string, PendingRead>();
   private readonly consumerSignals = new WeakMap<AbortSignal, ConsumerSignal>();
@@ -239,6 +242,18 @@ export class UpstreamClient {
       throw error;
     }
     return { valid: true as const, checkedAt: new Date().toISOString() };
+  }
+
+  /** Observe this server's route to the test gateway with no credentials. */
+  testPreviewEgress() {
+    const now = Date.now();
+    if (!this.previewEgressCheck || this.previewEgressCheck.validUntil <= now) {
+      this.previewEgressCheck = {
+        validUntil: now + TEST_PREVIEW_EGRESS_REUSE_MS,
+        result: readDefaultTestPreviewEgress(this.fetcher, TEST_PREVIEW_USER_AGENT)
+      };
+    }
+    return this.previewEgressCheck.result;
   }
 
   private async verifyProfile(profile: CredentialProfile, pid: string, previewProbeResponse?: PreviewProbeResponse) {

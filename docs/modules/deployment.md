@@ -714,6 +714,8 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 
 测试 Token 验证遇到上游错误时，维护页的失败提示显示本次请求 ID 和已完成的 PH／FBI 脱敏探针结果。首个失败后最多等待另一探针 750 毫秒，页面展示响应发出时已有的结果。
 
+默认测试 API 的两个探针同时收到带 Ray 的网关 403 时，可核对错误详情中的测试域名观测出口。BI 通过同一测试域的 `/cdn-cgi/trace` 发出无凭据请求，一分钟内复用结果。观测地址只用于匹配测试域和后台的访问配置，不能替代原业务请求的 Ray 日志或证明该 IP 已放行。
+
 在 API 日志中按页面请求 ID 查找 `BI test data preview credential probe completed`，核对 PH、FBI 各自的 `outcome`。稍后完成的探针也使用同一请求 ID 记录。收到上游响应时，核对 HTTP 状态、响应格式、`cloudflareChallenge` 及 `responseOriginMatchesConfigured`，最后一项标记最终响应的来源是否与运行配置一致。经校验的 Cloudflare 拒绝（包括与响应 Ray 匹配的标准 HTML 拒绝页）可按页面错误码和 Ray 编号定位。仅有 Ray 时用于关联日志。鉴权业务码 2002、错误分类和失败阶段可用于进一步定位。页面详情和诊断日志均采用脱敏字段白名单。
 
 ## 5. 数据与备份

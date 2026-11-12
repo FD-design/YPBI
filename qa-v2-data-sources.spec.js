@@ -128,7 +128,8 @@ async function installMaintenanceFixtures(page, options = {}) {
       if (options.rejectPreviewActivation) return route.fulfill({ status: options.previewDiagnostics ? 403 : 401, json: { success: false, error: {
         code: "UPSTREAM_AUTH_FAILED", message: options.previewDiagnostics ? "后台登录状态无效，请更新 Token" : "测试后台拒绝候选凭据",
         requestId: "qa-preview-activation-rejected",
-        previewDiagnostics: options.previewDiagnostics
+        previewDiagnostics: options.previewDiagnostics,
+        previewEgress: options.previewEgress
       } } });
       previewActive = true;
       return route.fulfill({
@@ -581,12 +582,37 @@ for (const width of [1280, 1024, 390]) test(`测试会话启用失败展示 PID 
   await expect(notice).toContainText(diagnosisText[width]);
   await expect(notice).toContainText("请求 ID：qa-preview-activation-rejected");
   await expect(notice).not.toContainText("后台登录状态无效，请更新 Token");
+  await expect(notice).not.toContainText("测试域名观测到的 BI 出口");
   await expect(notice.getByText("测试 API 来源与默认配置不同", { exact: true })).toHaveCount(configuredOriginMatchesDefault ? 0 : 1);
   await expect(page.locator(".v2-data-environment")).toContainText("正式数据");
   await expect(token).toHaveValue("fake-rejected-preview-draft");
   await preview.screenshot({ path: info.outputPath(`preview-activation-diagnostics-${width}.png`) });
   await token.fill("fake-replacement-preview-draft");
   await expect(notice).toHaveCount(0);
+});
+
+test("两个探针均返回网关拒绝时在现有提示中显示测试域名观测到的出口", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  const address = "2001:db8:85a3:12ab:34cd:56ef:7890:1234";
+  await installMaintenanceFixtures(page, {
+    authorized: true,
+    rejectPreviewActivation: true,
+    previewEgress: { address, family: 6 },
+    previewDiagnostics: ["PH", "FBI"].map(pid => ({
+      pid, outcome: "rejected", configuredOriginMatchesDefault: true, upstreamHttpStatus: 403,
+      responseFormat: "html", denialKind: "cloudflare_edge", cloudflareErrorCode: 1010
+    }))
+  });
+  await page.goto(`${baseUrl}/admin/data-sources`);
+  const preview = page.getByRole("region", { name: "临时测试数据" });
+  await preview.getByLabel("测试 Token").fill("fake-rejected-preview-draft");
+  await preview.getByRole("button", { name: "验证并进入测试数据" }).click();
+  const notice = preview.getByRole("alert");
+  await expect(notice.getByText(`测试域名观测到的 BI 出口：${address}（IPv6）`, { exact: true })).toBeVisible();
+  await expect(notice).toContainText("PID PH 探针失败 · HTTP 403");
+  await expect(notice).toContainText("PID FBI 探针失败 · HTTP 403");
+  await expect(notice).toContainText("请求 ID：qa-preview-activation-rejected");
+  await notice.screenshot({ path: info.outputPath("preview-egress-ipv6-390.png") });
 });
 
 test("维护操作取消检查后认证失效，不补读旧状态恢复受保护页面", async ({ page }) => {

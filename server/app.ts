@@ -554,7 +554,12 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
     } catch (error) {
       if (error instanceof UpstreamError) {
         const diagnostics = [...previewDiagnostics];
-        const structured = request.headers["x-bi-preview-diagnostics"] === "1";
+        const diagnosticVersion = request.headers["x-bi-preview-diagnostics"];
+        const structured = diagnosticVersion === "1" || diagnosticVersion === "2";
+        const pairedGatewayDenial = error.statusCode === 403 && diagnostics.length === 2
+          && diagnostics.every(row => row.configuredOriginMatchesDefault && row.upstreamHttpStatus === 403
+            && row.cloudflareRayId !== undefined && (row.denialKind === "unclassified" || row.denialKind === "cloudflare_edge"));
+        const previewEgress = pairedGatewayDenial && diagnosticVersion !== "1" ? await upstream.testPreviewEgress() : undefined;
         // An open page can still be running the previous strict response schema.
         // Keep that shape and its in-memory credential draft usable across a release.
         const summary = diagnostics.map(result => {
@@ -568,13 +573,14 @@ export async function buildApp(env: AppEnv, dependencies: BuildAppDependencies =
           const origin = result.configuredOriginMatchesDefault ? "" : "（使用非默认测试地址）";
           return `${result.pid} ${outcome}${status}${business}${format}${ray}${origin}`;
         }).join("、");
+        const egressSummary = previewEgress ? `；测试域名观测到的 BI 出口：${previewEgress.address}（IPv${previewEgress.family}）` : "";
         return reply.code(error.statusCode).send({
           success: false,
           error: {
             code: error.code,
-            message: !structured && summary ? `${error.message}（${summary}；请求 ID：${request.id}）` : error.message,
+            message: !structured && summary ? `${error.message}（${summary}；请求 ID：${request.id}${egressSummary}）` : error.message,
             requestId: request.id,
-            ...(structured ? { previewDiagnostics: diagnostics } : {})
+            ...(structured ? { previewDiagnostics: diagnostics, ...(previewEgress ? { previewEgress } : {}) } : {})
           }
         });
       }

@@ -236,9 +236,52 @@ describe("V2 数据源维护客户端", () => {
     expect(activated).toMatchObject({ mode: "test", userName: "test-user" });
     expect(observed).toEqual([
       { path: "/api/bi/admin/data-preview/status", body: "", csrfToken: null, diagnostics: null },
-      { path: "/api/bi/admin/data-preview/activate", body: JSON.stringify({ token: "temporary-test-token-0001" }), csrfToken: CSRF_TOKEN, diagnostics: "1" },
+      { path: "/api/bi/admin/data-preview/activate", body: JSON.stringify({ token: "temporary-test-token-0001" }), csrfToken: CSRF_TOKEN, diagnostics: "2" },
       { path: "/api/bi/admin/data-preview/deactivate", body: "", csrfToken: CSRF_TOKEN, diagnostics: null }
     ]);
+  });
+
+  test("只接收与地址族匹配的 IP 字面量，异常出口字段保留原错误", async () => {
+    const accepted = [
+      { address: "192.0.2.42", family: 4 },
+      { address: "2001:db8::42", family: 6 },
+      { address: "::ffff:192.0.2.42", family: 6 }
+    ];
+    const rejected = [
+      { address: "192.0.2.42", family: 6 },
+      { address: "2001:db8::42", family: 4 },
+      { address: "192.0.2.999", family: 4 },
+      { address: "2001:db8::42]/path", family: 6 },
+      { address: "2001:db8::42\n", family: 6 },
+      { address: "fe80::1%en0", family: 6 },
+      { address: "192.0.2.42", family: "4" },
+      { address: "192.0.2.42", family: 4, extra: "raw response" }
+    ];
+    const previewDiagnostics = [{ pid: "FBI", outcome: "rejected", upstreamHttpStatus: 403 }];
+    for (const [values, valid] of [[accepted, true], [rejected, false]] as const) {
+      for (const previewEgress of values) {
+        globalThis.fetch = (async () => jsonResponse({
+          success: false,
+          error: { code: "UPSTREAM_AUTH_FAILED", message: "测试后台拒绝请求", requestId: "fixture-preview-egress", previewDiagnostics, previewEgress }
+        }, 403)) as typeof fetch;
+
+        await expect(activateDataPreview("temporary-test-token-0001", CSRF_TOKEN)).rejects.toMatchObject({
+          code: "UPSTREAM_AUTH_FAILED", status: 403, requestId: "fixture-preview-egress", previewDiagnostics,
+          previewEgress: valid ? previewEgress : undefined
+        });
+      }
+    }
+  });
+
+  test("状态、退出及正式数据源操作沿用原错误响应契约", async () => {
+    globalThis.fetch = (async () => jsonResponse({
+      success: false,
+      error: { code: "UPSTREAM_AUTH_FAILED", message: "后台拒绝请求", previewEgress: { address: "192.0.2.42", family: 4 } }
+    }, 403)) as typeof fetch;
+
+    for (const request of [() => fetchDataPreviewStatus(), () => deactivateDataPreview(CSRF_TOKEN), () => testDataSource("primary", CSRF_TOKEN)]) {
+      await expect(request()).rejects.toMatchObject({ code: "INVALID_ADMIN_RESPONSE", status: 403 });
+    }
   });
 
   test("测试会话启用失败仅保留可展示的探针诊断字段", async () => {

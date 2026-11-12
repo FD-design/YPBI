@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app";
 import { loadEnv, type AppEnv } from "./config/env";
+import { productionDataPreviewDefaults } from "./config/production-data-preview";
 import type { BiAuthService } from "./auth/service";
 import type { IdentityProvider } from "./identity/identity-provider";
 import { permissionsByRole } from "./auth/roles";
@@ -412,6 +413,38 @@ describe("数据源维护管理接口", () => {
     expect(response.headers["set-cookie"]).toBeUndefined();
     expect(response.json().error.previewDiagnostics.every((row: { denialKind: string; upstreamHttpStatus: number }) =>
       row.denialKind === "unclassified" && row.upstreamHttpStatus === 403)).toBe(true);
+  });
+
+  test("两路默认测试 API 网关拒绝时以无凭据请求核对出口，复用结果且兼容旧客户端", async () => {
+    const origin = productionDataPreviewDefaults.baseUrl;
+    const address = "192.0.2.42";
+    const { app, observedRequests } = await createHarness({
+      envOverrides: { BI_TEST_DATA_PREVIEW_ENABLED: true, UPSTREAM_TEST_API_BASE_URL: origin, UPSTREAM_TEST_USER_NAME: "test-preview-user" },
+      upstreamResponse: ({ url }) => new URL(url).pathname === "/cdn-cgi/trace"
+        ? new Response(`h=${new URL(origin).hostname}\nip=${address}\n`, { headers: { server: "cloudflare", "content-type": "text/plain" } })
+        : new Response("<h1>Forbidden</h1>", {
+          status: 403, headers: { server: "cloudflare", "cf-ray": "a1234567890bcdef-SIN", "content-type": "text/html" }
+        })
+    });
+    const cookie = `${await login(app)}; ypbi_session=${NORMAL_SESSION_TOKEN}`;
+    const verify = (diagnostics?: string) => app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate",
+      payload: { token: CANDIDATE_PRIMARY_TOKEN }, headers: { cookie, ...(diagnostics ? { "x-bi-preview-diagnostics": diagnostics } : {}) } });
+    const old = await verify("1");
+    expect(old.statusCode).toBe(403);
+    expect(old.json().error).not.toHaveProperty("previewEgress");
+    expect(observedRequests).toHaveLength(2);
+
+    const modern = await verify("2");
+    expect(modern.statusCode).toBe(403);
+    expect(modern.headers["set-cookie"]).toBeUndefined();
+    expect(modern.json().error.previewEgress).toEqual({ address, family: 4 });
+    const legacy = await verify();
+    expect(Object.keys(legacy.json().error).sort()).toEqual(["code", "message", "requestId"]);
+    expect(legacy.json().error.message).toContain(`测试域名观测到的 BI 出口：${address}（IPv4）`);
+    expect(observedRequests.filter(item => item.url.endsWith("/cdn-cgi/trace"))).toEqual([{
+      url: `${origin}/cdn-cgi/trace`, token: null, userName: null,
+      clientUserAgent: "YPBI-Test-Preview/1.0", accept: "text/plain"
+    }]);
   });
 
   for (const [name, payload] of [
