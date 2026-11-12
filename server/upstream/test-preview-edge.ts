@@ -12,7 +12,7 @@ export type TestPreviewDeniedResponse =
   | { readonly kind: "upstream_auth" | "upstream_ip_restricted"; readonly code: 2002; readonly rayId?: string }
   | { readonly kind: "unclassified"; readonly rayId?: string };
 
-async function readBoundedJson(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<unknown> {
+async function readBoundedText(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<string | undefined> {
   const reader = body.getReader();
   const cancel = () => { void reader.cancel().catch(() => undefined); };
   let finished = false;
@@ -25,8 +25,7 @@ async function readBoundedJson(body: ReadableStream<Uint8Array>, signal: AbortSi
       if (signal.aborted) return;
       if (done) {
         finished = true;
-        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, size));
-        return JSON.parse(text) as unknown;
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, size));
       }
       if (size + value.byteLength > bytes.byteLength) return;
       bytes.set(value, size);
@@ -43,6 +42,68 @@ function readCloudflareRayId(headers: Headers) {
   if (headers.get("server")?.toLowerCase() !== "cloudflare") return;
   const rayId = headers.get("cf-ray");
   if (rayId && cloudflareRayPattern.test(rayId)) return rayId;
+}
+
+function collectElementText(rewriter: HTMLRewriter, selector: string) {
+  const texts: string[] = [];
+  rewriter.on(selector, {
+    element() { texts.push(""); },
+    text(chunk) {
+      const index = texts.length - 1;
+      texts[index] += chunk.text;
+    }
+  });
+  return texts;
+}
+
+function normalizeHtmlText(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function readCloudflareHtmlCode(html: string, rayId: string, responseUrl: string): EdgeDenialCode | undefined {
+  // Remove inert and raw-text content before collecting visible template fields.
+  const visibleHtml = new HTMLRewriter()
+    .on("script, style, template, noscript, textarea", { element(element) { element.remove(); } })
+    .transform(html);
+  const rewriter = new HTMLRewriter();
+  const titles = collectElementText(rewriter, "title");
+  const wrappers = collectElementText(rewriter, "#cf-wrapper");
+  const details = collectElementText(rewriter, "#cf-wrapper #cf-error-details");
+  const headings = collectElementText(rewriter, "h1");
+  const detailHeadings = collectElementText(rewriter, "#cf-wrapper #cf-error-details h1");
+  const subtitles = collectElementText(rewriter, "#cf-wrapper #cf-error-details h2");
+  const footers = collectElementText(rewriter, "#cf-wrapper .cf-error-footer, #cf-wrapper #cf-error-footer");
+  const footerEmphasis: string[] = [];
+  let rayFollowsLabel = false;
+  rewriter.on("#cf-wrapper .cf-error-footer strong, #cf-wrapper #cf-error-footer strong", {
+    element() {
+      footerEmphasis.push("");
+      rayFollowsLabel = normalizeHtmlText(footers.at(-1) ?? "").endsWith("Cloudflare Ray ID:");
+    },
+    text(chunk) {
+      footerEmphasis[footerEmphasis.length - 1] += chunk.text;
+    }
+  });
+  rewriter.transform(visibleHtml);
+
+  if (wrappers.length !== 1 || details.length !== 1 || titles.length !== 1 || headings.length !== 1
+    || detailHeadings.length !== 1 || footers.length !== 1
+    || subtitles.filter(text => normalizeHtmlText(text) === "Access denied").length !== 1) return;
+
+  const title = /^Access denied \| ([A-Za-z0-9.-]{1,253}) used Cloudflare to restrict access \| \1 \| Cloudflare$/
+    .exec(normalizeHtmlText(titles[0]));
+  if (!title || (responseUrl && new URL(responseUrl).hostname !== title[1].toLowerCase())) return;
+
+  const heading = /^Error ([0-9]{4})$/.exec(normalizeHtmlText(detailHeadings[0]));
+  const code = edgeDenialCodes.find(candidate => String(candidate) === heading?.[1]);
+  if (code === undefined) return;
+
+  const footer = normalizeHtmlText(footers[0]);
+  const labeledRay = /(?:^|\s)Cloudflare Ray ID: ([0-9A-Fa-f]{16})(?=$|[^0-9A-Za-z])/.exec(footer);
+  const expectedRay = rayId.slice(0, 16).toLowerCase();
+  if (footer.match(/Cloudflare Ray ID:/g)?.length !== 1 || footerEmphasis.length !== 1 || !rayFollowsLabel
+    || labeledRay?.[1].toLowerCase() !== expectedRay || normalizeHtmlText(footerEmphasis[0]).toLowerCase() !== expectedRay) return;
+  return code;
 }
 
 function isAppErrorMessage(value: unknown): value is string {
@@ -64,13 +125,22 @@ export async function inspectTestPreviewDeniedResponse(
   if (rayId && codeFromHeader !== undefined) return { kind: "cloudflare_edge", code: codeFromHeader, rayId };
 
   const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-  if (mediaType !== "application/json" && mediaType !== "application/problem+json") return unclassified;
+  const htmlResponse = mediaType === "text/html" || mediaType === "application/xhtml+xml";
+  const jsonResponse = mediaType === "application/json" || mediaType === "application/problem+json";
+  if (!jsonResponse && (!htmlResponse || !rayId)) return unclassified;
   if (!response.body || response.bodyUsed || response.body.locked) return unclassified;
 
   try {
     const readSignal = AbortSignal.any([signal, AbortSignal.timeout(errorBodyTimeoutMs)]);
-    const payload = await readBoundedJson(response.body, readSignal);
-    if (readSignal.aborted || !payload || typeof payload !== "object" || Array.isArray(payload)) return unclassified;
+    const body = await readBoundedText(response.body, readSignal);
+    if (readSignal.aborted || body === undefined) return unclassified;
+    if (htmlResponse && rayId) {
+      const code = readCloudflareHtmlCode(body, rayId, response.url);
+      return code === undefined ? unclassified : { kind: "cloudflare_edge", code, rayId };
+    }
+
+    const payload = JSON.parse(body) as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return unclassified;
     const error = payload as Record<string, unknown>;
     if (error.cloudflare_error === true) {
       const code = edgeDenialCodes.find(candidate => candidate === error.error_code);

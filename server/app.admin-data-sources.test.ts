@@ -393,6 +393,27 @@ describe("数据源维护管理接口", () => {
     expect(legacy.json().error).not.toHaveProperty("previewDiagnostics");
   });
 
+  test("测试网关已返回 403 时诊断正文等待截止仍保留拒绝状态", async () => {
+    const { app } = await createHarness({
+      envOverrides: {
+        BI_TEST_DATA_PREVIEW_ENABLED: true,
+        UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+        UPSTREAM_TEST_USER_NAME: "test-preview-user",
+        REQUEST_TIMEOUT_MS: 50
+      },
+      upstreamResponse: () => new Response(new ReadableStream<Uint8Array>({}), {
+        status: 403, headers: { server: "cloudflare", "cf-ray": "a1234567890bcdef-SIN", "content-type": "text/html" }
+      })
+    });
+    const cookie = `${await login(app)}; ypbi_session=${NORMAL_SESSION_TOKEN}`;
+    const response = await app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate",
+      payload: { token: CANDIDATE_PRIMARY_TOKEN }, headers: { cookie, "x-bi-preview-diagnostics": "1" } });
+    expect(response.statusCode).toBe(403);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect(response.json().error.previewDiagnostics.every((row: { denialKind: string; upstreamHttpStatus: number }) =>
+      row.denialKind === "unclassified" && row.upstreamHttpStatus === 403)).toBe(true);
+  });
+
   for (const [name, payload] of [
     ["无业务码", { data: [] }],
     ["无数据列表", { code: 200, msg: { pageData: [] } }],

@@ -1,5 +1,9 @@
 # 项目变更时间线
 
+## 2026-11-12 测试凭据校验识别标准网关拒绝页
+
+- 测试凭据探针识别具有固定 Cloudflare 模板、错误码和同一 Ray 编号的 HTML 拒绝页。仅返回已校验的错误码和 Ray 编号；正文不记录。诊断读取不改变已收到的 HTTP 403 或测试会话准入结果。见[临时测试数据源切换](modules/deployment.md#临时测试数据源切换)。
+
 ## 2026-11-12 临时测试凭据改用留存探针
 
 - 测试 Token 验证采用测试后台留存页使用的 `GET /api/admin/statistics/reletionsStatPlus/getDays`，分别查询 PH、FBI 的一个已结束业务日。两个响应均返回业务码 `200` 和数组型 `data` 后签发测试会话。正式两站凭据验证沿用 `pDaySum`。见[临时测试数据源切换](modules/deployment.md#临时测试数据源切换)。

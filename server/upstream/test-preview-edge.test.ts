@@ -170,3 +170,72 @@ describe("测试预览 403 来源分类", () => {
     expect(stream.locked).toBe(false);
   }, 2500);
 });
+
+describe("测试预览 Cloudflare HTML 拒绝页", () => {
+  const host = "api.example.invalid";
+  const htmlHeaders = { ...cloudflare, "content-type": "text/html; charset=UTF-8" };
+  const denialPage = [
+    "<!doctype html><html><head>",
+    "<title>Access denied | " + host + " used Cloudflare to restrict access | " + host + " | Cloudflare</title>",
+    "</head><body>",
+    '<div id="cf-wrapper"><div id="cf-error-details">',
+    "<header><h1>Error <span>1010</span></h1><h2>Access denied</h2></header>",
+    "<main><h2>What happened?</h2></main>",
+    '<div class="cf-error-footer"><p><span>Cloudflare Ray ID: <strong>' + rayHex + "</strong></span>",
+    "<span>Performance and Security by Cloudflare</span></p></div>",
+    "</div></div></body></html>"
+  ].join("\n");
+
+  function htmlResponse(body: string, options: { headers?: ResponseInit["headers"]; status?: number; host?: string } = {}) {
+    const response = new Response(body, { status: options.status ?? 403, headers: options.headers ?? htmlHeaders });
+    Object.defineProperty(response, "url", { value: "https://" + (options.host ?? host) + "/api/admin/stats" });
+    return response;
+  }
+
+  test("匹配已知模板的单个嵌套错误标题、关联编号和响应来源", async () => {
+    const html = denialPage.replace("<main>", [
+      "<!-- <h1>Error 1006</h1> -->",
+      '<script>const fake = "<h1>Error 1020</h1>";</script>',
+      '<style>.fake::before { content: "<h1>Error 1009</h1>"; }</style>',
+      "<template><h1>Error 1106</h1></template><main>"
+    ].join("\n"));
+    expect(await inspectTestPreviewDeniedResponse(htmlResponse(html), signal))
+      .toEqual({ kind: "cloudflare_edge", code: 1010, rayId });
+  });
+
+  test("泛化、错源、缺模板、重复或正文 Ray 不一致时只保留可关联的响应头", async () => {
+    for (const response of [
+      htmlResponse("<html><h1>403 Forbidden</h1><p>Cloudflare</p></html>"),
+      htmlResponse(denialPage, { host: "different.example.invalid" }),
+      htmlResponse(denialPage.replace('id="cf-wrapper"', 'id="wrapper"')),
+      htmlResponse(denialPage.replace('id="cf-error-details"', 'id="details"')),
+      htmlResponse(denialPage.replace('class="cf-error-footer"', 'class="footer"')),
+      htmlResponse(denialPage.replace("<h2>Access denied</h2>", "<h2>Forbidden</h2>")),
+      htmlResponse(denialPage.replace("<span>1010</span>", "<span>1016</span>")),
+      htmlResponse(denialPage.replace("</h1>", "</h1><h1>Error 1020</h1>")),
+      htmlResponse(denialPage.replace(rayHex, "0123456789abcdef")),
+      htmlResponse(denialPage.replace("<strong>" + rayHex + "</strong>", rayHex)),
+      htmlResponse(denialPage.replace("<strong>" + rayHex + "</strong>", rayHex + " <strong>" + rayHex + "</strong>")),
+      htmlResponse(denialPage.replace("</strong>", "</strong> Cloudflare Ray ID: 0123456789abcdef")),
+      htmlResponse(denialPage.replace("<h1>Error <span>1010</span></h1>", "<!-- <h1>Error 1010</h1> -->")),
+      htmlResponse(denialPage.replace("<h1>Error <span>1010</span></h1>", "<h1><script>Error 1010</script></h1>"))
+    ]) {
+      expect(await inspectTestPreviewDeniedResponse(response, signal)).toEqual({ kind: "unclassified", rayId });
+    }
+  });
+
+  test("只检查代理的 HTML 403，按同一上限读取正文", async () => {
+    expect(await inspectTestPreviewDeniedResponse(htmlResponse(denialPage.padEnd(8 * 1024)), signal))
+      .toEqual({ kind: "cloudflare_edge", code: 1010, rayId });
+    expect(await inspectTestPreviewDeniedResponse(htmlResponse(denialPage.padEnd(8 * 1024 + 1)), signal))
+      .toEqual({ kind: "unclassified", rayId });
+    expect(await inspectTestPreviewDeniedResponse(htmlResponse(denialPage, { status: 401 }), signal))
+      .toEqual({ kind: "unclassified" });
+    const plainText = htmlResponse(denialPage, { headers: { ...cloudflare, "content-type": "text/plain" } });
+    expect(await inspectTestPreviewDeniedResponse(plainText, signal)).toEqual({ kind: "unclassified", rayId });
+    expect(plainText.bodyUsed).toBe(false);
+    const noProxy = htmlResponse(denialPage, { headers: { "content-type": "text/html", "cf-ray": rayId } });
+    expect(await inspectTestPreviewDeniedResponse(noProxy, signal)).toEqual({ kind: "unclassified" });
+    expect(noProxy.bodyUsed).toBe(false);
+  });
+});

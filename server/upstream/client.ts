@@ -523,6 +523,7 @@ export class UpstreamClient {
     if (signal?.aborted) controller.abort();
     else signal?.addEventListener("abort", onConsumerAbort, { once: true });
     let businessAuthenticationRejected = false;
+    let receivedPreviewDenial = false;
     let response: Response | undefined;
     const checkDeadline = () => {
       const failure = physicalReadDeadlineError(deadline, signal);
@@ -563,8 +564,9 @@ export class UpstreamClient {
       if (response.status === 401 || response.status === 403) {
         const probe = deadline.previewProbeResponse;
         if (response.status === 403 && probe && !probe.cloudflareChallenge) {
+          // Headers arrived in time; a bounded diagnostic read must not change this denial to a timeout.
+          receivedPreviewDenial = true;
           const denial = await inspectTestPreviewDeniedResponse(response, controller.signal);
-          checkDeadline();
           probe.denialKind = denial.kind;
           if (denial.rayId !== undefined) probe.cloudflareRayId = denial.rayId;
           if (denial.kind === "cloudflare_edge") {
@@ -640,7 +642,7 @@ export class UpstreamClient {
       // the queue slot is released. Stop its transport without awaiting cleanup.
       controller.abort();
       if (response?.body && !response.body.locked) void response.body.cancel().catch(() => undefined);
-      if (deadlineFailure) throw deadlineFailure;
+      if (deadlineFailure && (!receivedPreviewDenial || signal?.aborted)) throw deadlineFailure;
       if (error instanceof UpstreamError) {
         if (!getUpstreamReadFailure(error)) rememberUpstreamReadFailure(error, {
           origin: error instanceof QueryJobBusinessError || error.code === "UPSTREAM_INVALID_REQUEST" || businessAuthenticationRejected
