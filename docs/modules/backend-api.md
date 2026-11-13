@@ -178,7 +178,7 @@
 | POST | `/api/bi/admin/data-preview/activate` | 验证候选测试 Token，成功后建立绑定当前普通登录的24小时内存会话 |
 | POST | `/api/bi/admin/data-preview/deactivate` | 删除当前服务端测试会话并清除预览 Cookie |
 
-临时测试数据会话独立于维护二次会话。`activate` 使用测试后台留存接口 `GET /api/admin/statistics/reletionsStatPlus/getDays`，以 `pid`、`registerDate`、`registerEdDate` 分别查询 PH、FBI 的同一个已结束业务日。两个 PID 均须实际返回明确的业务码 `200` 和数组型 `data`，包括空数组。其他业务码按错误处理，常规数据读取的旧无数据归一化规则仅用于数据查询。两项验证通过后签发测试会话，同一标签页重新验证成功后撤销旧测试会话。测试 Token 及会话存于有容量上限的 API 进程内存，服务重启后需重新验证测试 Token。
+临时测试数据会话独立于维护二次会话。`activate` 使用测试后台留存接口 `GET /api/admin/statistics/reletionsStatPlus/getDays` 分别验证 PH、FBI。查询参数、无数据补查和通过条件见[临时测试数据源切换](deployment.md#临时测试数据源切换)。两项验证通过后签发测试会话，同一标签页重新验证成功后撤销旧测试会话。测试 Token 及会话存于有容量上限的 API 进程内存，服务重启后需重新验证测试 Token。
 
 通过维护会话门禁的 `activate` 请求遇到 `UpstreamError` 时，HTTP 状态和 `error.code` 由首个上游错误决定，响应附带 `error.requestId`。请求头 `x-bi-preview-diagnostics: 1` 或 `2` 启用 `error.previewDiagnostics`，只包含本次激活请求内已完成的脱敏 PID 探针结果。版本 `2` 在两个默认测试 API 探针同时收到带 Ray 的网关 403 时，可返回 `error.previewEgress`（出站地址和地址族）。版本 `1` 保留原结构；未指定版本的旧页面在 `error.message` 中显示摘要。排查步骤见[临时测试数据源切换](deployment.md#临时测试数据源切换)。
 

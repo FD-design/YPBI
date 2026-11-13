@@ -485,26 +485,73 @@ describe("数据源维护管理接口", () => {
     expect(existsSync(credentialsFile)).toBe(false);
   });
 
-  for (const [name, payload] of [
-    ["无业务码", { data: [] }],
-    ["无数据列表", { code: 200, msg: { pageData: [] } }],
-    ["其他 PID 的记录", { code: 200, data: [{ pid: "TT" }] }],
-    ["旧无数据兼容错误", { code: 400, err: "没有该平台当日数据" }]
+  for (const [name, payload, httpStatus, requestCount] of [
+    ["无业务码", { data: [] }, 200, 2],
+    ["无数据列表", { code: 200, msg: { pageData: [] } }, 200, 2],
+    ["其他 PID 的记录", { code: 200, data: [{ pid: "TT" }] }, 200, 2],
+    ["旧无数据兼容错误", { code: 400, err: "没有该平台当日数据" }, 200, 4],
+    ["HTTP 400 无数据文案", { code: 400, err: "没有该平台当日数据" }, 400, 2],
+    ["其他参数拒绝", { code: 400, err: "请选择日期，没有该平台当日数据" }, 200, 2],
+    ["HTTP 200 未登录", { code: 2002, err: "请重新登陆" }, 200, 2]
   ] as const) {
     test(`测试探针拒绝${name}，不创建临时会话`, async () => {
+      const { app, observedRequests } = await createHarness({
+        envOverrides: {
+          BI_TEST_DATA_PREVIEW_ENABLED: true,
+          UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
+          UPSTREAM_TEST_USER_NAME: "test-preview-user"
+        },
+        upstreamResponse: () => Response.json(payload, { status: httpStatus })
+      });
+      const cookie = `${await login(app)}; ypbi_session=${NORMAL_SESSION_TOKEN}`;
+      const activation = await app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate", headers: { cookie }, payload: { token: CANDIDATE_PRIMARY_TOKEN } });
+      expect(activation.statusCode).not.toBe(200);
+      expect(activation.headers["set-cookie"]).toBeUndefined();
+      expect(observedRequests).toHaveLength(requestCount);
+      expect((await app.inject({ method: "GET", url: "/api/bi/admin/data-preview/status", headers: { cookie } })).json().data.active).toBe(false);
+    });
+  }
+
+  for (const businessCode of [200, 2002, 400]) {
+    test(`PH 和 FBI 无当日数据时独立补查一次，七日响应业务码 ${businessCode}`, async () => {
+      const requestsByPid = new Map<string, URL[]>();
       const { app } = await createHarness({
         envOverrides: {
           BI_TEST_DATA_PREVIEW_ENABLED: true,
           UPSTREAM_TEST_API_BASE_URL: "https://test-upstream.example.test",
           UPSTREAM_TEST_USER_NAME: "test-preview-user"
         },
-        upstreamResponse: () => Response.json(payload)
+        upstreamResponse: request => {
+          const url = new URL(request.url);
+          const pid = url.searchParams.get("pid") ?? "";
+          const urls = requestsByPid.get(pid) ?? [];
+          urls.push(url);
+          requestsByPid.set(pid, urls);
+          expect(request.token).toBe(CANDIDATE_PRIMARY_TOKEN);
+          expect(request.userName).toBe("test-preview-user");
+          if (urls.length === 1 || businessCode === 400) {
+            const message = "没有该平台当日数据";
+            return Response.json({ code: 400, err: pid === "PH" ? message : [message] });
+          }
+          if (businessCode === 2002 && pid === "FBI") return Response.json({ code: 2002, err: "请重新登陆" });
+          return Response.json({ code: 200, data: [{ pid }] });
+        }
       });
       const cookie = `${await login(app)}; ypbi_session=${NORMAL_SESSION_TOKEN}`;
-      const activation = await app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate", headers: { cookie }, payload: { token: CANDIDATE_PRIMARY_TOKEN } });
-      expect(activation.statusCode).not.toBe(200);
-      expect(activation.headers["set-cookie"]).toBeUndefined();
-      expect((await app.inject({ method: "GET", url: "/api/bi/admin/data-preview/status", headers: { cookie } })).json().data.active).toBe(false);
+      const result = await app.inject({ method: "POST", url: "/api/bi/admin/data-preview/activate", headers: { cookie }, payload: { token: CANDIDATE_PRIMARY_TOKEN } });
+      expect(result.statusCode).toBe(businessCode === 200 ? 200 : businessCode === 2002 ? 401 : 422);
+      expect(Boolean(result.headers["set-cookie"])).toBe(businessCode === 200);
+      if (businessCode === 200) expect(result.json().data.mode).toBe("test");
+      if (businessCode === 400) expect(result.json().error.message).toContain("最近 7 个完整业务日无留存数据");
+      expect([...requestsByPid.keys()].sort()).toEqual(["FBI", "PH"]);
+      for (const urls of requestsByPid.values()) {
+        expect(urls).toHaveLength(2);
+        expect(urls[1].origin).toBe(urls[0].origin);
+        expect(urls[1].pathname).toBe(urls[0].pathname);
+        expect(urls[1].searchParams.get("registerEdDate")).toBe(urls[0].searchParams.get("registerEdDate"));
+        const start = (url: URL) => Date.parse(`${url.searchParams.get("registerDate")?.slice(0, 10)}T00:00:00Z`);
+        expect(start(urls[0]) - start(urls[1])).toBe(6 * 86_400_000);
+      }
     });
   }
 

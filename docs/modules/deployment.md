@@ -714,6 +714,8 @@ Bun 1.3.14 在本机的 Fastify 注入测试中存在中文响应结束状态兼
 
 在维护页重新验证测试 Token。BI 服务器向 `GET /api/admin/statistics/reletionsStatPlus/getDays` 分别传入 PH、FBI 的 `pid`。与测试门户留存页一致，`registerDate` 取北京时间上一业务日零点，`registerEdDate` 取次日零点。每项均须返回明确的业务码 `200` 和数组型 `data`，空数组属于有效结果。两个 PID 均通过后建立当前浏览器的临时测试会话。正式两站凭据验证沿用 `pDaySum`。
 
+探针收到 HTTP `200`、业务码 `400` 和固定提示「没有该平台当日数据」时，对对应 PID 补查最近七个完整业务日一次。首查与补查共用原超时预算，补查使用同一测试来源与凭据，按相同成功条件验证。七日结果仍无数据时，后台可在完成凭据和 PID 权限校验后返回 `{code: 200, data: []}`，供 BI 签发会话。
+
 测试凭据探针、取数与查询任务通过 `User-Agent: YPBI-Test-Preview/1.0` 标识 BI 服务并请求 JSON。分别复测两个 PID 的测试查询，再切回正式数据核对各站来源。
 
 通过受控运维入口的 `logs` 命令查看 API 日志。测试预览启用时，应用启动会记录 `BI test data preview configuration checked`，用 `configuredOriginMatchesDefault` 核对运行配置与默认 API 的来源是否一致。

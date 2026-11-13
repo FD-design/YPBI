@@ -50,6 +50,12 @@ export class QueryJobBusinessError extends UpstreamError {
   }
 }
 
+class PreviewRetentionNoDataError extends UpstreamError {
+  constructor() {
+    super("UPSTREAM_INVALID_REQUEST", "测试后台最近 7 个完整业务日无留存数据，暂无法验证凭据", 422);
+  }
+}
+
 interface PreviewProbeResponse {
   upstreamHttpStatus?: number;
   responseFormat?: "json" | "html" | "other";
@@ -206,11 +212,12 @@ export class UpstreamClient {
       // Diagnostics must not decide whether a credential is accepted.
       try { onProbeResult?.(result); } catch { /* Preserve the probe result. */ }
     };
+    const probeTime = Date.now();
     const probes = probePids.map(async (pid) => {
-      if (!onProbeResult) return this.verifyProfile(profile, pid);
+      if (!onProbeResult) return this.verifyProfile(profile, pid, undefined, probeTime);
       const response: PreviewProbeResponse = {};
       try {
-        await this.verifyProfile(profile, pid, response);
+        await this.verifyProfile(profile, pid, response, probeTime);
         report({ pid, outcome: "accepted", configuredOriginMatchesDefault, ...response });
       } catch (error) {
         const failure = getUpstreamReadFailure(error);
@@ -272,15 +279,31 @@ export class UpstreamClient {
     return this.previewWireCheck.result;
   }
 
-  private async verifyProfile(profile: CredentialProfile, pid: string, previewProbeResponse?: PreviewProbeResponse) {
+  private async verifyProfile(profile: CredentialProfile, pid: string, previewProbeResponse?: PreviewProbeResponse, probeTime = Date.now()) {
     if (!profile.token) throw new UpstreamError("UPSTREAM_AUTH_FAILED", "Token 不能为空", 401);
     if (!validUserName(profile.userName)) throw new UpstreamError("UPSTREAM_NOT_CONFIGURED", "数据源用户名尚未配置", 503);
     if (profile.testPreview) {
-      // Match the current test portal's authenticated retention request for one completed business day.
-      const url = testPreviewCredentialProbeUrl(profile.baseUrl, pid);
-      const deadline = { expiresAt: performance.now() + this.env.REQUEST_TIMEOUT_MS, testPreview: true, previewCredentialPid: pid, previewProbeResponse };
-      try { await this.fetchJson(url, profile.token, profile.userName, undefined, undefined, undefined, undefined, deadline); }
-      catch (error) { throw this.safeCredentialProbeError(error); }
+      const expiresAt = performance.now() + this.env.REQUEST_TIMEOUT_MS;
+      let response: PreviewProbeResponse | undefined;
+      const read = (days: number) => {
+        response = previewProbeResponse ? {} : undefined;
+        return this.fetchJson(
+          testPreviewCredentialProbeUrl(profile.baseUrl, pid, probeTime, days), profile.token, profile.userName,
+          Math.max(1, Math.ceil(expiresAt - performance.now())), undefined, undefined, undefined,
+          { expiresAt, testPreview: true, previewCredentialPid: pid, previewProbeResponse: response }
+        );
+      };
+      try {
+        await read(1).catch((error: unknown) => {
+          if (!(error instanceof PreviewRetentionNoDataError)) throw error;
+          return read(7);
+        });
+      } catch (error) {
+        if (error instanceof PreviewRetentionNoDataError) throw error;
+        throw this.safeCredentialProbeError(error);
+      } finally {
+        if (previewProbeResponse && response) Object.assign(previewProbeResponse, response);
+      }
       return;
     }
     const end = new Date();
@@ -655,6 +678,10 @@ export class UpstreamClient {
       if (!deadline.previewCredentialPid && response.ok && businessCode !== "200" && /reletionsStat(?:Plus)?\/getDays/.test(url.pathname) && /没有该平台当日数据/.test(message)) {
         checkDeadline();
         return { code: 200, data: [] };
+      }
+      const previewError = Array.isArray(rawMessage) && rawMessage.length === 1 ? rawMessage[0] : rawMessage;
+      if (deadline.previewCredentialPid && response.status === 200 && businessCode === "400" && previewError === "没有该平台当日数据") {
+        throw new PreviewRetentionNoDataError();
       }
       if (businessCode !== "200") throw new UpstreamError("UPSTREAM_INVALID_REQUEST", message, 422);
       if (deadline.previewCredentialPid) {
