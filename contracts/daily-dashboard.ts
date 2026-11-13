@@ -3,6 +3,7 @@ import { OPERATING_METRIC_IDS, OPERATING_SNAPSHOT_STATISTICS_REASON, operatingSn
 import { monthlyMetricMetadataSchema } from "./monthly-query-scope";
 
 export const DAILY_DASHBOARD_VERSION = "day-dashboard/v2" as const;
+export const DAILY_ACQUISITION_REGISTRATION_HEADER = "x-ypbi-acquisition-registration";
 export const DAILY_STATISTICS_VERSION = "daily-statistics/v1" as const;
 // A board includes metric slices and calculation inputs as well as visible columns.
 export const DAILY_DASHBOARD_MAX_SERIES = 256;
@@ -53,6 +54,7 @@ export const DAILY_ACQUISITION_MAX_POINTS = 100_000;
 export const DAILY_ACQUISITION_METRIC_IDS = {
   channel: ["M001", "M003", "M005", "M006", "M007", "M099"], downloadPlatform: ["M003"]
 } as const;
+export const DAILY_ACQUISITION_REGISTRATION_METRIC_ID = "M008" as const;
 const acquisitionDimensionSchema = z.enum(["channel", "downloadPlatform"]);
 const acquisitionRuleVersionSchema = z.string().max(128).nullable();
 const acquisitionPointSchema = z.object({ ...dailyPointSchema.shape, ruleVersion: acquisitionRuleVersionSchema }).strict().superRefine((point, ctx) => {
@@ -106,21 +108,33 @@ const dailyAcquisitionGroupResultSchema = z.object({
   completeness: z.literal("unknown"),
   day: dailyAcquisitionRequestStatusSchema,
   summary: dailyAcquisitionRequestStatusSchema,
+  registration: z.object({ day: dailyAcquisitionRequestStatusSchema, summary: dailyAcquisitionRequestStatusSchema }).strict().optional(),
   groups: z.array(z.object({
     key: shortText.refine(value => value.trim().length > 0, "分组键不能为空白"), label: shortText,
-    series: z.array(dailyAcquisitionGroupSeriesSchema).min(1).max(6)
+    series: z.array(dailyAcquisitionGroupSeriesSchema).min(1).max(DAILY_ACQUISITION_METRIC_IDS.channel.length + 1)
   }).strict()).max(DAILY_ACQUISITION_MAX_GROUPS)
 }).strict().superRefine((result, ctx) => {
   if (new Set(result.groups.map(group => group.key)).size !== result.groups.length) ctx.addIssue({ code: "custom", message: "动态分组键不能重复" });
   let pointCount = 0;
   const metricIds: readonly string[] = DAILY_ACQUISITION_METRIC_IDS[result.dimension];
   if ([...result.day.scopeStatuses, ...result.summary.scopeStatuses].some(scope => !metricIds.includes(scope.metricId)) || result.summary.scopeStatuses.some(scope => scope.businessDate)) ctx.addIssue({ code: "custom", message: "范围状态指标或时间粒度不匹配" });
+  if (result.registration && (result.dimension !== "channel"
+    || [...result.registration.day.scopeStatuses, ...result.registration.summary.scopeStatuses].some(scope => scope.metricId !== DAILY_ACQUISITION_REGISTRATION_METRIC_ID)
+    || result.registration.summary.scopeStatuses.some(scope => scope.businessDate))) ctx.addIssue({ code: "custom", message: "注册渠道范围状态的指标、维度或时间粒度不匹配" });
   const requestMatches = (request: DailyAcquisitionRequestStatus, point: DailyAcquisitionSummary | z.infer<typeof acquisitionPointSchema>) => point.state === "unsupported" || request.state === "returned" ||
     (point.state === (request.state === "empty" ? "no_record" : request.state === "source_failure" ? "source_failure" : "invalid_value") && !point.sourceStatus && point.value === null && point.inputs.every(input => input.value === null) && point.ruleVersion === null);
   for (const group of result.groups) {
     if (new Set(group.series.map(series => series.metric.id)).size !== group.series.length) ctx.addIssue({ code: "custom", message: "分组指标不能重复" });
-    if (group.series.length !== metricIds.length || group.series.some((series, index) => series.metric.id !== metricIds[index])) ctx.addIssue({ code: "custom", message: "分组指标必须符合对应维度展示集合" });
-    if (group.series.some(series => series.points.some(point => !requestMatches(result.day, point)) || !requestMatches(result.summary, series.summary))) ctx.addIssue({ code: "custom", message: "分组值与请求状态不一致" });
+    const legacySeries = group.series.slice(0, metricIds.length), registrationSeries = group.series[metricIds.length];
+    if (legacySeries.length !== metricIds.length || legacySeries.some((series, index) => series.metric.id !== metricIds[index])
+      || group.series.length > metricIds.length + 1
+      || (registrationSeries && (!result.registration || registrationSeries.metric.id !== DAILY_ACQUISITION_REGISTRATION_METRIC_ID))) {
+      ctx.addIssue({ code: "custom", message: "分组指标必须符合对应维度展示集合" });
+    }
+    if (group.series.some(series => {
+      const requests = series.metric.id === DAILY_ACQUISITION_REGISTRATION_METRIC_ID ? result.registration : result;
+      return !requests || series.points.some(point => !requestMatches(requests.day, point)) || !requestMatches(requests.summary, series.summary);
+    })) ctx.addIssue({ code: "custom", message: "分组值与请求状态不一致" });
     pointCount += group.series.reduce((total, series) => total + series.points.length + 1, 0);
   }
   if (pointCount > DAILY_ACQUISITION_MAX_POINTS) ctx.addIssue({ code: "custom", message: "分组结果超出安全上限" });
@@ -256,7 +270,8 @@ export function dailyDashboardMatchesQuery(result: DailyDashboardSuccess, query:
   if (data.schemaVersion === DAILY_DASHBOARD_VERSION && data.acquisitionGroups) {
     if (query.boardId !== "5.7") return false;
     for (const dimension of Object.values(data.acquisitionGroups)) {
-      if ([dimension.day, dimension.summary].some(request => request.scopeStatuses.some(status => status.businessDate && (status.businessDate < query.dateRange[0] || status.businessDate > query.dateRange[1])))) return false;
+      const dayRequests = [dimension.day, ...(dimension.registration ? [dimension.registration.day] : [])];
+      if (dayRequests.some(request => request.scopeStatuses.some(status => status.businessDate && (status.businessDate < query.dateRange[0] || status.businessDate > query.dateRange[1])))) return false;
       if (dimension.summary.scopeStatuses.some(status => status.businessDate)) return false;
       for (const group of dimension.groups) for (const series of group.series) {
         if (series.points.length !== days || series.points.some((point, index) => point.date !== new Date(Date.parse(query.dateRange[0]) + index * 86400000).toISOString().slice(0, 10))) return false;

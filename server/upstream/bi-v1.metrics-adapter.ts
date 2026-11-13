@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { biQueryJobUnitResultSchema } from "../../contracts/query-jobs";
 import { getUpstreamReadFailure, UpstreamError, type UpstreamClient, type UpstreamReadClient } from "./client";
-import { canIsolateBiV1Request } from "./bi-v1.request-isolation";
+import { BI_V1_UNSUPPORTED_METRIC_CODES_MESSAGE, canIsolateBiV1Request, isBiV1MetricSelectionRejection } from "./bi-v1.request-isolation";
 import { recordUpstreamReadBoundaryFailure } from "./read-trace";
 import { currentReadDeliveryExpiryScope, deliverUpstreamRead } from "./read-delivery";
 
@@ -10,20 +10,23 @@ export const LANDING_IP_CONVERSION_RULE_VERSIONS = {
   day: "landing-ip-click-rate-v1",
   summary: "landing-ip-conversion-range-v1"
 } as const;
+export const PAYMENT_RULE_VERSIONS = {
+  M058: "paid-order-value-rmb-v2", M059: "paid-order-value-v1", M067: "paid-order-value-rmb-v2"
+} as const;
 
 export const biV1MetricCodeSchema = z.enum([
   "M001", "M002", "M003", "M005", "M006", "M007", "M008", "M016", "M018", "M020", "M021", "M022", "M023", "M026",
-  "M034", "M036", "M055", "M058", "M059", "M060", "M061", "M064", "M081", "M084", "M086", "M090", "M094", "M095", "M097", "M099", "M101", "M102", "M103", "M110", "M111", "M112", "M113", "M114", "M115"
+  "M034", "M036", "M055", "M058", "M059", "M060", "M061", "M064", "M067", "M081", "M084", "M086", "M090", "M094", "M095", "M097", "M099", "M101", "M102", "M103", "M110", "M111", "M112", "M113", "M114", "M115"
 ]);
 export type BiV1MetricCode = z.infer<typeof biV1MetricCodeSchema>;
 export type BiV1MetricDataStatus = "READY" | "PROCESSING" | "NOT_MATURE" | "SOURCE_INCOMPLETE" | "FAILED";
 const expectedRuleVersionsSchema = z.partialRecord(biV1MetricCodeSchema, z.string().min(1).max(128));
 
 const dataStatusSchema = z.enum(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_INCOMPLETE", "FAILED"]);
-const metricUnitSchema = z.enum(["count", "ratio", "count_per_user", "seconds", "currency"]);
+const metricUnitSchema = z.enum(["count", "ratio", "count_per_user", "seconds", "currency", "currency_per_user"]);
 export type BiV1MetricUnit = z.infer<typeof metricUnitSchema>;
 const requiredMetricUnits: Partial<Record<BiV1MetricCode, BiV1MetricUnit>> = {
-  M055: "count", M058: "currency", M061: "ratio", M064: "ratio", M094: "count", M099: "ratio",
+  M055: "count", M058: "currency", M059: "count", M061: "ratio", M064: "ratio", M067: "currency_per_user", M094: "count", M099: "ratio",
   M101: "count", M102: "seconds", M110: "count_per_user", M111: "ratio"
 };
 const retentionMetricCodes = new Set<BiV1MetricCode>(["M020", "M021", "M022", "M023"]);
@@ -45,7 +48,7 @@ const successSchema = z.object({
   msg: z.object({
     metricVersion: z.literal("bi-v1"),
     generatedAt: z.iso.datetime({ offset: true }),
-    watermark: z.string().max(128).nullable(),
+    watermark: z.string().max(128).nullable().optional(),
     rows: z.array(metricRowSchema).max(100_000)
   }).loose()
 }).loose();
@@ -67,8 +70,27 @@ const scopeEnvelopeSchema = z.object({
 const rowScopeSchema = z.object({
   metricCode: z.string().optional().catch(undefined),
   businessDate: z.iso.date().optional().catch(undefined),
-  dimensions: z.object({ pid: z.string().optional().catch(undefined) }).loose().optional().catch(undefined)
+  pid: z.unknown().optional(),
+  dimensions: z.object({ pid: z.unknown().optional() }).loose().optional().catch(undefined)
 });
+
+function normalizePaymentRowPid(row: unknown): unknown {
+  if (row === null || typeof row !== "object" || Array.isArray(row)) return row;
+  const { metricCode, pid, dimensions } = row as { metricCode?: unknown; pid?: unknown; dimensions?: unknown };
+  if (metricCode !== "M058" && metricCode !== "M059" && metricCode !== "M067") return row;
+  if (dimensions !== undefined && (dimensions === null || typeof dimensions !== "object" || Array.isArray(dimensions))) return row;
+  const dimensionPid = (dimensions as { pid?: unknown } | undefined)?.pid;
+  if (pid !== undefined && dimensionPid !== undefined && pid !== dimensionPid) {
+    throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回的行内 PID 与请求标识不一致", 502);
+  }
+  return typeof pid === "string" && dimensionPid === undefined ? { ...row, dimensions: { ...dimensions, pid } } : row;
+}
+
+export function normalizeBiV1PaymentUnitPids(payload: unknown): unknown {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const rows = Reflect.get(payload, "rows");
+  return Array.isArray(rows) && rows.length <= 100_000 ? { ...payload, rows: rows.map(normalizePaymentRowPid) } : payload;
+}
 
 export const biV1MetricDimensionFilterSchema = z.object({
   clientPlatform: z.enum(["android", "ios", "web"]).optional(),
@@ -122,6 +144,8 @@ export interface BiV1MetricPoint {
   diagnosticInputs?: { numerator: number; denominator: number };
   /** A recoverable M101 transport failure can use the validated legacy source. */
   watchTransportFallback?: true;
+  /** The independent request confirmed that this backend does not support M067. */
+  arppuUnsupported?: true;
 }
 
 export interface BiV1MetricDay {
@@ -298,6 +322,7 @@ function assertMetricScope(rows: unknown[], query: BiV1MetricQuery) {
     if (!parsed.success) continue;
     const row = parsed.data;
     if (row.metricCode !== undefined && !requested.has(row.metricCode as BiV1MetricCode)
+      || row.pid !== undefined && row.pid !== query.pid
       || row.dimensions?.pid !== undefined && row.dimensions.pid !== query.pid) {
       throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
     }
@@ -327,12 +352,9 @@ export function validateBiV1UnitCoverage(
 export function normalizeBiV1MetricUnit(payload: unknown, query: BiV1MetricQuery): BiV1MetricSource {
   queryDimensions(query);
   queryRuleVersions(query);
-  const rawUnit = biQueryJobUnitResultSchema.extend({ rows: z.array(z.unknown()).max(100_000) }).safeParse(payload);
+  const rawUnit = biQueryJobUnitResultSchema.extend({ rows: z.array(z.unknown()).max(100_000) }).safeParse(normalizeBiV1PaymentUnitPids(payload));
   if (!rawUnit.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "bi-v1 异步单元结构无法识别", 502);
   assertMetricScope(rawUnit.data.rows, query);
-  if (rawUnit.data.rows.some(row => row !== null && typeof row === "object" && Reflect.get(row, "pid") !== undefined && Reflect.get(row, "pid") !== query.pid)) {
-    throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 返回了请求范围外的数据", 502);
-  }
   validateBiV1UnitCoverage(rawUnit.data.sourceCoverage, query);
   const selected = selectRawDimensionScope(rawUnit.data.rows, query);
   const unit = biQueryJobUnitResultSchema.safeParse({ ...rawUnit.data, rows: selected.rows });
@@ -345,7 +367,7 @@ export function normalizeBiV1MetricUnit(payload: unknown, query: BiV1MetricQuery
 
 function parseEnvelope(payload: unknown, query: BiV1MetricQuery): BiV1MetricMessage {
   const rawSuccess = rawSuccessSchema.safeParse(payload);
-  const { rows, dimensionConflicts } = selectRawDimensionScope(rawSuccess.success ? rawSuccess.data.msg.rows : [], query);
+  const { rows, dimensionConflicts } = selectRawDimensionScope(rawSuccess.success ? rawSuccess.data.msg.rows.map(normalizePaymentRowPid) : [], query);
   const scopedPayload = rawSuccess.success ? {
     ...rawSuccess.data,
     msg: {
@@ -423,6 +445,13 @@ function isRecoverableSingleMetricTransportFailure(error: unknown) {
   return error.code === "UPSTREAM_TIMEOUT" && error.statusCode === 504 && error.message === "后台接口请求超时";
 }
 
+function isArppuSelectionRejection(error: unknown, batch = false): boolean {
+  if (!isBiV1MetricSelectionRejection(error)) return false;
+  const namedCodes = error.message.match(/\bM\d{3}\b/gi);
+  if (namedCodes) return namedCodes.every(code => code.toUpperCase() === "M067");
+  return !batch || error.message.split(/[;；\r\n]+/).some(clause => BI_V1_UNSUPPORTED_METRIC_CODES_MESSAGE.test(clause.trim()));
+}
+
 function safeInteger(value: number, label: string) {
   if (!Number.isSafeInteger(value)) throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${label} 不是安全整数`, 502);
   return value;
@@ -498,7 +527,7 @@ export function aggregateBiV1MetricDays(
   if (query.granularity === "summary") throw new UpstreamError("BI_V1_REQUEST_REJECTED", "bi-v1 汇总结果不能按日聚合", 422);
   // Validate access scope before excluding rows with unrelated dimensions.
   for (const row of message.rows) {
-    if (!requested.includes(row.metricCode) || row.dimensions.pid !== query.pid
+    if (!requested.includes(row.metricCode) || row.dimensions.pid !== query.pid || row.pid !== undefined && row.pid !== query.pid
       || row.businessDate && (row.businessDate < query.startDate || row.businessDate > query.endDate)) {
       throw new UpstreamError("BI_V1_SCOPE_CONFLICT", "bi-v1 指标与请求范围不一致", 502);
     }
@@ -514,7 +543,11 @@ export function aggregateBiV1MetricDays(
     const invalidWatchSource = row.metricCode === "M101" && row.dataStatus === "SOURCE_INCOMPLETE"
       && (row.unit !== requiredMetricUnits.M101 || expectedRuleVersions.M101 !== undefined && row.ruleVersion !== expectedRuleVersions.M101);
     const invalidRetentionCount = row.metricCode === "M115" && !isValidRetentionCountRow(row);
-    const invalidSource = invalidWatchSource || invalidRetentionCount || invalidDirectMetricPlaceholder(row, expectedRuleVersions[row.metricCode]);
+    const paymentVersion = PAYMENT_RULE_VERSIONS[row.metricCode as keyof typeof PAYMENT_RULE_VERSIONS];
+    const invalidPaymentSource = paymentVersion !== undefined && (row.unit !== requiredMetricUnits[row.metricCode]
+      || row.dataStatus === "READY" && !row.businessDate
+      || row.ruleVersion !== paymentVersion && (row.dataStatus === "READY" || row.ruleVersion !== ""));
+    const invalidSource = invalidWatchSource || invalidRetentionCount || invalidPaymentSource || invalidDirectMetricPlaceholder(row, expectedRuleVersions[row.metricCode]);
     if (invalidSource) recordUpstreamReadBoundaryFailure({ code: "BI_V1_VALUE_CONFLICT", failure: { origin: "validation" } });
     if (unique.has(uniqueKey) || invalidSource) {
       if (row.businessDate) invalidMetricDays.add(`${row.businessDate}\u0000${metricKey}`);
@@ -581,7 +614,7 @@ export function aggregateBiV1MetricDays(
             throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 规则版本不符合本地准入条件`, 502);
           }
           const requiredUnit = requiredMetricUnits[row.metricCode];
-          if (requiredUnit && row.unit !== requiredUnit) {
+          if (requiredUnit ? row.unit !== requiredUnit : row.unit === "currency_per_user") {
             throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 单位与指标契约不一致`, 502);
           }
           if (row.unit === "seconds" || row.unit === "currency") {
@@ -600,17 +633,18 @@ export function aggregateBiV1MetricDays(
             metrics[key] = { dataStatus: "READY", state: "available", value, numerator: value, denominator, unit: row.unit };
             continue;
           }
-          const numerator = safeInteger(row.numerator, `${key} 分子`);
+          const numerator = row.metricCode === "M067" ? safeScalar(row.numerator, `${key} 分子`) : safeInteger(row.numerator, `${key} 分子`);
           const denominator = safeInteger(row.denominator, `${key} 分母`);
           if (retentionMetricCodes.has(row.metricCode) && numerator > denominator) {
             throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 留存人数超过注册基数`, 502);
           }
-          if (denominator === 0 ? row.value !== null : row.value === null || Math.abs(row.value - numerator / denominator) > 1e-12) {
+          const quotient = denominator === 0 ? null : numerator / denominator;
+          if (quotient === null ? row.value !== null : row.value === null || Math.abs(row.value - quotient) > 1e-12) {
             throw new UpstreamError("BI_V1_VALUE_CONFLICT", `${key} 数值与分子分母不一致`, 502);
           }
           metrics[key] = denominator === 0
             ? { dataStatus: "READY", state: "zero_denominator", value: null, numerator, denominator, unit: row.unit }
-            : { dataStatus: "READY", state: "available", value: numerator / denominator, numerator, denominator, unit: row.unit };
+            : { dataStatus: "READY", state: "available", value: row.metricCode === "M067" ? row.value : quotient, numerator, denominator, unit: row.unit };
         } catch (error) {
           if (!(error instanceof UpstreamError)) throw error;
           recordUpstreamReadBoundaryFailure({ code: error.code, failure: { origin: "validation" } });
@@ -629,6 +663,8 @@ export async function readBiV1MetricDays(
   coveringDates?: Pick<BiV1MetricQuery, "startDate" | "endDate">
 ) {
   const metricCodes = [...new Set(query.metricCodes)];
+  let recoveryUnits: BiV1MetricCode[][];
+  let arppuUnsupported = false;
   try {
     return await deliverUpstreamRead(async () => {
       if (coveringDates && client.getCached) {
@@ -653,30 +689,36 @@ export async function readBiV1MetricDays(
     });
   } catch (error) {
     if (!metricCodes.length || !canIsolateBiV1Request(error)) throw error;
+    arppuUnsupported = metricCodes.length === 1 && metricCodes[0] === "M067" && isArppuSelectionRejection(error);
+    recoveryUnits = metricCodes.length > 1 && metricCodes.includes("M067") && isArppuSelectionRejection(error, true)
+      ? [metricCodes.filter(code => code !== "M067"), ["M067"]]
+      : metricCodes.length > 1 ? metricCodes.map(code => [code]) : [];
   }
 
   const days: BiV1MetricDay[] = [];
   for (let date = query.startDate; date <= query.endDate; date = nextDate(date)) days.push({ date, metrics: {} });
   for (const day of days) for (const code of metricCodes) {
-    for (const key of biV1MetricRequestKeys(code, query)) day.metrics[key] = failedBiV1MetricRead(code);
+    for (const key of biV1MetricRequestKeys(code, query)) {
+      day.metrics[key] = failedBiV1MetricRead(code);
+      if (code === "M067" && arppuUnsupported) day.metrics[key].arppuUnsupported = true;
+    }
   }
   let next = 0;
   let stopped = false;
   let fatalFailure: { error: unknown } | undefined;
   const recoveryController = new AbortController();
-  // Independent units classify each outcome before starting the next metric.
-  // Source-wide budgets retain three workers and one attempt per metric.
+  // Independent units classify each outcome before starting the next request.
+  // Source-wide budgets retain at most three recovery workers.
   const recoveryConcurrency = currentReadDeliveryExpiryScope() === "unit" ? 1 : 3;
   const worker = async () => {
-    while (!stopped && next < metricCodes.length) {
-      const metricCode = metricCodes[next++];
-      if (metricCodes.length === 1) continue;
+    while (!stopped && next < recoveryUnits.length) {
+      const unitCodes = recoveryUnits[next++];
       try {
-        const singleQuery = { ...query, metricCodes: [metricCode] };
+        const unitQuery = { ...query, metricCodes: unitCodes };
         const completed = await deliverUpstreamRead(async () => {
-          const message = await queryBiV1Metrics(client, singleQuery, recoveryController.signal);
+          const message = await queryBiV1Metrics(client, unitQuery, recoveryController.signal);
           if (stopped) return null;
-          return aggregateBiV1MetricDays(message, singleQuery);
+          return aggregateBiV1MetricDays(message, unitQuery);
         }, recoveryController.signal);
         if (!completed) return;
         // Accepted results survive a sibling's budget closure; fatal failures
@@ -702,22 +744,30 @@ export async function readBiV1MetricDays(
           // Independent execution budgets close only their own failed unit.
           continue;
         }
+        const canIsolate = canIsolateBiV1Request(error);
         if (getUpstreamReadFailure(error)?.origin === "consumer_cancelled"
-          || !canIsolateBiV1Request(error) && !isRecoverableSingleMetricTransportFailure(error)) {
+          || !canIsolate && !isRecoverableSingleMetricTransportFailure(error)) {
           fatalFailure = { error };
           stopped = true;
           recoveryController.abort();
           throw error;
         }
-        const failedPoint = failedBiV1MetricRead(metricCode, error);
-        if (failedPoint.watchTransportFallback) {
-          const key = requestedMetricKey(metricCode, query);
-          for (const day of days) day.metrics[key] = failedPoint;
+        if (unitCodes.length > 1 && canIsolate) {
+          recoveryUnits.push(...unitCodes.map(code => [code]));
+          continue;
+        }
+        for (const metricCode of unitCodes) {
+          const failedPoint = failedBiV1MetricRead(metricCode, error);
+          if (metricCode === "M067" && isArppuSelectionRejection(error)) failedPoint.arppuUnsupported = true;
+          if (failedPoint.watchTransportFallback || failedPoint.arppuUnsupported) {
+            const key = requestedMetricKey(metricCode, query);
+            for (const day of days) day.metrics[key] = failedPoint;
+          }
         }
       }
     }
   };
-  try { await Promise.all(Array.from({ length: Math.min(recoveryConcurrency, metricCodes.length) }, worker)); }
+  try { await Promise.all(Array.from({ length: Math.min(recoveryConcurrency, recoveryUnits.length) }, worker)); }
   finally { recoveryController.abort(); }
   // Split requests have no single upstream envelope, watermark or rule version.
   return { message: null, days };

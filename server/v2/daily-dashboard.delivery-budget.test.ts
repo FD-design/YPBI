@@ -301,7 +301,7 @@ for (const stalledWindow of ["none", "recent", "previousWeek"] as const) test(`P
   const requests = calls.filter(call => call.scope === "new");
   const expectedDates = [["2026-11-02", "2026-11-04"], ["2026-10-27", "2026-10-28"]];
   expect(requests.map(call => [call.startDate, call.endDate])).toEqual(stalledWindow === "recent" ? expectedDates.slice(0, 1) : expectedDates);
-  expect(new Set(requests.map(call => call.codes))).toEqual(new Set(["M016,M026,M055,M058,M059,M081,M094,M110,M111"]));
+  expect(new Set(requests.map(call => call.codes))).toEqual(new Set(["M016,M026,M055,M058,M059,M067,M081,M094,M110,M111"]));
   const newUserPoints = result.data.series.find(series => series.metric.id === "M016.new")!.points;
   expect(newUserPoints.map(item => [item.state, item.value])).toEqual(dates.map((_, index) =>
     stalledWindow === "recent" || index === 0 && stalledWindow === "previousWeek"

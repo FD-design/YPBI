@@ -1,10 +1,11 @@
-import { DAILY_ACQUISITION_METRIC_IDS, type DailyAcquisitionGroupSeries, type DailyAcquisitionRequestStatus, type DailyAcquisitionSummary, type DailyReadingMetric } from "../../../contracts/daily-dashboard";
+import { DAILY_ACQUISITION_METRIC_IDS, DAILY_ACQUISITION_REGISTRATION_METRIC_ID, type DailyAcquisitionGroupSeries, type DailyAcquisitionRequestStatus, type DailyAcquisitionSummary, type DailyReadingMetric } from "../../../contracts/daily-dashboard";
 import { liveExportMetadata, livePeriodStatus, livePointStateLabel, type LiveDashboardReading } from "../features/dashboards/LiveDashboardContext";
 import { acquisitionDates, acquisitionMetric } from "./acquisition-preview-model";
 import type { WorkbookSheet } from "./preview-workbook";
 
 export type AcquisitionGroupDimension = "channel" | "downloadPlatform";
 export const ACQUISITION_GROUP_IDS = DAILY_ACQUISITION_METRIC_IDS;
+const registrationId = DAILY_ACQUISITION_REGISTRATION_METRIC_ID;
 export const ACQUISITION_GROUP_LABELS = { channel: "来源渠道", downloadPlatform: "下载目标" };
 export const ACQUISITION_GROUP_LIMIT = "分组全量性待确认，仅展示已返回分组的独立数值，不计算占比或补齐其他分组。";
 export type AcquisitionGroupValue = {
@@ -26,7 +27,7 @@ function requestScopeStates(request: DailyAcquisitionRequestStatus | undefined, 
 }
 function fallbackMetric(id: string): DailyReadingMetric {
   const metric = acquisitionMetric(id);
-  return { id, name: metric.name, unit: ["M001", "M003"].includes(id) ? "次" : "%", definition: metric.definition,
+  return { id, name: metric.name, unit: id === registrationId ? "人" : ["M001", "M003"].includes(id) ? "次" : "%", definition: metric.definition,
     referenceMetricId: id, authorityVersion: "", formula: null, sourceNote: null, inputs: [] };
 }
 function groupPeriod(live: LiveDashboardReading, dimension: AcquisitionGroupDimension, before: boolean) {
@@ -44,14 +45,23 @@ function groupPeriod(live: LiveDashboardReading, dimension: AcquisitionGroupDime
   const dates = query ? acquisitionDates({ start: query.dateRange[0], end: query.dateRange[1] }) : [];
   const blocked = !period ? "未启用对比" : resource?.status === "loading" ? "读取中" : resource?.status === "failure" ? "读取失败"
     : !matches ? "查询范围不匹配" : invalidDimension ? "数据异常" : !extension ? `${ACQUISITION_GROUP_LABELS[dimension]}维度待接入：BI 尚未接入该维度的真实分组结果。` : undefined;
-  const status = blocked ?? ([...new Set([requestState(extension?.day), requestState(extension?.summary), ...requestScopeStates(extension?.day, "逐日"), ...requestScopeStates(extension?.summary, "汇总")].filter(Boolean))].join("；") || "已返回");
-  return { query, dates, groups, groupIndex, extension, blocked, status, fetchedAt: matches ? result.data.fetchedAt : "", freshness: livePeriodStatus(live, before) };
+  const registration = extension?.registration;
+  const registrationNotice = registration ? ([["逐日", registration.day], ["汇总", registration.summary]] as const).flatMap(([label, request]) => {
+    const state = requestState(request);
+    return [...(state ? [`${label} · ${acquisitionMetric(registrationId).name}：${state}`] : []), ...requestScopeStates(request, label)];
+  }).join("；") : "";
+  const status = blocked ?? ([...new Set([requestState(extension?.day), requestState(extension?.summary), ...requestScopeStates(extension?.day, "逐日"),
+    ...requestScopeStates(extension?.summary, "汇总"), registrationNotice].filter(Boolean))].join("；") || "已返回");
+  const registrationMetric = matches ? result.data.series.find(series => series.metric.id === registrationId)?.metric : undefined;
+  return { query, dates, groups, groupIndex, extension, registrationNotice, registrationMetric, blocked, status, fetchedAt: matches ? result.data.fetchedAt : "", freshness: livePeriodStatus(live, before) };
 }
 type GroupPeriod = ReturnType<typeof groupPeriod>;
 function groupMetric(period: GroupPeriod, key: string, id: string): AcquisitionGroupMetric {
   const groups = period.groupIndex.get(key) ?? [], group = groups.length === 1 ? groups[0] : undefined;
   const series = group?.series.filter(series => series.metric.id === id) ?? [], selected = series.length === 1 ? series[0] : undefined;
-  const metric = selected?.metric ?? fallbackMetric(id);
+  const isRegistration = id === registrationId;
+  const metric = selected?.metric ?? (isRegistration ? period.registrationMetric : undefined) ?? fallbackMetric(id);
+  const requests = isRegistration ? period.extension?.registration : period.extension;
   const pointIndex = new Map<string, DailyAcquisitionGroupSeries["points"]>();
   for (const point of selected?.points ?? []) pointIndex.set(point.date, [...(pointIndex.get(point.date) ?? []), point]);
   const read = (point: DailyAcquisitionSummary | DailyAcquisitionGroupSeries["points"][number] | undefined, request: DailyAcquisitionRequestStatus | undefined, date: string, duplicate = false): AcquisitionGroupValue => {
@@ -60,7 +70,7 @@ function groupMetric(period: GroupPeriod, key: string, id: string): AcquisitionG
     const invalidInputs = point && (point.inputs.length !== metric.inputs.length || metric.inputs.some(input => point.inputs.filter(value => value.key === input.key).length !== 1)
       || point.inputs.some(input => input.value !== null && (!Number.isFinite(input.value) || input.value < 0)));
     const failure = period.blocked ?? (groups.length > 1 || series.length > 1 || duplicate ? "数据异常" : undefined)
-      ?? requestState(request) ?? (!group ? "本期未返回该分组" : !selected ? "指标未返回" : undefined);
+      ?? requestState(request) ?? (isRegistration && scopeStatus ? undefined : !group ? "本期未返回该分组" : !selected ? "指标未返回" : undefined);
     const valid = !failure && point?.state === "available" && (!status || status === "READY") && point.value !== null && Number.isFinite(point.value) && point.value >= 0 && !invalidInputs;
     const readableInputs = !failure && (!status || status === "READY") && !invalidInputs && (valid || point?.state === "zero_denominator");
     const state = failure ?? (status && status !== "READY" ? acquisitionPointStateLabel({ date, value: null, inputs: [], state: "no_value", sourceStatus: status })
@@ -71,12 +81,14 @@ function groupMetric(period: GroupPeriod, key: string, id: string): AcquisitionG
       inputs: metric.inputs.map(input => ({ ...input, value: readableInputs ? point!.inputs.find(value => value.key === input.key)?.value ?? null : null })),
       fetchedAt: request?.generatedAt ?? period.fetchedAt, watermark: request?.watermark ?? null, freshness: period.freshness };
   };
-  return { metric, summary: read(selected?.summary, period.extension?.summary, period.query?.dateRange.join(" 至 ") ?? ""),
-    points: period.dates.map(date => { const points = pointIndex.get(date) ?? []; return read(points.length === 1 ? points[0] : undefined, period.extension?.day, date, points.length > 1); }) };
+  return { metric, summary: read(selected?.summary, requests?.summary, period.query?.dateRange.join(" 至 ") ?? ""),
+    points: period.dates.map(date => { const points = pointIndex.get(date) ?? []; return read(points.length === 1 ? points[0] : undefined, requests?.day, date, points.length > 1); }) };
 }
 
 export function acquisitionGroupModel(live: LiveDashboardReading, dimension: AcquisitionGroupDimension) {
-  const current = groupPeriod(live, dimension, false), previous = groupPeriod(live, dimension, true), ids = ACQUISITION_GROUP_IDS[dimension];
+  const current = groupPeriod(live, dimension, false), previous = groupPeriod(live, dimension, true);
+  const hasRegistration = dimension === "channel" && (current.extension?.registration || previous.extension?.registration);
+  const ids: readonly string[] = hasRegistration ? [...ACQUISITION_GROUP_IDS[dimension], registrationId] : ACQUISITION_GROUP_IDS[dimension];
   const keys = [...new Set([...current.groups, ...(live.comparison ? previous.groups : [])].map(group => group.key))];
   const rows: AcquisitionLiveGroupRow[] = keys.map(key => ({ key, name: key,
     current: Object.fromEntries(ids.map(id => [id, groupMetric(current, key, id)])),
@@ -137,7 +149,10 @@ export function acquisitionGroupWorkbook(live: LiveDashboardReading, dimension: 
   const head = ["周期", "日期区间", "平台", label, "指标", "数值", "单位", "实际输入", "状态", "规则版本", "查询时间", "数据至", "刷新状态", "来源状态"];
   const requestMetadata = (name: string, period: GroupPeriod) => (["day", "summary"] as const).flatMap(granularity => {
     const request = period.extension?.[granularity], kind = granularity === "day" ? "逐日" : "汇总";
-    return [[`${name}${kind}请求状态`, request?.state ?? period.blocked ?? "分组待接入"], [`${name}${kind}来源时间`, request?.generatedAt ?? null], [`${name}${kind}数据至`, request?.watermark ?? null]];
+    const metadata = (label: string, lane: DailyAcquisitionRequestStatus | undefined) => [[`${label}请求状态`, lane?.state ?? period.blocked ?? "分组待接入"],
+      [`${label}来源时间`, lane?.generatedAt ?? null], [`${label}数据至`, lane?.watermark ?? null]];
+    return [...metadata(`${name}${kind}`, request), ...(model.ids.includes(registrationId)
+      ? metadata(`${name}新增用户数${kind}`, period.extension?.registration?.[granularity]) : [])];
   });
   return [{ name: "数据说明", rows: [...liveExportMetadata(live), ["分组范围", ACQUISITION_GROUP_LIMIT], ["当前状态", model.current.status], ...requestMetadata("当前", model.current), ...(model.previous ? [["对比状态", model.previous.status], ...requestMetadata("对比", model.previous), ["比较单位", "数值与差值保留原始单位；比率变化为百分点，计数变化为百分比。计数零基准保留差值，变化率为空。"]] : [])] },
     { name: `${label}汇总`, rows: [head, ...records.map(record => row(record.period, record.key, record.reading.metric, record.reading.summary))] },

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { monthlyMetricMetadataSchema } from "../../contracts/monthly-query-scope";
 import { BI_V1_PLAYBACK_API } from "../upstream/bi-v1.adapter";
-import { BI_V1_AD_TYPE_VALUES, BI_V1_RETENTION_DAYS, BI_V1_METRICS_API, biV1MetricCodeSchema } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_AD_TYPE_VALUES, BI_V1_RETENTION_DAYS, BI_V1_METRICS_API, PAYMENT_RULE_VERSIONS, biV1MetricCodeSchema } from "../upstream/bi-v1.metrics-adapter";
 import type { UpstreamReadClient } from "../upstream/client";
 import { sourceReadErrorCode } from "./source-read-diagnostics";
 
@@ -133,7 +133,7 @@ const DIMENSION_VALUES: Readonly<Record<Exclude<DimensionField, "pid">, readonly
   adType: BI_V1_AD_TYPE_VALUES,
   retentionDay: BI_V1_RETENTION_DAYS
 };
-const units = new Set(["count", "ratio", "count_per_user", "seconds", "currency"]);
+const units = new Set(["count", "ratio", "count_per_user", "seconds", "currency", "currency_per_user"]);
 const statuses = new Set(["READY", "PROCESSING", "NOT_MATURE", "SOURCE_INCOMPLETE", "FAILED"]);
 const isoDate = z.iso.date();
 const isoDateTime = z.iso.datetime({ offset: true });
@@ -254,15 +254,25 @@ export function createOperatingEvidenceCollector(client: UpstreamReadClient, opt
     const conflict = (reason: IdentityFailure, identityState?: OperatingEvidenceUnidentifiedRow["identityState"]): OperatingEvidenceUnidentifiedRow => ({ rowIndex, scope: "scope_conflict", reason, ...(identityState ? { identityState } : {}) });
     if (!isObject(raw)) return conflict("row_invalid", { row: invalid(raw, true) });
     if (!params.pid || !params.startDate || !params.endDate || !params.metricCodes || params.startDate >= params.endDate) return conflict("request_scope_invalid");
+    const code = select(raw, "metricCode", string(value => metricCodes.has(value)));
     const dimensionsSource = field(raw, "dimensions");
-    const pid = select(dimensionsSource.value, "pid", string(value => /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(value)));
+    const pidFormat = string(value => /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(value));
+    const dimensionPid = select(dimensionsSource.value, "pid", pidFormat);
+    const rowPid = select(raw, "pid", pidFormat);
+    if (rowPid.state.state !== "missing") {
+      if (typeof rowPid.value !== "string") return conflict("pid_invalid", { pid: rowPid.state });
+      if (rowPid.value !== params.pid || typeof dimensionPid.value === "string" && rowPid.value !== dimensionPid.value) return conflict("pid_mismatch");
+    }
+    const topLevelPaymentPid = dimensionPid.state.state === "missing" && rowPid.state.state !== "missing"
+      && (dimensionsSource.present ? isObject(dimensionsSource.value) : true)
+      && typeof code.value === "string" && Object.hasOwn(PAYMENT_RULE_VERSIONS, code.value);
+    const pid = topLevelPaymentPid ? rowPid : dimensionPid;
     if (pid.state.state === "missing") return conflict("pid_missing", { pid: pid.state });
     if (typeof pid.value !== "string") return conflict("pid_invalid", { pid: pid.state });
     if (pid.value !== params.pid) return conflict("pid_mismatch");
     const businessDate = select(raw, "businessDate", date);
     if (businessDate.state.state !== "missing" && typeof businessDate.value !== "string") return conflict("date_invalid", { businessDate: businessDate.state });
     if (typeof businessDate.value === "string" && (businessDate.value < params.startDate || businessDate.value >= params.endDate)) return conflict("date_out_of_range");
-    const code = select(raw, "metricCode", string(value => metricCodes.has(value)));
     if (code.state.state === "missing") return conflict("metric_code_missing", { metricCode: code.state });
     if (typeof code.value !== "string") return conflict("metric_code_invalid", { metricCode: code.state });
     if (!params.metricCodes.split(",").includes(code.value)) return conflict("metric_code_out_of_scope");
@@ -300,8 +310,9 @@ export function createOperatingEvidenceCollector(client: UpstreamReadClient, opt
         if (selected.value !== undefined) values[name] = selected.value;
       }
     }
+    const dimensions = projectDimensions(dimensionsSource.value);
     return { rowIndex, scope: "in_scope", dateScope: businessDate.state.state === "missing" ? "undated" : "dated", ...values,
-      dimensions: projectDimensions(dimensionsSource.value), fieldState: states,
+      dimensions: topLevelPaymentPid ? { ...dimensions, pid: pid.value, fieldState: { ...dimensions.fieldState, pid: pid.state } } : dimensions, fieldState: states,
       omittedFieldCount: omittedFields(raw, code.value === "M018" ? [...ROW_FIELDS, ...MONTHLY_ROW_FIELDS] : ROW_FIELDS) };
   };
   const projectResponse = (payload: unknown, params: OperatingEvidenceParams): OperatingEvidenceResponse => {

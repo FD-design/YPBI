@@ -7,7 +7,7 @@ const date = "2020-01-01";
 const timeoutMs = 50;
 const query = { boardId: "5.10", pid: "PH", dateRange: [date, date] as [string, string] };
 const now = () => new Date("2026-10-27T00:00:00Z");
-const codes = ["M008", "M016", "M058", "M059", "M061", "M064"];
+const codes = ["M008", "M016", "M058", "M059", "M061", "M064", "M067"];
 
 function fixture(timedOutCodes: readonly string[], holdPrimary = false, terminal?: UpstreamError) {
   const calls: Array<{ codes: string[]; overall: boolean }> = [];
@@ -31,11 +31,11 @@ function fixture(timedOutCodes: readonly string[], holdPrimary = false, terminal
     if (requested.length > 1) throw new UpstreamError("UPSTREAM_INVALID_REQUEST", "unsupported metrics", 422);
     if (overall && requested[0] === "M008" && terminal) throw terminal;
     const metricCode = requested[0], filters = JSON.parse(params.dimensionFilters ?? "{}");
-    const ratio = ["M061", "M064"].includes(metricCode), currency = metricCode === "M058";
+    const ratio = ["M061", "M064"].includes(metricCode), currency = metricCode === "M058", arppu = metricCode === "M067";
     return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: now().toISOString(), watermark: null, rows: [{
       metricCode, businessDate: date, dimensions: { pid: params.pid, ...filters }, value: ratio ? 0.5 : 7,
-      numerator: ratio ? 1 : 7, denominator: ratio ? 2 : 0, unit: ratio ? "ratio" : currency ? "currency" : "count",
-      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: currency ? "paid-order-value-rmb-v2" : "synthetic-v1"
+      numerator: ratio ? 1 : 7, denominator: ratio ? 2 : arppu ? 1 : 0, unit: ratio ? "ratio" : currency ? "currency" : arppu ? "currency_per_user" : "count",
+      dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: currency || arppu ? "paid-order-value-rmb-v2" : metricCode === "M059" ? "paid-order-value-v1" : "synthetic-v1"
     }] } };
   } };
   const logger = { info: (fields: { sources?: Array<{ sourceId: string; budgetExpired: boolean }> }) => {
@@ -54,7 +54,7 @@ test("恢复单元超时只关闭该项，后续健康M058/M059/M061/M064继续�
   expect(f.calls.filter(call => call.overall && call.codes.length === 1).map(call => call.codes[0])).toEqual(codes);
   expect(f.timeouts.map(timeout => timeout.code)).toEqual(["M008"]);
   expect(f.timeouts[0].elapsedMs).toBeGreaterThanOrEqual(timeoutMs - 1);
-  for (const id of ["M058", "M059", "M058.new", "M059.new"]) expect(point(result, id)).toMatchObject({ state: "available", sourceStatus: "READY", value: 7 });
+  for (const id of ["M058", "M059", "M067", "M058.new", "M059.new", "M067.new"]) expect(point(result, id)).toMatchObject({ state: "available", sourceStatus: "READY", value: 7 });
   for (const id of ["M061", "M064"]) expect(point(result, id)).toMatchObject({ state: "available", sourceStatus: "READY", value: 0.5 });
   expect(f.budgets).toEqual([true]);
 });

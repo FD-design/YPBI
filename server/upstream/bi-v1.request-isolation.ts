@@ -5,7 +5,9 @@ const selectedCodes = String.raw`(?:\s*[:：]?\s*${metricCodes})?`;
 const englishSelector = String.raw`(?:metrics?|metric\s*codes?)`;
 const chineseSelector = String.raw`指标(?:编码|代码)?`;
 const sentenceEnd = String.raw`[.!。！]?`;
+export const BI_V1_UNSUPPORTED_METRIC_CODES_MESSAGE = /^包含不支持的\s+metricCodes[。！]?$/i;
 const selectionRejections = [
+  BI_V1_UNSUPPORTED_METRIC_CODES_MESSAGE,
   new RegExp(String.raw`^(?:unknown|unsupported|invalid|unrecognized)\s+${englishSelector}${selectedCodes}${sentenceEnd}$`, "i"),
   new RegExp(String.raw`^${englishSelector}${selectedCodes}\s+(?:(?:is|are)\s+)?(?:unknown|unsupported|invalid|unrecognized|not\s+supported|not\s+found|not\s+available)${sentenceEnd}$`, "i"),
   new RegExp(String.raw`^(?:未知|不支持(?:的)?|无效(?:的)?|非法(?:的)?|不存在(?:的)?|未开放(?:的)?)${chineseSelector}${selectedCodes}${sentenceEnd}$`, "i"),
@@ -17,7 +19,7 @@ export function canIsolateBiV1Request(error: unknown) {
   return error instanceof UpstreamError && error.code === "BI_V1_RESPONSE_INVALID" || isBiV1MetricSelectionRejection(error);
 }
 
-export function isBiV1MetricSelectionRejection(error: unknown) {
+export function isBiV1MetricSelectionRejection(error: unknown): error is UpstreamError {
   if (!(error instanceof UpstreamError)) return false;
   const rejected = error.code === "BI_V1_REQUEST_REJECTED" && [400, 422].includes(error.statusCode)
     || error.code === "UPSTREAM_INVALID_REQUEST" && error.statusCode === 422;

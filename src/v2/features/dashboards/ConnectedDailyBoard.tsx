@@ -4,8 +4,7 @@ import type { V2PlatformCatalogSuccess } from "../../../../contracts/bi-v2";
 import { DateRangePicker } from "../../../components/ui/DateRangePicker";
 import { MenuSelect } from "../../../components/ui/MenuSelect";
 import { fetchDailyDashboard } from "../../api/client";
-import type { V2ResourceState } from "../../api/useV2Resource";
-import { useDailyBoardResource } from "./useDailyBoardResources";
+import { useV2Resource, type V2ResourceState } from "../../api/useV2Resource";
 import { useDataEnvironment } from "../../app/DataEnvironmentProvider";
 import { navigate, useBrowserLocation } from "../../app/router";
 import { ResourceFailurePanel, StatePanel } from "../../components/StatePanel";
@@ -22,7 +21,7 @@ function formatValue(value: number | null, unit: string) {
 
 export default function ConnectedDailyBoard({ query, board, platforms }: { query: DailyDashboardQuery; board: Board; platforms: Platforms; operatingAsyncPidGroups?: readonly (readonly string[])[] }) {
   const location = useBrowserLocation();
-  const resource = useDailyBoardResource(JSON.stringify(query), (signal) => fetchDailyDashboard(query, board.metricIds, signal));
+  const resource = useV2Resource(JSON.stringify(query), (signal) => fetchDailyDashboard(query, board.metricIds, signal));
   return <DailyBoardPresentation key={JSON.stringify([query, new URLSearchParams(location.search).get("compare")])} query={query} board={board} platforms={platforms} resource={resource} />;
 }
 

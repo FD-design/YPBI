@@ -92,8 +92,12 @@ describe("HTTP 语义近例通过真实Client保持整路失败", () => {
       expect(calls).toHaveLength(1);
       calls.length = 0;
       const groups = await readBiV1AcquisitionGroups(client, { pid: "PH", dateRange: ["2020-01-01", "2020-01-01"] }, metricFor);
-      expect(calls).toHaveLength(4);
-      expect(groups.channel).toMatchObject({ groups: [], day: { state: "source_failure" }, summary: { state: "source_failure" } });
+      expect(calls.map(({ dimensions, granularity, metricCodes }) => `${dimensions}/${granularity}/${metricCodes}`).sort()).toEqual([
+        "channel/day/M001,M003,M005,M099", "channel/day/M008", "channel/summary/M001,M003,M005,M099", "channel/summary/M008",
+        "downloadPlatform/day/M003", "downloadPlatform/summary/M003"
+      ]);
+      expect(groups.channel).toMatchObject({ groups: [], day: { state: "source_failure" }, summary: { state: "source_failure" },
+        registration: { day: { state: "source_failure" }, summary: { state: "source_failure" } } });
       expect(groups.downloadPlatform).toMatchObject({ groups: [], day: { state: "source_failure" }, summary: { state: "source_failure" } });
     });
   }

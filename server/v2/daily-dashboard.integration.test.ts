@@ -30,7 +30,7 @@ const makeRow = (metricCode: string, filters: Filters, numerator: number, denomi
   numerator, denominator, unit, dataStatus: "READY", metricVersion: "bi-v1",
   ruleVersion: metricCode === "M101" ? "legacy-content-view-count-v1"
     : ["M055", "M111"].includes(metricCode) ? "ad-raw-click-v2"
-      : metricCode === "M110" ? "ad-clicks-per-active-user-v3" : "integration-fixture-v1"
+      : metricCode === "M110" ? "ad-clicks-per-active-user-v3" : metricCode === "M059" ? "paid-order-value-v1" : "integration-fixture-v1"
 });
 const envelope = (rows: Row[]) => ({ code: 200, msg: { metricVersion: "bi-v1", generatedAt, watermark: null, rows } });
 
@@ -99,6 +99,11 @@ function requestDrivenUpstream(failure: "none" | "cross" | "legacy_fallback" = "
     if (path === BI_V1_METRICS_API) {
       const requestedCodes = new Set(params.metricCodes.split(","));
       const filters: Filters = JSON.parse(params.dimensionFilters ?? "{}");
+      if (params.dimensions === "channel" && params.metricCodes === "M008") {
+        const registration = { ...makeRow("M008", { channel: "A-B" }, params.granularity === "summary" ? 17 : 3), ruleVersion: "registration-d0-v2" };
+        if (params.granularity === "summary") delete registration.businessDate;
+        return envelope([registration]);
+      }
       if (failure === "cross" && scopeKey(filters) === scopeKey({ clientPlatform: "android", userCohort: "old" })
         || failure === "legacy_fallback" && scopeKey(filters) === scopeKey({ clientPlatform: "android" })) {
         throw new UpstreamError("UPSTREAM_TIMEOUT", "fixture group unavailable", 504);
@@ -154,7 +159,10 @@ function expectRequestScopes(calls: Request[]) {
     if (params.dimensions === "channel" || params.dimensions === "downloadPlatform") {
       expect(params.dimensionFilters).toBeUndefined();
       expect(["day", "summary"]).toContain(params.granularity);
-      expect(params.metricCodes.split(",")).toEqual([...ACQUISITION_GROUP_REQUEST_METRICS[params.dimensions]]);
+      const codes = params.metricCodes.split(",");
+      const expected = params.dimensions === "channel" && codes.includes("M008")
+        ? ["M008"] : [...ACQUISITION_GROUP_REQUEST_METRICS[params.dimensions]];
+      expect(codes).toEqual(expected);
       expect(params.endDate).toBe("2020-01-02");
       continue;
     }
@@ -388,6 +396,11 @@ describe("日看板按实际请求范围读取模拟上游", () => {
     const core = await service.execute({ ...range, boardId: "5.2" });
     for (const boardId of ["5.7", "5.8", "5.9", "5.11", "5.12"]) {
       const result = await service.execute({ ...range, boardId });
+      if (boardId === "5.7") {
+        const registration = result.data.acquisitionGroups?.channel.groups.find(group => group.key === "A-B")?.series.find(series => series.metric.id === "M008");
+        expect(registration?.points[0]).toMatchObject({ value: 3, sourceStatus: "READY" });
+        expect(registration?.summary).toMatchObject({ value: 17, sourceStatus: "READY" });
+      }
       for (const series of result.data.series) {
         if (series.points[0].sourceStatus !== "READY") continue;
         expect(series.points[0]).toEqual(point(core, series.metric.id));
@@ -396,8 +409,9 @@ describe("日看板按实际请求范围读取模拟上游", () => {
     }
     expectRequestScopes(calls);
     const grouped = calls.filter(call => ["channel", "downloadPlatform"].includes(call.params.dimensions));
-    expect(grouped.map(call => `${call.params.dimensions}/${call.params.granularity}`).sort()).toEqual([
-      "channel/day", "channel/summary", "downloadPlatform/day", "downloadPlatform/summary"
+    expect(grouped.map(({ params }) => `${params.dimensions}/${params.granularity}/${params.metricCodes}`).sort()).toEqual([
+      "channel/day/M001,M003,M005,M099", "channel/day/M008",
+      "channel/summary/M001,M003,M005,M099", "channel/summary/M008", "downloadPlatform/day/M003", "downloadPlatform/summary/M003"
     ]);
   });
 });

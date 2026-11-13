@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import { dailyDashboardMatchesQuery, dailyDashboardQuerySchema, dailyDashboardSuccessSchema } from "../../contracts/daily-dashboard";
+import { DAILY_ACQUISITION_REGISTRATION_HEADER, dailyDashboardMatchesQuery, dailyDashboardQuerySchema, dailyDashboardSuccessSchema } from "../../contracts/daily-dashboard";
 import { loadEnv } from "../config/env";
 import type { IdentityResolution } from "../identity/identity-provider";
 import { UpstreamError } from "../upstream/client";
@@ -340,12 +340,15 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
   type FixtureRow = Record<string, unknown>;
   const fixture = (metricCode: string, value: number | null, unit = "count", dimensions: Record<string, string> = {}, numerator = value, denominator = 0): FixtureRow => ({
     metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, value, numerator, denominator, unit,
-    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" ? "paid-order-value-rmb-v2" : metricCode === "M102" ? "foreground-watch-duration-v1" : "isolated-value-fixture-v1"
+    dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M058" || metricCode === "M067" ? "paid-order-value-rmb-v2"
+      : metricCode === "M059" ? "paid-order-value-v1" : metricCode === "M102" ? "foreground-watch-duration-v1" : "isolated-value-fixture-v1"
   });
   const rows = () => [fixture("M102", 64, "seconds"), fixture("M026", 4), fixture("M016", 6), fixture("M008", 3),
     fixture("M058", 162.02, "currency"), fixture("M058", 141.02, "currency", { userCohort: "new" }),
     fixture("M058", 138.02, "currency", { sourceType: "natural" }), fixture("M058", 24, "currency", { sourceType: "internal_channel" }),
     fixture("M059", 5), fixture("M059", 3, "count", { userCohort: "new" }),
+    fixture("M067", 162.02 / 5, "currency_per_user", {}, 162.02, 5),
+    fixture("M067", 141.02 / 3, "currency_per_user", { userCohort: "new" }, 141.02, 3),
     fixture("M061", 5 / 6, "ratio", {}, 5, 6), fixture("M064", 1, "ratio", {}, 3, 3)];
   const eleven = { M102: 64 / 3600, M058: 162.02, "M058.new": 141.02, "M058.nature": 138.02, "M058.internal": 24,
     M061: 5 / 6, M064: 1, M087: 162.02 / 6, M088: 141.02 / 3, M067: 162.02 / 5, "M067.new": 141.02 / 3 };
@@ -397,12 +400,12 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
     for (const request of requests) expect(request).not.toHaveProperty("expectedRuleVersions");
   });
 
-  test("付费率直接使用接口同群输入，独立付费人数仅作为ARPPU分母", async () => {
+  test("付费率与ARPPU直接使用各自的同群输入", async () => {
     const { point } = await execute(row => row.metricCode === "M059" ? { ...row, value: 2, numerator: 2 } : row);
     expect(point("M061")).toMatchObject({ value: 5 / 6, inputs: [{ value: 5 }, { value: 6 }] });
     expect(point("M064")).toMatchObject({ value: 1, inputs: [{ value: 3 }, { value: 3 }] });
-    expect(point("M067").value).toBe(162.02 / 2);
-    expect(point("M067.new").value).toBe(141.02 / 2);
+    expect(point("M067").value).toBe(162.02 / 5);
+    expect(point("M067.new").value).toBe(141.02 / 3);
   });
 
   test("同群付费率拒绝M061的7/6与M064的4/3，其他指标保持独立", async () => {
@@ -431,7 +434,7 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
 
   for (const [dataStatus, state] of [["PROCESSING", "no_value"], ["SOURCE_INCOMPLETE", "no_value"], ["NOT_MATURE", "immature"], ["FAILED", "source_failure"]] as const)
     test(`${dataStatus}保留原状态与派生状态，旧源非零值不补位`, async () => {
-      const { point } = await execute(row => ["M058", "M102", "M061", "M064"].includes(String(row.metricCode)) ? { ...row, dataStatus } : row);
+      const { point } = await execute(row => ["M058", "M067", "M102", "M061", "M064"].includes(String(row.metricCode)) ? { ...row, dataStatus } : row);
       for (const id of [...Object.keys(eleven), "M098"]) expect(point(id)).toMatchObject({ state, value: null, sourceStatus: dataStatus });
       for (const id of ["M058", "M102", "M061", "M064"]) {
         const diagnostic = dataStatus === "SOURCE_INCOMPLETE" ? id === "M061" ? [5, 6] : id === "M064" ? [3, 3] : null : null;
@@ -441,7 +444,7 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
     });
 
   test("来源缺项、缺日和请求失败不借旧值或邻日，完整日才能合计", async () => {
-    const absent = await execute(row => ["M058", "M102", "M061", "M064"].includes(String(row.metricCode)) ? null : row);
+    const absent = await execute(row => ["M058", "M067", "M102", "M061", "M064"].includes(String(row.metricCode)) ? null : row);
     for (const id of [...Object.keys(eleven), "M098"]) expect(absent.point(id)).toMatchObject({ state: "no_record", value: null });
     const missingDay = await execute(row => row, "5.2", [date, "2020-01-02"]);
     for (const id of [...Object.keys(eleven), "M098"]) expect(missingDay.series(id).points[1]).toMatchObject({ state: "no_record", value: null });
@@ -452,11 +455,11 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
   });
 
   test("真零金额时长保持可用，派生分母为零独立标记", async () => {
-    const zero = await execute(row => ["M058", "M102"].includes(String(row.metricCode)) ? { ...row, value: 0, numerator: 0 } : row);
+    const zero = await execute(row => ["M058", "M067", "M102"].includes(String(row.metricCode)) ? { ...row, value: 0, numerator: 0 } : row);
     for (const id of ["M102", "M058", "M058.new", "M058.nature", "M058.internal", "M067", "M067.new", "M087", "M088", "M098"])
       expect(zero.point(id)).toMatchObject({ state: "available", value: 0 });
     const noBase = await execute(row => ["M026", "M016", "M008", "M059"].includes(String(row.metricCode)) ? { ...row, value: 0, numerator: 0 }
-      : ["M061", "M064"].includes(String(row.metricCode)) ? { ...row, value: null, numerator: 0, denominator: 0 } : row);
+      : ["M061", "M064", "M067"].includes(String(row.metricCode)) ? { ...row, value: null, numerator: 0, denominator: 0 } : row);
     for (const id of ["M067", "M067.new", "M087", "M088", "M098", "M061", "M064"])
       expect(noBase.point(id)).toMatchObject({ state: "zero_denominator", value: null });
   });
@@ -482,8 +485,10 @@ describe("bi-v1 金额、时长与同群付费率隔离样本", () => {
         expect(series(id).points[1]).toMatchObject({ state: "invalid_value", value: null });
         expect(series(id).periodStatistics).toMatchObject({ state: "incomplete", values: [] });
       }
-      for (const id of ["M067", "M067.new", "M087", "M088"])
+      for (const id of ["M087", "M088"])
         expect(series(id).points[1]).toMatchObject({ state: "invalid_value", value: null });
+      for (const id of ["M067", "M067.new"] as const)
+        expect(series(id).points[1]).toMatchObject({ state: "available", value: eleven[id] });
       expect(series("M102").points.every(point => point.state === "available")).toBe(true);
       expect(series("M061").points.every(point => point.state === "available")).toBe(true);
     }
@@ -602,7 +607,7 @@ describe("bi-v1 付费人数与广告点击人数", () => {
   type MetricRow = Record<string, unknown>;
   const metricRow = (metricCode: string, value: number, dimensions: Record<string, string> = {}): MetricRow => ({
     metricCode, businessDate: date, dimensions: { pid: "PH", ...dimensions }, value, numerator: value, denominator: 0,
-    unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "count-fixture-v1"
+    unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: metricCode === "M059" ? "paid-order-value-v1" : "count-fixture-v1"
   });
   const sourceRows = () => [metricRow("M016", 6), metricRow("M008", 3),
     metricRow("M059", 5), metricRow("M059", 3, { userCohort: "new" }),
@@ -2095,6 +2100,23 @@ async function appFor(identity: IdentityResolution = reader(), executor: DailyDa
   return app;
 }
 describe("日看板接口边界", () => {
+  test("只向声明支持的获客页面返回新增用户分组，旧页面保留原响应和请求数", async () => {
+    const registrationReads: string[] = [];
+    const app = await appFor(reader(), new DailyDashboardService({ get: async (_path, params) => {
+      if (params.dimensions === "channel" && params.metricCodes === "M008") registrationReads.push(params.granularity);
+      return { code: 200, msg: { pageData: [], totalCount: 0, metricVersion: "bi-v1", generatedAt: "2026-09-07T00:00:00Z", watermark: null, rows: [] } };
+    } }));
+    const request = { method: "POST" as const, url: "/api/bi/v2/queries/dashboards/daily-reading", payload: { ...query, boardId: "5.7" } };
+    const legacy = await app.inject(request);
+    expect(legacy.statusCode).toBe(200);
+    expect(legacy.json().data.acquisitionGroups.channel.registration).toBeUndefined();
+    expect(registrationReads).toEqual([]);
+    const current = await app.inject({ ...request, headers: { [DAILY_ACQUISITION_REGISTRATION_HEADER]: "1" } });
+    expect(current.statusCode).toBe(200);
+    expect(current.json().data.acquisitionGroups.channel.registration).toMatchObject({ day: { state: "empty" }, summary: { state: "empty" } });
+    expect(registrationReads.sort()).toEqual(["day", "summary"]);
+  });
+
   test("测试数据环境把整张日看板查询置于临时测试后台配置", async () => {
     let observed: ReturnType<typeof currentUpstreamRequestProfile>;
     const app = Fastify(); apps.push(app);

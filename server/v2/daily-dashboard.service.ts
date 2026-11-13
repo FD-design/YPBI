@@ -13,7 +13,7 @@ import { RETENTION_PLUS_API } from "../upstream/retention.adapter";
 import { REALTIME_API } from "../upstream/realtime.adapter";
 import { readWatchAttemptDay, type WatchAttemptDay } from "../upstream/watch-daily.adapter";
 import { BI_V1_EFFECTIVE_PLAY_RULE_VERSION, BI_V1_PLAYBACK_API, aggregateBiV1Playback, projectBiV1PlaybackGroups, queryBiV1Playback, unavailableBiV1PlaybackGroups, type BiV1PlaybackDay, type BiV1PlaybackMetricCode } from "../upstream/bi-v1.adapter";
-import { BI_V1_METRICS_API, LANDING_IP_CONVERSION_RULE_VERSIONS, biV1MetricKey, biV1MetricRequestKeys, failedBiV1MetricRead, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension, type BiV1MetricQuery } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_METRICS_API, LANDING_IP_CONVERSION_RULE_VERSIONS, PAYMENT_RULE_VERSIONS, biV1MetricKey, biV1MetricRequestKeys, failedBiV1MetricRead, readBiV1MetricDays, type BiV1MetricCode, type BiV1MetricDay, type BiV1MetricUnit, type BiV1MetricDimensionFilters, type BiV1MetricDimension, type BiV1MetricQuery } from "../upstream/bi-v1.metrics-adapter";
 import { readBiV1MonthlyMetricDays, type BiV1MonthlyMetricDay } from "../upstream/bi-v1.monthly-adapter";
 import { ACQUISITION_GROUP_METRICS, readBiV1AcquisitionGroups, supportsAcquisitionGroupMetric, type AcquisitionGroupMetric } from "../upstream/bi-v1.acquisition-adapter";
 export const CHANNEL_V2_API = "/api/admin/statistics/channel/channelStatByTypeV2";
@@ -55,7 +55,6 @@ const VALUE_RULE_VERSIONS = {
   M034: BI_V1_EFFECTIVE_PLAY_RULE_VERSION,
   M036: BI_V1_EFFECTIVE_PLAY_RULE_VERSION,
   M055: "ad-raw-click-v2",
-  M058: "paid-order-value-rmb-v2",
   M099: LANDING_IP_CONVERSION_RULE_VERSIONS.day,
   M101: "legacy-content-view-count-v1",
   M102: "foreground-watch-duration-v1",
@@ -65,7 +64,8 @@ const VALUE_RULE_VERSIONS = {
 const WATCH_TIME_NOTE = `来自 bi-v1 M102 的播放成功后前台观看时长，规则版本 ${VALUE_RULE_VERSIONS.M102}，单位为秒。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态。`;
 const AD_CLICK_COUNT_NOTE = "来自 bi-v1 M055 同日、同 PID、同广告范围及人群的点击次数；展示 READY 计数，保留其他来源状态。";
 const AD_CLICK_USER_NOTE = "来自 bi-v1 M094 同日、同 PID、同广告范围及人群的独立去重人数；展示 READY 计数，保留其他来源状态。";
-const RECHARGE_AMOUNT_NOTE = `来自 bi-v1 M058 的人民币元金额，规则版本 ${VALUE_RULE_VERSIONS.M058}，保留接口数值。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态；按完整业务日提供合计及日均。`;
+const RECHARGE_AMOUNT_NOTE = `来自 bi-v1 M058 的人民币元金额，规则版本 ${PAYMENT_RULE_VERSIONS.M058}，保留接口数值。仅使用该规则版本的 READY 结果，版本不符为无效值，缺失或未就绪保留来源状态；按完整业务日提供合计及日均。`;
+const ARPPU_SOURCE_NOTE = `读取 bi-v1 M067 同日、同 PID、同人群的人民币元/人结果和同一行计算输入，规则版本 ${PAYMENT_RULE_VERSIONS.M067}。后台明确不支持 M067 时，使用同范围已校验的 M058 和 M059 逐日计算。`;
 const ACQUISITION_TYPE_REGISTRATIONS_NOTE = "来自 bi-v1 M008 的同平台、同业务日、获客类型独立结果；保留接口真实数据状态，不使用旧渠道统计补值。";
 const RETAINED_USER_COUNT_NOTE = "直接读取 bi-v1 M115 同注册日、同 PID、对应留存周期的去重回访人数，保留接口产出和成熟状态。";
 const baseMappings = {
@@ -186,7 +186,7 @@ const baseMappings = {
   "M094.new": { referenceMetricId: "M094", name: "广告点击人数（新用户）", fields: ["newUserAdClickUserCount"], inputIds: ["M094"], inputNames: ["新增广告点击人数"], unit: "人", biV1Metric: "M094", biV1Dimensions: ["new"], biV1Only: true, sourceNote: AD_CLICK_USER_NOTE },
   "M058.new": { referenceMetricId: "M058", name: "总充值金额（新用户）", fields: ["newUserDiamondChargeAmt"], inputIds: ["M058"], inputNames: ["新用户注册当日充值金额"], unit: AMOUNT_UNIT, biV1Metric: "M058", biV1Unit: "currency", biV1Dimensions: ["new"], biV1Only: true, sourceNote: RECHARGE_AMOUNT_NOTE },
   "M088": { referenceMetricId: "M088", name: "新增用户 ARPU", fields: ["newUserDiamondChargeAmt", "registerUserCount"], inputIds: ["M058", "M008"], inputNames: ["新用户注册当日充值金额", "同注册批次新增用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, derivedFrom: ["M058.new", "M008"], sourceNote: "按同日同 PID、同注册批次的 M058 新用户金额除以 M008 新增用户数，单位为元/人；当前提供逐日结果。" },
-  "M067.new": { referenceMetricId: "M067", name: "ARPPU（新用户）", fields: ["newUserDiamondChargeAmt", "newPayingUserCount"], inputIds: ["M058", "M059"], inputNames: ["新用户注册当日充值金额", "同注册批次注册当日付费用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, derivedFrom: ["M058.new", "M059.new"], sourceNote: "按同日同 PID、同注册批次的 M058 新用户金额除以 M059 新用户付费去重人数，单位为元/人；区间去重分母未提供前，仅提供逐日结果。" },
+  "M067.new": { referenceMetricId: "M067", name: "ARPPU（新用户）", fields: ["newUserDiamondChargeAmt", "newPayingUserCount"], inputIds: ["M058", "M059"], inputNames: ["新用户注册当日充值金额", "同注册批次注册当日付费用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, biV1Metric: "M067", biV1Unit: "currency_per_user", biV1Dimensions: ["new"], biV1Only: true, fallbackFrom: ["M058.new", "M059.new"], sourceNote: ARPPU_SOURCE_NOTE },
   "display:M016": {"referenceMetricId":"M016","name":"日活 Android:iOS","fields":["androidLoginUserCount","iosLoginUserCount"],"inputIds":["M016","M016"],"inputNames":["Android 日活跃用户数","iOS 日活跃用户数"],"unit":"Android:iOS", derivedFrom: ["M016.android", "M016.ios"]},
   "display:M008": {"referenceMetricId":"M008","name":"新增 Android:iOS","fields":["androidNewUserCount","iosNewUserCount"],"inputIds":["M008","M008"],"inputNames":["Android 新增用户数","iOS 新增用户数"],"unit":"Android:iOS", derivedFrom: ["M008.android", "M008.ios"]},
   "M001": {"referenceMetricId":"M001","name":"落地页访问次数","fields":["totalVistCount"],"inputIds":["M001"],"inputNames":["落地页访问次数"],"unit":"次","biV1Metric":"M001"},
@@ -200,7 +200,7 @@ const baseMappings = {
   M008: { fields: ["registerUserCount"], inputIds: ["M008"], unit: "人", biV1Metric: "M008" },
   M064: { fields: ["registrationDayPayingUserCount", "registeredUserCount"], inputIds: ["M064", "M008"], inputNames: ["注册当日付费去重用户数", "同注册批次新增用户数"], inputUnits: ["人", "人"], unit: "%", biV1Metric: "M064", biV1Only: true, sourceNote: "来自 bi-v1 M064 的同注册批次、同平台与 PID 的注册当日付费分子、新增基数与 READY 比率；当前提供逐日结果。" },
   M058: { fields: ["diamondChargeAmt"], inputIds: ["M058"], unit: AMOUNT_UNIT, biV1Metric: "M058", biV1Unit: "currency", biV1Only: true, sourceNote: RECHARGE_AMOUNT_NOTE },
-  M067: { fields: ["diamondChargeAmt", "payingUserCount"], inputIds: ["M058", "M059"], inputNames: ["总充值金额", "同范围付费去重用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, derivedFrom: ["M058", "M059"], sourceNote: "按同日同 PID 的 M058 总充值金额除以 M059 付费去重人数，单位为元/人；区间去重分母未提供前，仅提供逐日结果。" },
+  M067: { fields: ["diamondChargeAmt", "payingUserCount"], inputIds: ["M058", "M059"], inputNames: ["总充值金额", "同范围付费去重用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, biV1Metric: "M067", biV1Unit: "currency_per_user", biV1Only: true, fallbackFrom: ["M058", "M059"], sourceNote: ARPPU_SOURCE_NOTE },
   M087: { fields: ["diamondChargeAmt", "loginUserCount"], inputIds: ["M058", "M016"], inputNames: ["总充值金额", "同范围日活跃用户数"], inputUnits: [AMOUNT_UNIT, "人"], unit: AMOUNT_PER_USER_UNIT, derivedFrom: ["M058", "M016"], sourceNote: "按同日同 PID 的 M058 总充值金额除以 M016 日活跃用户数，单位为元/人；当前提供逐日结果。" },
   M110: { fields: ["adsCount", "loginUserCount"], inputIds: ["M055", "M016"], inputNames: ["广告点击次数", "日活跃用户数"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user", biV1Only: true },
   "M110.new": { referenceMetricId: "M110", name: "活跃用户人均广告点击次数（新用户）", fields: ["newUserAdClickCount", "newUserActiveUserCount"], inputIds: ["M055", "M016"], inputNames: ["新用户广告点击次数", "新用户日活跃用户数"], inputUnits: ["次", "人"], unit: "次/人", biV1Metric: "M110", biV1Unit: "count_per_user", biV1Dimensions: ["new"], biV1Only: true },
@@ -271,8 +271,10 @@ type PointSourceSelection =
   | { kind: "modern_missing" };
 
 function selectPointSource(mapping: CandidateMapping, point: BiV1MetricDay["metrics"][string] | undefined, fallbackSources: () => DailyPoint[] | null): PointSourceSelection {
-  if (mapping.fallbackFrom && !(point?.dataStatus === "READY" && point.unit === "ratio"
-    && (point.state === "available" || point.state === "zero_denominator"))) {
+  const useFallbackInputs = mapping.biV1Metric === "M067" ? point?.arppuUnsupported === true
+    : !(point?.dataStatus === "READY" && point.unit === "ratio"
+      && (point.state === "available" || point.state === "zero_denominator"));
+  if (mapping.fallbackFrom && useFallbackInputs) {
     const sources = fallbackSources();
     if (sources?.every(source => source.sourceStatus === "READY" && source.state === "available" && source.value !== null)) {
       return { kind: "derived", sources };
@@ -439,9 +441,13 @@ export function dailyDashboardMatchesMapping(result: DailyDashboardSuccess) {
     if (result.data.query.boardId !== "5.7") return false;
     for (const dimension of ["channel", "downloadPlatform"] as const) {
       const grouped = result.data.acquisitionGroups[dimension];
-      if (grouped.dimension !== dimension || grouped.groups.some(group => group.series.length !== ACQUISITION_GROUP_METRICS[dimension].length
-        || group.series.some((series, index) => series.metric.id !== ACQUISITION_GROUP_METRICS[dimension][index]
-          || !isDeepStrictEqual(series.metric, acquisitionMetric(ACQUISITION_GROUP_METRICS[dimension][index]))))) return false;
+      const baseIds: readonly AcquisitionGroupMetric[] = ACQUISITION_GROUP_METRICS[dimension];
+      if (grouped.dimension !== dimension || grouped.groups.some(group => {
+        const expectedIds: readonly AcquisitionGroupMetric[] = dimension === "channel" && grouped.registration && group.series.length === baseIds.length + 1
+          ? [...baseIds, "M008"] : baseIds;
+        return group.series.length !== expectedIds.length || group.series.some((series, index) =>
+          series.metric.id !== expectedIds[index] || !isDeepStrictEqual(series.metric, acquisitionMetric(expectedIds[index])));
+      })) return false;
     }
   }
   return result.data.series.every(series => {
@@ -547,7 +553,7 @@ function noteReadBoundaryFailure(error: unknown): void {
   recordUpstreamReadBoundaryFailure({ code: error instanceof UpstreamError ? error.code : undefined,
     failure: getUpstreamReadFailure(error) ?? (validation ? { origin: "validation" } : undefined) });
 }
-export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardSuccess> }
+export interface DailyDashboardExecutor { execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal, includeRegistrationGroups?: boolean): Promise<DailyDashboardSuccess> }
 /** Server-only normalized sources; these are never accepted from a browser. */
 export interface OperatingModernSources {
   pid: string;
@@ -559,8 +565,8 @@ export interface OperatingModernSources {
 export class DailyDashboardService implements DailyDashboardExecutor {
   protected projectPlaybackGroups = projectBiV1PlaybackGroups;
   constructor(private readonly client: UpstreamReadClient, private readonly now = () => new Date(), private readonly logger?: DailyDashboardLogger, private readonly options: { sourceReadTimeoutMs?: number; readTraceEnabled?: boolean; operatingSnapshotReadTimeoutMs?: number } = {}) {}
-  async execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal): Promise<DailyDashboardV2Success> {
-    if (query.projection !== "operating_snapshot") return this.executeSources(query, consumerSignal);
+  async execute(query: DailyDashboardQuery, consumerSignal?: AbortSignal, includeRegistrationGroups = true): Promise<DailyDashboardV2Success> {
+    if (query.projection !== "operating_snapshot") return this.executeSources(query, consumerSignal, undefined, undefined, undefined, includeRegistrationGroups);
     const timeoutMs = this.options.operatingSnapshotReadTimeoutMs ?? OPERATING_SNAPSHOT_READ_TIMEOUT_MS;
     const controller = new AbortController();
     const deadlineAt = performance.now() + timeoutMs;
@@ -599,7 +605,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
     void pending.catch(() => undefined);
     return this.executeSources(query, consumerSignal, pending);
   }
-  private async executeSources(query: DailyDashboardQuery, consumerSignal?: AbortSignal, operatingSources?: Promise<OperatingModernSources>, readTrace?: UpstreamReadTrace, deadline?: SnapshotReadDeadline): Promise<DailyDashboardV2Success> {
+  private async executeSources(query: DailyDashboardQuery, consumerSignal?: AbortSignal, operatingSources?: Promise<OperatingModernSources>, readTrace?: UpstreamReadTrace, deadline?: SnapshotReadDeadline, includeRegistrationGroups = true): Promise<DailyDashboardV2Success> {
     if (consumerSignal?.aborted) throw new UpstreamError("UPSTREAM_TIMEOUT", "看板读取已取消", 504);
     if (query.projection !== undefined && !dailyDashboardQuerySchema.safeParse(query).success) throw new UpstreamError("INVALID_DAILY_READING_QUERY", "看板查询参数不合法", 400);
     const sourceSignal = consumerSignal && deadline ? AbortSignal.any([consumerSignal, deadline.signal]) : consumerSignal ?? deadline?.signal;
@@ -924,7 +930,7 @@ export class DailyDashboardService implements DailyDashboardExecutor {
         }
       }
     });
-    const acquisitionTask = readSource("acquisition", async (client) => query.boardId === "5.7" ? readBiV1AcquisitionGroups(client, query, acquisitionMetric) : undefined);
+    const acquisitionTask = readSource("acquisition", async (client) => query.boardId === "5.7" ? readBiV1AcquisitionGroups(client, query, acquisitionMetric, includeRegistrationGroups) : undefined);
     const pointCache = new Map<string, DailyPoint>();
     const pointFor = (id: CandidateId, date: string): DailyPoint => {
       const key = `${id}|${date}`;

@@ -15,12 +15,12 @@ import {
   type V2MetricQuery
 } from "../../../contracts/bi-v2";
 import { notifyAuthenticationRequired } from "./authEvents";
-import { dailyDashboardCatalogSchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery, type DailyDashboardQuery } from "../../../contracts/daily-dashboard";
+import { DAILY_ACQUISITION_REGISTRATION_HEADER, dailyDashboardCatalogSchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery, type DailyDashboardQuery } from "../../../contracts/daily-dashboard";
 import { biQueryJobProgressSchema } from "../../../contracts/query-jobs";
 import { dataEnvironmentHeaders } from "./dataEnvironmentPreference";
 import { recordDailyDashboardEnvironment } from "./daily-dashboard-environment";
 import { reportInvalidResponse } from "./response-format-diagnostics";
-import { DailyReadingWorkQueue } from "./daily-reading-work-queue";
+import { DailyReadingWorkQueue, type DailyReadingWorkOptions } from "./daily-reading-work-queue";
 
 const dailyReadingWorkQueue = new DailyReadingWorkQueue();
 
@@ -174,8 +174,14 @@ export async function fetchReadableDashboards(signal?: AbortSignal) {
   return (await parseResponse(response, dailyDashboardCatalogSchema, signal)).data;
 }
 
-export async function fetchDailyDashboard(query: DailyDashboardQuery, metricIds: readonly string[], signal?: AbortSignal) {
+export async function fetchDailyDashboard(
+  query: DailyDashboardQuery,
+  metricIds: readonly string[],
+  signal?: AbortSignal,
+  priority: Exclude<DailyReadingWorkOptions["priority"], "snapshot"> = "foreground"
+) {
   const headers = dataEnvironmentHeaders({ "content-type": "application/json", accept: "application/json" });
+  if (query.boardId === "5.7") headers.set(DAILY_ACQUISITION_REGISTRATION_HEADER, "1");
   const environment = headers.get("x-ypbi-data-environment") === "test" ? "test" : "production";
   const requestQuery: DailyDashboardQuery = { ...query, dateRange: [...query.dateRange] };
   const expectedMetricIds = [...metricIds], body = JSON.stringify(requestQuery);
@@ -188,7 +194,7 @@ export async function fetchDailyDashboard(query: DailyDashboardQuery, metricIds:
       throw invalidResponse(response.status);
     }
     return recordDailyDashboardEnvironment(result, environment);
-  }, { priority: requestQuery.projection === "operating_snapshot" ? "snapshot" : "foreground", signal });
+  }, { priority: requestQuery.projection === "operating_snapshot" ? "snapshot" : priority, signal });
 }
 
 export async function fetchMetricDefinitions(signal?: AbortSignal) {

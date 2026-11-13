@@ -27,7 +27,7 @@ test("serialized real transport preserves primary, secondary and queued preview 
         metricVersion: "bi-v1", generatedAt: now().toISOString(), watermark: null,
         rows: !url.searchParams.has("dimensionFilters") && url.searchParams.get("metricCodes")?.split(",").includes("M059") ? [{
           metricCode: "M059", businessDate: date, dimensions: { pid }, value, numerator: value, denominator: 0,
-          unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "synthetic-v1"
+          unit: "count", dataStatus: "READY", metricVersion: "bi-v1", ruleVersion: "paid-order-value-v1"
         }] : []
       } } : { code: 200, msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] });
     } finally { active--; }

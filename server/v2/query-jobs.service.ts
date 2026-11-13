@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { biQueryJobRequestSchema, biQueryJobProgressSchema, biQueryJobUnitResultSchema, type BiQueryJobRequest } from "../../contracts/query-jobs";
 import type { Principal } from "../identity/identity-provider";
 import { getEnabledPlatformByPid } from "../platforms/registry";
-import { BI_V1_RETENTION_DAYS, biV1MetricCodeSchema, biV1MetricDimensionNameSchema, biV1MetricDimensionFilterSchema } from "../upstream/bi-v1.metrics-adapter";
+import { BI_V1_RETENTION_DAYS, biV1MetricCodeSchema, biV1MetricDimensionNameSchema, biV1MetricDimensionFilterSchema, normalizeBiV1PaymentUnitPids } from "../upstream/bi-v1.metrics-adapter";
 import { monthlyQueryScopes } from "../../contracts/monthly-query-scope";
 import { validateBiV1MonthlyMetadata } from "../upstream/bi-v1.monthly-adapter";
 import { toBeijingDate } from "../upstream/date";
@@ -242,7 +242,9 @@ export class BiQueryJobService {
     const progress = this.progress(binding, result.msg);
     if (result.msg.status !== "SUCCEEDED") return { success: true as const, data: progress };
     const results = result.msg.results.map((unit, index) => {
-      const parsed = biQueryJobUnitResultSchema.safeParse(unit);
+      let normalized: unknown;
+      try { normalized = normalizeBiV1PaymentUnitPids(unit); } catch { return invalid(); }
+      const parsed = biQueryJobUnitResultSchema.safeParse(normalized);
       if (!parsed.success) return invalid();
       const query = binding.request.queries[index]?.query;
       if (!query) return invalid();

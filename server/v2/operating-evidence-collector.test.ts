@@ -169,6 +169,14 @@ describe("operating evidence private collector", () => {
     expect(JSON.stringify(response)).not.toContain("987654321");
   });
 
+  test("M067 支付金额支持行顶层 PID，两个 PID 冲突时不输出业务值", async () => {
+    const paymentRow = row({ metricCode: "M067", pid: "PH", dimensions: {}, value: 78.37662337662337,
+      numerator: 12070, denominator: 154, unit: "currency_per_user", dataStatus: "READY", ruleVersion: "paid-order-value-rmb-v2" });
+    const { response } = await capture(envelope([paymentRow, { ...paymentRow, dimensions: { pid: "FBI" } }]), { ...params(), metricCodes: "M067" });
+    expect(response.rows[0]).toMatchObject({ scope: "in_scope", dimensions: { pid: "PH" }, unit: "currency_per_user", value: paymentRow.value });
+    expect(response.rows[1]).toEqual({ rowIndex: 1, scope: "scope_conflict", reason: "pid_mismatch" });
+  });
+
   test("startDate包含、endDate不包含，越界行不返回业务值", async () => {
     const { response } = await capture(envelope([row({ businessDate: "2026-10-05", value: 1 }), row({ businessDate: "2026-10-13", value: 2 }), row({ businessDate: "2026-10-04", value: 3 })]));
     expect(response.rows[0]).toMatchObject({ scope: "in_scope", value: 1 });

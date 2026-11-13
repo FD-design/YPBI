@@ -28,7 +28,7 @@ const siteProfiles = {
 type SourceQuery = NonNullable<QueryJobCreateRequest["queries"][number]["query"]>;
 type Read = { site: PlatformSiteId; path: string; method: string; pids: string[]; query?: SourceQuery };
 type FixtureRow = {
-  metricCode: string; businessDate?: string; dimensions: Record<string, string>; value: number | null;
+  metricCode: string; businessDate?: string; pid?: string; dimensions: Record<string, string>; value: number | null;
   numerator: number; denominator: number; unit: string; dataStatus: BiV1MetricDataStatus; metricVersion: string; ruleVersion: string;
   month?: string; cutoffDate?: string; isComplete?: boolean;
 };
@@ -46,16 +46,18 @@ function sourceRows(query: SourceQuery): FixtureRow[] {
   return query.pid.split(",").flatMap(pid => dates.flatMap(date => codes.flatMap(code => {
     const platformIndex = platforms.findIndex(platform => platform.pid === pid);
     const seed = platformIndex + (date ? Number(date.slice(-2)) : 0) + Number(code.slice(1)) + Object.values(filters).join("").length;
-    const dataStatus: BiV1MetricDataStatus = ["M016", "M018", "M058", "M059", "M102", "M006"].includes(code) || playback ? "READY" : statuses[seed % statuses.length];
+    const dataStatus: BiV1MetricDataStatus = ["M016", "M018", "M058", "M059", "M067", "M102", "M006"].includes(code) || playback ? "READY" : statuses[seed % statuses.length];
     const zero = code === "M059" && filters.userCohort === "new" || code === "M058" && platformIndex === 0 && !Object.keys(filters).length;
-    const ratio = ratios.has(code) || code === "M110";
-    const numerator = zero || code === "M006" ? 0 : code === "M058" ? 12.34 + platformIndex
+    const arppu = code === "M067";
+    const ratio = ratios.has(code) || code === "M110" || arppu;
+    const numerator = zero || code === "M006" ? 0 : code === "M058" || arppu ? 12.34 + platformIndex
       : code === "M102" ? 64 + platformIndex : 2 + platformIndex;
     const denominator = code === "M006" ? 0 : ratio ? 100 : 0;
-    const base: FixtureRow = { metricCode: code, ...(date ? { businessDate: date } : {}), dimensions: { pid, ...filters },
+    const base: FixtureRow = { metricCode: code, ...(date ? { businessDate: date } : {}),
+      ...(arppu ? { pid, dimensions: { ...filters } } : { dimensions: { pid, ...filters } }),
       value: dataStatus !== "READY" ? null : ratio ? denominator === 0 ? null : numerator / denominator : numerator,
-      numerator, denominator, unit: code === "M058" ? "currency" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
-      dataStatus, metricVersion: "bi-v1", ruleVersion: code === "M058" ? "paid-order-value-rmb-v2"
+      numerator, denominator, unit: code === "M058" ? "currency" : arppu ? "currency_per_user" : code === "M102" ? "seconds" : code === "M110" ? "count_per_user" : ratio ? "ratio" : "count",
+      dataStatus, metricVersion: "bi-v1", ruleVersion: code === "M058" || arppu ? "paid-order-value-rmb-v2" : code === "M059" ? "paid-order-value-v1"
         : code === "M102" ? "foreground-watch-duration-v1" : code === "M055" || code === "M111" ? "ad-raw-click-v2"
         : code === "M110" ? "ad-clicks-per-active-user-v3" : code === "M099" ? "landing-ip-click-rate-v1" : "production-parity-fixture-v1" };
     if (code === "M018") return [{ ...base, month: query.startDate.slice(0, 7), cutoffDate: shift(query.endDate, -1), isComplete: query.startDate.slice(0, 7) < generatedAt.slice(0, 7) }];
@@ -171,6 +173,7 @@ describe("正式经营全平台同步／异步同源差分", () => {
         expect(duration.metric.inputs[0].unit).toBe("秒");
         expect(duration.points.every(point => point.value === (64 + platformIndex) / 3600 && point.inputs[0].value === 64 + platformIndex)).toBe(true);
         expect(actual.data.series.find(series => series.metric.id === "M058")!.points.every(point => point.value === (platformIndex === 0 ? 0 : 12.34 + platformIndex))).toBe(true);
+        expect(actual.data.series.find(series => series.metric.id === "M067")!.points.every(point => point.value === (12.34 + platformIndex) / 100)).toBe(true);
         let platformNonzero = 0;
         for (const [index, series] of actual.data.series.entries()) {
           expect(series.metric).toEqual(expected.data.series[index].metric);

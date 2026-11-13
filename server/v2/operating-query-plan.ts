@@ -2,7 +2,7 @@ import { z } from "zod";
 import { dailyDashboardQuerySchema } from "../../contracts/daily-dashboard";
 import { biQueryJobRequestSchema, biQueryJobUnitResultSchema, type BiQueryJobRequest } from "../../contracts/query-jobs";
 import { monthlyQueryScopes, type MonthlyQueryScope } from "../../contracts/monthly-query-scope";
-import { aggregateBiV1MetricDays, normalizeBiV1MetricUnit, type BiV1MetricQuery } from "../upstream/bi-v1.metrics-adapter";
+import { aggregateBiV1MetricDays, normalizeBiV1MetricUnit, normalizeBiV1PaymentUnitPids, type BiV1MetricQuery } from "../upstream/bi-v1.metrics-adapter";
 import { aggregateBiV1Playback, normalizeBiV1PlaybackUnit } from "../upstream/bi-v1.adapter";
 import { projectBiV1MonthlyMetricScope } from "../upstream/bi-v1.monthly-adapter";
 import { toBeijingDate } from "../upstream/date";
@@ -68,7 +68,7 @@ export function normalizeOperatingQueryResults(plan: OperatingQueryPlan, results
     };
   }
   for (const [index, raw] of results.entries()) {
-    const parsed = biQueryJobUnitResultSchema.safeParse(raw);
+    const parsed = biQueryJobUnitResultSchema.safeParse(normalizeBiV1PaymentUnitPids(raw));
     if (!parsed.success) throw new UpstreamError("BI_V1_RESPONSE_INVALID", "经营异步单元结构无法识别", 502);
     const unit = parsed.data, descriptor = plan.units[index];
     // Validate the complete multi-PID unit before slicing; foreign rows cannot disappear in filtering.

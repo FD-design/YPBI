@@ -16,21 +16,22 @@ const make = (grouped: (params: Params) => unknown = () => envelope([]), observe
   return { data: [], msg: { pageData: [], totalData: [], totalCount: 0 } };
 } }, () => new Date("2026-09-24T00:00:00Z"));
 const groupedRows = (params: Params) => envelope(params.metricCodes.split(",").map(metricCode => {
-  const ratio = !["M001", "M003"].includes(metricCode), summary = params.granularity === "summary";
+  const ratio = !["M001", "M003", "M008"].includes(metricCode), summary = params.granularity === "summary";
   return { metricCode, ...(!summary ? { businessDate: query.dateRange[0] } : {}), dimensions: { pid: "PH", [params.dimensions]: "A-B" },
     value: ratio ? 0.5 : summary ? 80 : 3, numerator: ratio ? 2 : summary ? 80 : 3, denominator: ratio ? 4 : 0,
     unit: ratio ? "ratio" : "count", dataStatus: "READY", metricVersion: "bi-v1",
-    ruleVersion: metricCode === "M099" ? summary ? "landing-ip-conversion-range-v1" : "landing-ip-click-rate-v1" : "returned-rule" };
+    ruleVersion: metricCode === "M008" ? "registration-d0-v2" : metricCode === "M099" ? summary ? "landing-ip-conversion-range-v1" : "landing-ip-click-rate-v1" : "returned-rule" };
 }));
 
 describe("日看板动态获客分组兼容接入", () => {
-  test("渠道只请求四项支持指标，六列保留来源状态且总体注册转化不重复查询", async () => {
+  test("渠道保留四项同批读取和两项来源状态，M008 单独读取且总体注册转化不重复查询", async () => {
     const selectedQuery = { ...query, dateRange: [query.dateRange[0], query.dateRange[0]] as [string, string] };
     const requests: Params[] = [];
     const service = new DailyDashboardService({ get: async (path, params) => {
       if (path !== "/api/admin/bi/v1/metrics") return { msg: { pageData: [], totalData: [], totalCount: 0 }, data: [] };
       requests.push(params);
       const grouped = ["channel", "downloadPlatform"].includes(params.dimensions);
+      if (params.metricCodes === "M008" && grouped) return groupedRows(params);
       const ratios: Record<string, [number, number]> = { M005: [3, 4], M006: [3, 3], M007: [3, 4], M099: [3, 4] };
       return envelope(params.metricCodes.split(",").filter(metricCode => grouped || metricCode in ratios).map(metricCode => {
         const ratio = !["M001", "M003"].includes(metricCode), [numerator, denominator] = ratios[metricCode] ?? [metricCode === "M001" ? 4 : 3, 0];
@@ -43,11 +44,14 @@ describe("日看板动态获客分组兼容接入", () => {
     } }, () => new Date("2026-09-24T00:00:00Z"));
     const result = await service.execute(selectedQuery), channel = result.data.acquisitionGroups!.channel;
     const channelRequests = requests.filter(request => request.dimensions === "channel");
-    expect(channelRequests).toHaveLength(2);
+    expect(channelRequests).toHaveLength(4);
     expect(channelRequests.map(request => [request.granularity, request.metricCodes])).toEqual([
-      ["day", "M001,M003,M005,M099"], ["summary", "M001,M003,M005,M099"]
+      ["day", "M001,M003,M005,M099"], ["summary", "M001,M003,M005,M099"], ["day", "M008"], ["summary", "M008"]
     ]);
-    expect(channel.groups[0].series.map(series => series.metric.id)).toEqual(["M001", "M003", "M005", "M006", "M007", "M099"]);
+    expect(channel.groups[0].series.map(series => series.metric.id)).toEqual(["M001", "M003", "M005", "M006", "M007", "M099", "M008"]);
+    const registration = channel.groups[0].series.at(-1)!;
+    expect(registration.metric).toMatchObject({ id: "M008", unit: "人", inputs: [{ key: "registerUserCount" }] });
+    expect(registration.summary).toMatchObject({ state: "available", value: 80, sourceStatus: "READY", ruleVersion: "registration-d0-v2" });
     for (const [id, value] of [["M001", 4], ["M003", 3], ["M005", .75], ["M099", .75]] as const) {
       const series = channel.groups[0].series.find(series => series.metric.id === id)!;
       expect(series.points[0]).toMatchObject({ state: "available", value, sourceStatus: "READY" });
@@ -74,14 +78,14 @@ describe("日看板动态获客分组兼容接入", () => {
     expect(dailyDashboardMatchesQuery(result, selectedQuery, result.data.series.map(series => series.metric.id))).toBe(true);
     expect(dailyDashboardMatchesMapping(result)).toBe(true);
   });
-  test("仅5.7额外发四路分组，原总体series与周期统计不被分组替换", async () => {
+  test("仅5.7额外发六路分组，原总体series与周期统计不被分组替换", async () => {
     const calls: Params[] = [], service = make(groupedRows, params => calls.push(params));
     const populated = await service.execute(query), empty = await make().execute(query);
     expect(populated.data.series).toEqual(empty.data.series);
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(6);
     expect(populated.data.sourceApiIds).toEqual(empty.data.sourceApiIds);
     const groups = populated.data.acquisitionGroups!;
-    expect(groups.channel.groups[0].series.map(series => series.metric.id)).toEqual(["M001", "M003", "M005", "M006", "M007", "M099"]);
+    expect(groups.channel.groups[0].series.map(series => series.metric.id)).toEqual(["M001", "M003", "M005", "M006", "M007", "M099", "M008"]);
     expect(groups.downloadPlatform.groups[0].series.map(series => series.metric.id)).toEqual(["M003"]);
     const reading = groups.channel.groups[0].series.find(series => series.metric.id === "M005")!;
     expect(reading.points[0]).toMatchObject({ state: "available", value: 0.5, inputs: [{ key: "totalDownCountNoDedup", value: 2 }, { key: "visiCountNoDedup", value: 4 }], ruleVersion: "returned-rule" });
@@ -106,7 +110,7 @@ describe("日看板动态获客分组兼容接入", () => {
     const profile = { environment: "test" as const, baseUrl: "https://fixture.invalid", token: "isolated-fixture-only", userName: "fixture", cachePartition: "fixture-partition" };
     const observed: Array<ReturnType<typeof currentUpstreamRequestProfile>> = [];
     await runWithUpstreamRequestProfile(profile, () => make(groupedRows, () => observed.push(currentUpstreamRequestProfile())).execute(query));
-    expect(observed).toHaveLength(4);
+    expect(observed).toHaveLength(6);
     expect(observed.every(value => value === profile)).toBe(true);
     expect(currentUpstreamRequestProfile()).toBeUndefined();
   });

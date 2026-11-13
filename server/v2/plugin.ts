@@ -29,7 +29,7 @@ import { CoreOverviewPeriodResolutionError } from "./core-overview/core-overview
 import { V2MetricQueryError } from "./metric-query.service";
 import { bindClientRequestAbort } from "../http/client-request-abort";
 import { dailyDashboardCatalog, dailyDashboardMatchesMapping, dailyDashboardScopeTag, type DailyDashboardExecutor } from "./daily-dashboard.service";
-import { dailyDashboardQuerySchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery } from "../../contracts/daily-dashboard";
+import { DAILY_ACQUISITION_REGISTRATION_HEADER, dailyDashboardQuerySchema, dailyDashboardSuccessSchema, dailyDashboardMatchesQuery } from "../../contracts/daily-dashboard";
 import { OPERATING_METRIC_IDS } from "../../contracts/operating-detail-projection";
 import { runWithUpstreamRequestProfile, type UpstreamRequestProfile } from "../upstream/request-profile";
 import { BiQueryJobError, type BiQueryJobService } from "./query-jobs.service";
@@ -319,7 +319,8 @@ export const v2BiPlugin: FastifyPluginAsync<V2BiPluginOptions> = async (app, opt
     const controller = new AbortController();
     const unbindClientAbort = bindClientRequestAbort(request.raw, reply.raw, controller, "daily_reading_client_aborted");
     try {
-      const result = dailyDashboardSuccessSchema.safeParse(await runInEnvironment(context, () => options.dailyDashboardService!.execute(query.data, controller.signal)));
+      const includeRegistrationGroups = request.headers[DAILY_ACQUISITION_REGISTRATION_HEADER] === "1";
+      const result = dailyDashboardSuccessSchema.safeParse(await runInEnvironment(context, () => options.dailyDashboardService!.execute(query.data, controller.signal, includeRegistrationGroups)));
       const expectedMetricIds = query.data.projection ? OPERATING_METRIC_IDS : board.metricIds;
       if (!result.success || !dailyDashboardMatchesQuery(result.data, query.data, expectedMetricIds) || !dailyDashboardMatchesMapping(result.data)) {
         request.log.warn({ outcome: "response_contract_conflict", durationMs: Date.now() - startedAt, scopeTag }, "daily dashboard query rejected");

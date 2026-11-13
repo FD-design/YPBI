@@ -68,8 +68,10 @@ test("留存率分母0不丢掉真实留存人数0",async()=>{
 test("支付总体ARPPU与占比保留计算依据；不完整分类不闭合",async()=>{
   const result=await new DailyDashboardService({get:async(path,params)=>{
     if(path === "/api/admin/bi/v1/metrics")return{code:200,msg:{...emptyMetrics.msg,rows:params.dimensionFilters?[]:[
-      {metricCode:"M058",value:100,unit:"currency"},{metricCode:"M059",value:10,unit:"count"}
-    ].filter(row=>params.metricCodes.split(",").includes(row.metricCode)).map(row=>({...row,businessDate:query.dateRange[0],dimensions:{pid:"PH"},numerator:row.value,denominator:0,dataStatus:"READY",metricVersion:"bi-v1",ruleVersion:row.metricCode==="M058"?"paid-order-value-rmb-v2":"payment-ui-fixture-v1"}))}};
+      {metricCode:"M058",value:100,numerator:100,denominator:0,unit:"currency",ruleVersion:"paid-order-value-rmb-v2"},
+      {metricCode:"M059",value:10,numerator:10,denominator:0,unit:"count",ruleVersion:"paid-order-value-v1"},
+      {metricCode:"M067",value:10,numerator:100,denominator:10,unit:"currency_per_user",ruleVersion:"paid-order-value-rmb-v2"}
+    ].filter(row=>params.metricCodes.split(",").includes(row.metricCode)).map(row=>({...row,businessDate:query.dateRange[0],dimensions:{pid:"PH"},dataStatus:"READY",metricVersion:"bi-v1"}))}};
     return path.endsWith("pDaySum")?{msg:{pageData:[{pid:"PH",sumDate:query.dateRange[0],diamondChargeAmt:999,totalChargeUserCount:99}],totalCount:1}}:path.includes("channelStatByTypeV2")?{msg:{pageData:[],totalData:[{vipChargeAmt:70,goldChargeAmt:30}]}}:{data:[],msg:{pageData:[]}};
   }}).execute({...query,boardId:"5.10"});
   const live=reading(result);live.query=result.data.query;live.metricIds=result.data.series.map(s=>s.metric.id);

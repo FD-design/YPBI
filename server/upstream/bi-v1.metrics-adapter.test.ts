@@ -13,7 +13,8 @@ const makeRow = (metricCode: BiV1MetricCode, unit: BiV1MetricUnit, value: number
   unit,
   dataStatus,
   metricVersion: "bi-v1" as const,
-  ruleVersion: "rule-v1"
+  ruleVersion: metricCode === "M058" || metricCode === "M067" ? "paid-order-value-rmb-v2"
+    : metricCode === "M059" ? "paid-order-value-v1" : "rule-v1"
 });
 
 const message = (rows: ReturnType<typeof makeRow>[]) => ({
@@ -539,6 +540,32 @@ describe("bi-v1 付费与广告独立人数", () => {
     expect(result.days[0].metrics.M059).toBeUndefined();
     expect(result.days[0].metrics.M094).toBeUndefined();
   });
+});
+
+test("D4 支付三指标同批读取，同一行金额输入和各指标状态独立", async () => {
+  const scope = { pid: "PH", startDate: "2026-09-21", endDate: "2026-09-21", metricCodes: ["M058", "M059", "M067"] as const };
+  const arppu = { ...makeRow("M067", "currency_per_user", 78.37662337662337, 12070, 154), pid: "PH", dimensions: {} };
+  const rows = [makeRow("M058", "currency", null, 100, 0, {}, "SOURCE_INCOMPLETE"), makeRow("M059", "count", 154, 154, 0)];
+  const query = (row: unknown) => readBiV1MetricDays({ get: async (_path, params) => {
+    expect(params.metricCodes).toBe("M058,M059,M067");
+    return { code: 200, msg: { metricVersion: "bi-v1", generatedAt: "2026-09-22T00:00:00Z", rows: [...rows, row] } };
+  } }, scope);
+  const result = await query(arppu);
+  expect(result.days[0].metrics).toMatchObject({
+    M058: { state: "no_value", dataStatus: "SOURCE_INCOMPLETE", value: null },
+    M059: { state: "available", value: 154 },
+    M067: { state: "available", value: 78.37662337662337, numerator: 12070, denominator: 154 }
+  });
+  expect(result.message).not.toHaveProperty("watermark");
+  for (const dataStatus of ["PROCESSING", "SOURCE_INCOMPLETE", "NOT_MATURE", "FAILED"] as const) {
+    const unresolved = (await query({ ...arppu, dataStatus, value: null })).days[0].metrics.M067;
+    expect(unresolved).toMatchObject({ dataStatus, value: null, numerator: null, denominator: null });
+    expect(unresolved).not.toHaveProperty("arppuUnsupported");
+  }
+  expect((await query({ ...arppu, denominator: 0, value: null })).days[0].metrics.M067).toMatchObject({ state: "zero_denominator", value: null });
+  await expect(query({ ...arppu, dimensions: { pid: "FBI" } })).rejects.toThrow("请求范围外");
+  const unit = normalizeBiV1MetricUnit({ generatedAt: "2026-09-22T00:00:00Z", rows: [arppu] }, scope);
+  expect(aggregateBiV1MetricDays(unit, scope)[0].metrics.M067.value).toBe(arppu.value);
 });
 
 describe("bi-v1 人民币金额 v2 准入", () => {

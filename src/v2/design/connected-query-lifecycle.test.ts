@@ -7,7 +7,8 @@ import { currentDataEnvironmentPreference, setDataEnvironmentPreference } from "
 import { useCohortReading } from "./ConnectedCohorts";
 import { useOperatingLive } from "./useOperatingLive";
 import { useOperatingResources } from "./useOperatingLive";
-import { useDailyBoardResource, useDailyBoardResources } from "../features/dashboards/useDailyBoardResources";
+import { useV2Resource } from "../api/useV2Resource";
+import { useDailyBoardResources } from "../features/dashboards/useDailyBoardResources";
 import { V2RequestError } from "../api/client";
 import { dailyDashboardEnvironment } from "../api/daily-dashboard-environment";
 
@@ -161,6 +162,31 @@ function stableBoard(live: LiveDashboardReading, compared: boolean) {
   return { daily, reading, operating: useOperatingResources(reading) };
 }
 
+test("主查询后先读首个经营快照，两个对比基准与剩余快照交替使用同一个槽", async () => {
+  const original = reading();
+  const live = { ...original, query: { ...original.query, boardId: "5.2" }, metricIds: OPERATING_METRIC_IDS };
+  const pending = requests();
+  const container = hook(() => stableBoard(live, true));
+  const expected = [
+    { pid: "PH", dateRange: ["2020-01-10", "2020-01-10"] },
+    { pid: "PH", dateRange: ["2020-01-03", "2020-01-10"], projection: "operating_snapshot" },
+    { pid: "PH", dateRange: ["2020-01-09", "2020-01-09"] },
+    { pid: "TT", dateRange: ["2020-01-03", "2020-01-10"], projection: "operating_snapshot" },
+    { pid: "PH", dateRange: ["2020-01-03", "2020-01-03"] }
+  ];
+  for (const [index, query] of expected.entries()) {
+    await flush();
+    expect(pending).toHaveLength(index + 1);
+    expect(pending[index].query).toEqual({ boardId: "5.2", ...query });
+    pending[index].succeed();
+  }
+  await flush();
+  expect(pending).toHaveLength(expected.length);
+  expect(container.value.daily.previous.state.status).toBe("success");
+  expect(container.value.daily.reference.state.status).toBe("success");
+  expect(Object.values(container.value.operating.resources).map(resource => resource?.status)).toEqual(["success", "success"]);
+});
+
 test("稳定日板数据容器在展示重挂与PID/开始日/对比切换时复用20份快照，显式刷新重读", async () => {
   let live: LiveDashboardReading = { ...reading(), query: { ...reading().query, boardId: "5.2" }, metricIds: OPERATING_METRIC_IDS,
     platforms: ["PH", "TT", ...Array.from({ length: 18 }, (_, index) => `QA${index + 1}`)].map(pid => ({ pid, name: pid })) };
@@ -208,7 +234,7 @@ test("稳定日板数据容器在展示重挂与PID/开始日/对比切换时复
 test("日板同scope刷新保留旧结果及完整错误诊断，scope变化在effect前隐藏旧状态并隔离迟到结果", async () => {
   let key = "first";
   const pending: { key: string; signal: AbortSignal; resolve: (value: string) => void; reject: (error: unknown) => void }[] = [];
-  const container = hook(() => useDailyBoardResource(key, signal => new Promise<string>((resolve, reject) => pending.push({ key, signal, resolve, reject }))));
+  const container = hook(() => useV2Resource(key, signal => new Promise<string>((resolve, reject) => pending.push({ key, signal, resolve, reject }))));
   pending[0].resolve("first-result"); await flush();
   container.value.retry(); await flush();
   expect(container.value.state).toMatchObject({ status: "success", data: "first-result", refreshing: true });

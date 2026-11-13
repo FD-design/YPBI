@@ -61,13 +61,13 @@ test("正式支付链路不回退演示值，并完整呈现接口状态与真�
   const credited = page.getByRole("article", { name: "充值到账订单数", exact: true });
   const conversion = page.getByRole("article", { name: "支付提交-充值到账转化率", exact: true });
   await expect(submit).toContainText("计算中");
-  await expect(credited).toContainText("数据接入中");
+  await expect(credited).toContainText("来源不完整");
   await expect(conversion).toContainText("待成熟");
   await expect(page.locator(".payment-business__advanced").filter({ hasText: "提交、下单、回调与到账指标" })).not.toContainText("演示数据");
 
   mode = "failed";
   await page.getByRole("button", { name: "刷新看板", exact: true }).click();
-  await expect(submit).toContainText("数据异常");
+  await expect(submit).toContainText("加工失败");
 
   mode = "ready";
   await page.getByRole("button", { name: "刷新看板", exact: true }).click();

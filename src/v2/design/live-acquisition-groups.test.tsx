@@ -121,6 +121,58 @@ test("动态渠道保留原键，不映射名称或合并大小写，区间只�
   expect(rows[0].values).not.toHaveProperty("M008");
 });
 
+function registrationReading(dateRange: [string, string], summary: number) {
+  const live = reading(dateRange), channel = groups(live);
+  channel.registration = {
+    day: { ...channel.day, generatedAt: "2026-11-06T11:03:46+08:00", watermark: "registration-day-watermark" },
+    summary: { ...channel.summary, generatedAt: "2026-11-06T11:04:37+08:00", watermark: "registration-summary-watermark" }
+  };
+  const id = "M008", point = (value: number) => ({ state: "available" as const, value, sourceStatus: "READY" as const,
+    ruleVersion: "registration-d0-v2", inputs: [{ key: "registerUserCount", value }] });
+  channel.groups[0].series.push({ metric: { ...channel.groups[0].series[0].metric, id, referenceMetricId: id,
+    name: acquisitionMetric(id).name, unit: "人", inputs: [{ key: "registerUserCount", name: "新增用户数", unit: "人" }] },
+    points: dateRange.map((date, index) => ({ date, ...point(index * 20) })), summary: point(summary) });
+  return live;
+}
+
+test("注册渠道的独立汇总、对比和原始编码贯穿现有列表、详情及两类导出", () => {
+  const live = registrationReading(["2020-01-01", "2020-01-02"], 17);
+  const before = registrationReading(["2019-12-30", "2019-12-31"], 10);
+  live.comparison = { label: "上一等长周期", query: before.query, state: before.state };
+  const result = model(live), row = result.rows[0], summary = row.current.M008.summary;
+  expect(result.ids).toEqual([...ACQUISITION_GROUP_IDS.channel, "M008"]);
+  expect(row.key).toBe("RAW-X");
+  expect(summary).toMatchObject({ value: 17, ruleVersion: "registration-d0-v2", watermark: "registration-summary-watermark" });
+  expect(row.current.M008.points.map(point => point.value)).toEqual([0, 20]);
+  expect(row.current.M001.summary.watermark).toBe("2020-01-02");
+  expect(acquisitionGroupComparison(row.current.M008, row.previous!.M008)).toMatchObject({ difference: 7, change: 70, reason: "可比" });
+  const html = renderToStaticMarkup(<ChannelQuality filters={DEFAULT_ACQUISITION_FILTERS} mixed={false} detail={DEFAULT_ACQUISITION_VIEW.detail.sections.channel} pending={false} update={() => {}} open={() => {}} liveModel={result} />);
+  expect(html).toContain("RAW-X · 新增用户数详情");
+  expect(html).toContain("17 人");
+  expect(renderToStaticMarkup(<LiveAcquisitionMetricDetails row={row} id="M008" />)).toContain("registration-d0-v2");
+  const region = acquisitionGroupWorkbook(live, "channel"), board = acquisitionGroupBoardSheets(live);
+  for (const sheet of region.slice(1)) expect(board.find(candidate => candidate.name === sheet.name)).toEqual(sheet);
+  expect(region[1].rows.find(row => row[0] === "当前期" && row[4] === acquisitionMetric("M008").name)).toMatchObject({
+    3: "RAW-X", 5: 17, 6: "人", 9: "registration-d0-v2", 11: "registration-summary-watermark"
+  });
+  expect(acquisitionGroupWorkbook(live, "downloadPlatform")[1].rows.every(row => row[4] !== acquisitionMetric("M008").name)).toBe(true);
+});
+
+test("注册分组缺少来源行或读取失败时保留原渠道结果，空组也输出独立请求状态", () => {
+  const live = reading(), channel = groups(live);
+  channel.registration = { day: { ...channel.day, scopeStatuses: [{ metricId: "M008", sourceStatus: "SOURCE_INCOMPLETE" }] },
+    summary: { state: "source_failure", scopeStatuses: [], generatedAt: null, watermark: null } };
+  const row = model(live).rows[0];
+  expect(row.current.M001.summary.value).toBe(80);
+  expect(row.current.M008.points[0]).toMatchObject({ value: null, sourceStatus: "SOURCE_INCOMPLETE", state: "来源不完整" });
+  expect(row.current.M008.summary).toMatchObject({ value: null, state: "读取失败" });
+  channel.groups = [];
+  const result = model(live);
+  expect(result.emptyReason).toContain("逐日 · 新增用户数：来源不完整");
+  expect(result.emptyReason).toContain("汇总 · 新增用户数：读取失败");
+  expect(acquisitionGroupWorkbook(live, "channel")[0].rows).toContainEqual(["当前新增用户数汇总请求状态", "source_failure"]);
+});
+
 test("当前与对比按原始key匹配，缺少分组保持为空，两期独立失败", () => {
   const live = reading(), before = reading(["2019-12-30", "2019-12-31"]);
   groups(before).groups.reverse(); groups(before).groups[2].series[0].summary.value = 901;

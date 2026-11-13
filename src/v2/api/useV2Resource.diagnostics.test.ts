@@ -91,3 +91,21 @@ test("通用资源403拒绝清除旧值与旧上游诊断，仅保留本次权�
     expect(harness.render().state).toEqual({ status: "failure", kind: "forbidden", message: "无权访问", code: "PID_ACCESS_DENIED", requestId: "fixture-denied" });
   } finally { harness.unmount(); }
 });
+
+test("切换日期立即隐藏旧范围，旧请求晚到不能覆盖当前结果", async () => {
+  const { harness, pending } = fixture();
+  const previous = "2026-11-11", current = "2026-11-12";
+  try {
+    harness.render(previous); harness.flushEffects();
+    pending[0].resolve({ amount: 7 }); await turn();
+    expect(harness.render(previous).state).toMatchObject({ status: "success", data: { amount: 7 } });
+    harness.render(previous).retry(); harness.render(previous); harness.flushEffects();
+
+    expect(harness.render(current).state).toEqual({ status: "loading" });
+    harness.flushEffects();
+    expect(pending[1].signal.aborted).toBe(true);
+    pending[2].resolve({ amount: 0 }); await turn();
+    pending[1].resolve({ amount: 9 }); await turn();
+    expect(harness.render(current).state).toEqual({ status: "success", data: { amount: 0 }, refreshing: false, refreshError: null });
+  } finally { harness.unmount(); }
+});

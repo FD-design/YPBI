@@ -137,6 +137,28 @@ describe("动态获客分组可选扩展契约", () => {
       (value: DailyAcquisitionGroups) => { value.channel.groups[0].series[0].metric.id = "M003"; }
     ]) { const value = acquisitionGroups(); mutate(value); expect(dailyAcquisitionGroupsSchema.safeParse(value).success).toBe(false); }
   });
+  test("注册渠道使用独立的可选请求状态，旧六列与可选第七列均兼容", () => {
+    const responseWithRegistration = () => {
+      const value = groupedResponse(), channel = value.data.acquisitionGroups.channel;
+      channel.registration = { day: structuredClone(channel.day), summary: structuredClone(channel.summary) };
+      const source = structuredClone(channel.groups[0].series[0]);
+      channel.groups[0].series.push({ ...source, metric: { ...source.metric, id: "M008" } });
+      return value;
+    };
+    const valid = dailyDashboardSuccessSchema.parse(responseWithRegistration());
+    expect(dailyDashboardMatchesQuery(valid, query, ["M001"])).toBe(true);
+    for (const mutate of [
+      (value: DailyAcquisitionGroups) => { delete value.channel.registration; },
+      (value: DailyAcquisitionGroups) => { value.downloadPlatform.registration = value.channel.registration; },
+      (value: DailyAcquisitionGroups) => { value.channel.registration!.day.scopeStatuses = [{ metricId: "M003", sourceStatus: "FAILED" }]; },
+      (value: DailyAcquisitionGroups) => { value.channel.registration!.summary.scopeStatuses = [{ metricId: "M008", businessDate: query.dateRange[0], sourceStatus: "FAILED" }]; },
+      (value: DailyAcquisitionGroups) => { value.channel.registration!.summary = { state: "source_failure", scopeStatuses: [], generatedAt: null, watermark: null }; },
+      (value: DailyAcquisitionGroups) => { value.channel.groups[0].series.reverse(); }
+    ]) { const value = responseWithRegistration(); mutate(value.data.acquisitionGroups); expect(dailyDashboardSuccessSchema.safeParse(value).success).toBe(false); }
+    const outOfRange = responseWithRegistration();
+    outOfRange.data.acquisitionGroups.channel.registration!.day.scopeStatuses = [{ metricId: "M008", businessDate: "2026-09-04", sourceStatus: "PROCESSING" }];
+    expect(dailyDashboardMatchesQuery(dailyDashboardSuccessSchema.parse(outOfRange), query, ["M001"])).toBe(false);
+  });
   test("非READY不得携带数值，READY必须保留来源ruleVersion，unsupported不带来源结果", () => {
     for (const mutate of [
       (value: DailyAcquisitionGroups) => { value.channel.groups[0].series[0].points[0].sourceStatus = "SOURCE_INCOMPLETE"; },

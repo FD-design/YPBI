@@ -3,7 +3,7 @@ export interface DailyReadingWorkQueueOptions {
 }
 
 export interface DailyReadingWorkOptions {
-  priority: "foreground" | "snapshot";
+  priority: "foreground" | "snapshot" | "supplementary";
   signal?: AbortSignal;
 }
 
@@ -14,10 +14,12 @@ interface QueuedWork {
 /** Shared browser capacity for complete daily-reading requests. */
 export class DailyReadingWorkQueue {
   private readonly maxActive: number;
-  private readonly foreground: QueuedWork[] = [];
-  private readonly snapshots: QueuedWork[] = [];
+  private readonly waiting: Record<DailyReadingWorkOptions["priority"], QueuedWork[]> = {
+    foreground: [], snapshot: [], supplementary: []
+  };
   private active = 0;
   private pumpScheduled = false;
+  private preferSnapshot = true;
 
   constructor(options: DailyReadingWorkQueueOptions = {}) {
     const maxActive = options.maxActive ?? 1;
@@ -28,9 +30,9 @@ export class DailyReadingWorkQueue {
   }
 
   run<T>(work: () => Promise<T>, options: DailyReadingWorkOptions): Promise<T> {
-    const { signal } = options;
+    const { priority, signal } = options;
     if (signal?.aborted) return Promise.reject(signal.reason);
-    const waiting = options.priority === "foreground" ? this.foreground : this.snapshots;
+    const waiting = this.waiting[priority];
 
     return new Promise<T>((resolve, reject) => {
       const cancelWaiting = () => {
@@ -48,6 +50,7 @@ export class DailyReadingWorkQueue {
           return;
         }
         this.active++;
+        this.preferSnapshot = priority !== "snapshot";
         const release = () => {
           this.active--;
           this.schedulePump();
@@ -69,12 +72,15 @@ export class DailyReadingWorkQueue {
   }
 
   private schedulePump() {
-    if (this.pumpScheduled || (this.foreground.length === 0 && this.snapshots.length === 0)) return;
+    const { foreground, snapshot, supplementary } = this.waiting;
+    if (this.pumpScheduled || !(foreground.length || snapshot.length || supplementary.length)) return;
     this.pumpScheduled = true;
     queueMicrotask(() => {
       this.pumpScheduled = false;
       while (this.active < this.maxActive) {
-        const item = this.foreground.shift() ?? this.snapshots.shift();
+        const item = foreground.shift() ?? (this.preferSnapshot
+          ? snapshot.shift() ?? supplementary.shift()
+          : supplementary.shift() ?? snapshot.shift());
         if (!item) return;
         item.start();
       }
