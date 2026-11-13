@@ -15,10 +15,10 @@ describe("测试预览请求头对照", () => {
     expect(before.origin).toBe(productionDataPreviewDefaults.baseUrl);
     expect(before.pathname).toBe("/api/admin/statistics/reletionsStatPlus/getDays");
     expect(Object.fromEntries(before.searchParams)).toEqual({
-      pid: "PH", registerDate: "2026-11-11 00:00:00", registerEdDate: "2026-11-11 23:59:59"
+      pid: "PH", registerDate: "2026-11-11 00:00:00", registerEdDate: "2026-11-12 00:00:00"
     });
     expect(Object.fromEntries(after.searchParams)).toEqual({
-      pid: "FBI", registerDate: "2026-11-12 00:00:00", registerEdDate: "2026-11-12 23:59:59"
+      pid: "FBI", registerDate: "2026-11-12 00:00:00", registerEdDate: "2026-11-13 00:00:00"
     });
   });
 

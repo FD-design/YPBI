@@ -288,7 +288,8 @@ describe("数据源维护管理接口", () => {
       expect([...url.searchParams.keys()]).toEqual(["pid", "registerDate", "registerEdDate"]);
       const start = url.searchParams.get("registerDate") ?? "";
       expect(start).toMatch(/^\d{4}-\d{2}-\d{2} 00:00:00$/);
-      expect(url.searchParams.get("registerEdDate")).toBe(`${start.slice(0, 10)} 23:59:59`);
+      const nextDay = new Date(Date.parse(`${start.slice(0, 10)}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+      expect(url.searchParams.get("registerEdDate")).toBe(`${nextDay} 00:00:00`);
     }
     expect(observedRequests.some((request) => request.url.includes("pid=PH"))).toBe(true);
     expect(observedRequests.some((request) => request.url.includes("pid=FBI"))).toBe(true);

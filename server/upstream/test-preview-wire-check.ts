@@ -29,9 +29,11 @@ export interface TestPreviewWireCheck {
 }
 
 export function testPreviewCredentialProbeUrl(baseUrl: string, pid: string, now = Date.now()): URL {
-  const day = new Date(now + (8 - 24) * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const shanghaiTime = now + 8 * 60 * 60 * 1000;
+  const startDay = new Date(shanghaiTime - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const endDay = new Date(shanghaiTime).toISOString().slice(0, 10);
   const url = new URL(RETENTION_PLUS_API, baseUrl);
-  url.search = new URLSearchParams({ pid, registerDate: day + " 00:00:00", registerEdDate: day + " 23:59:59" }).toString();
+  url.search = new URLSearchParams({ pid, registerDate: `${startDay} 00:00:00`, registerEdDate: `${endDay} 00:00:00` }).toString();
   return url;
 }
 
